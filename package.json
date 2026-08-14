@@ -1,0 +1,13 @@
+{
+  "name": "nanoraster",
+  "version": "0.0.0",
+  "description": "Placeholder for NanoRaster.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taucad/nanoraster.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
