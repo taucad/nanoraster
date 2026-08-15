@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { RenderProjection, RenderUpAxis } from 'nanoraster';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import type { RenderProjection, RenderUpAxis } from '../../src/options.js';
 
 import { anglesFromOffset, offsetFromAngles } from './camera-math';
 import styles from './render-lab.module.css';
