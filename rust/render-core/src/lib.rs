@@ -622,7 +622,13 @@ mod tests {
             &material_options,
         ))
         .expect("polished metal material");
+        let polished_metal_repeat = pollster::block_on(render_glb_to_rgba(
+            &material_variant(1.0, 0.05),
+            &material_options,
+        ))
+        .expect("repeated polished metal material");
         assert_ne!(baseline.rgba, polished_metal.rgba);
+        assert_eq!(polished_metal.rgba, polished_metal_repeat.rgba);
 
         let png = pollster::block_on(render_glb_to_image(FIXTURE, &options, ImageFormat::Png))
             .expect("PNG render");
