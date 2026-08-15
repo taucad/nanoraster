@@ -28,6 +28,7 @@
     "projectsRelationship": "fixed",
     "version": {
       "specifierSource": "version-plans",
+      "adjustSemverBumpsForZeroMajorVersion": false,
       "preVersionCommand": "pnpm nx run nanoraster:quality"
     },
     "versionPlans": {
