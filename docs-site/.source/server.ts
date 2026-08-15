@@ -1,6 +1,7 @@
 // @ts-nocheck
-import * as __fd_glob_6 from "../content/docs/rendering.mdx?collection=docs"
-import * as __fd_glob_5 from "../content/docs/quick-start.mdx?collection=docs"
+import * as __fd_glob_7 from "../content/docs/rendering.mdx?collection=docs"
+import * as __fd_glob_6 from "../content/docs/quick-start.mdx?collection=docs"
+import * as __fd_glob_5 from "../content/docs/pbr-materials.mdx?collection=docs"
 import * as __fd_glob_4 from "../content/docs/options.mdx?collection=docs"
 import * as __fd_glob_3 from "../content/docs/index.mdx?collection=docs"
 import * as __fd_glob_2 from "../content/docs/errors.mdx?collection=docs"
@@ -14,4 +15,4 @@ const create = server<typeof Config, import("fumadocs-mdx/runtime/types").Intern
   }
 }>({"doc":{"passthroughs":["extractedReferences"]}});
 
-export const docs = await create.docs("docs", "content/docs", {"meta.json": __fd_glob_0, }, {"api.mdx": __fd_glob_1, "errors.mdx": __fd_glob_2, "index.mdx": __fd_glob_3, "options.mdx": __fd_glob_4, "quick-start.mdx": __fd_glob_5, "rendering.mdx": __fd_glob_6, });
+export const docs = await create.docs("docs", "content/docs", {"meta.json": __fd_glob_0, }, {"api.mdx": __fd_glob_1, "errors.mdx": __fd_glob_2, "index.mdx": __fd_glob_3, "options.mdx": __fd_glob_4, "pbr-materials.mdx": __fd_glob_5, "quick-start.mdx": __fd_glob_6, "rendering.mdx": __fd_glob_7, });
