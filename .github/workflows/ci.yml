@@ -17,6 +17,7 @@ jobs:
   preflight:
     runs-on: ubuntu-24.04
     outputs:
+      kind: ${{ steps.release.outputs.kind }}
       npm-publish: ${{ steps.release.outputs.npm_publish }}
       version: ${{ steps.release.outputs.version }}
     steps:
@@ -58,6 +59,7 @@ jobs:
       - run: pnpm nx run nanoraster:quality
       - run: node --test tests/ci-release.test.mjs tests/benchmark.test.mjs tests/release-attestations.test.mjs
       - name: Require a Version Plan for release-affecting changes
+        if: needs.preflight.outputs.kind != 'release-pull-request' && needs.preflight.outputs.kind != 'release'
         shell: bash
         env:
           BASE_REF: ${{ github.base_ref }}

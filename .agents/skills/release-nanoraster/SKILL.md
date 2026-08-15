@@ -36,8 +36,9 @@ Reject other arguments.
    three `npm/*/package.json` manifests, and consumed
    `.nx/version-plans/*.md` files.
 7. Run `pnpm nx run nanoraster:quality`,
-   `pnpm nx run nanoraster:docs-prose`, `pnpm nx release plan:check`, and
-   `git diff --check`.
+   `pnpm nx run nanoraster:docs-prose`, and `git diff --check`. The dry-run
+   proves the Version Plan before generation; the release policy validates
+   that the generated commit consumes it.
 8. For submit, commit exactly `chore(release): nanoraster v<version>`, push,
    and open a pull request describing the fixed package group, version, plan,
    and validations.
