@@ -6,7 +6,7 @@ import './global.css';
 
 export const metadata: Metadata = {
   description: 'Tiny headless WebGPU GLTF renderer for deterministic PNG, WebP, and JPEG output.',
-  metadataBase: new URL('https://nanoraster.tau.new'),
+  metadataBase: new URL('https://nanoraster.xyz'),
   title: { default: 'nanoraster', template: `%s — nanoraster` },
 };
 
