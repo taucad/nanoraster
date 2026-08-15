@@ -6,12 +6,14 @@ import { defineConfig } from 'vitest/config';
 const providers = {
   chromium: {
     browser: 'chromium',
+    headless: true,
     provider: playwright({
       launchOptions: { args: ['--enable-unsafe-webgpu'] },
     }),
   },
   firefox: {
     browser: 'firefox',
+    headless: false,
     provider: playwright({
       launchOptions: {
         firefoxUserPrefs: {
@@ -21,7 +23,7 @@ const providers = {
       },
     }),
   },
-  webkit: { browser: 'webkit' },
+  webkit: { browser: 'webkit', headless: false },
 } as const;
 
 const requestedBrowser = process.env['BROWSER'];
