@@ -233,6 +233,7 @@ jobs:
         run: pnpm exec vitest run --config vitest.browser.config.ts
         env:
           BROWSER: ${{ matrix.browser }}
+          DEBUG: pw:browser
           NANORASTER_WASM_MODULE: candidate/extracted/package/dist/wasm/render_wasm.js
 
   benchmark:
