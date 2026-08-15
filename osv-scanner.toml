@@ -1,5 +1,5 @@
 # Every suppression must include a stable reason and an ISO expiry date.
-# [[IgnoredVulns]]
-# id = "GHSA-example"
-# reason = "No affected code path is shipped."
-# ignoreUntil = "2026-12-31"
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0192"
+reason = "ttf-parser only parses the repository-pinned Geist font at build time; review when fontdue replaces it"
+ignoreUntil = "2027-02-15"

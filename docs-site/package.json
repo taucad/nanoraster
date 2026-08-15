@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "next build",
+    "build": "if [ ! -f ../dist/index.d.mts ]; then pnpm --dir .. exec tsdown; fi && next build",
     "dev": "next dev",
     "generate:source": "fumadocs-mdx",
     "lint": "eslint .",
