@@ -5,20 +5,9 @@ import { RenderLab } from '@/components/render-lab';
 
 import styles from './page.module.css';
 
-/** Render the NanoRaster homepage and live capture workbench. */
+/** Render the nanoraster homepage and live capture workbench. */
 const Page = (): React.JSX.Element => (
   <main className={styles.page}>
-    <nav className={styles.nav} aria-label="Primary navigation">
-      <Link className={styles.wordmark} href="/">
-        <img alt="" className={styles.mark} src="/logo.svg" />
-        nanoraster
-      </Link>
-      <div>
-        <a href="https://github.com/taucad/nanoraster">GitHub</a>
-        <Link href="/docs">Documentation</Link>
-      </div>
-    </nav>
-
     <header className={styles.hero}>
       <div className={styles.heroCopy}>
         <p className={styles.kicker}>GLB → WebP / PNG / JPEG · WebGPU</p>
@@ -50,7 +39,7 @@ const Page = (): React.JSX.Element => (
       <figure className={styles.heroRender}>
         <div className={styles.imageWell}>
           <Image
-            alt="PBR helical gear with authored edge lines rendered by NanoRaster"
+            alt="PBR helical gear with authored edge lines rendered by nanoraster"
             height={720}
             priority
             src="/demo/helical-gear-pbr.webp"
@@ -62,7 +51,7 @@ const Page = (): React.JSX.Element => (
         </div>
         <figcaption>
           <span>Helical gear · metallic 0.50 · roughness 0.25</span>
-          <span>NANORASTER / WEBP</span>
+          <span className={styles.captionFormat}>nanoraster / webp</span>
         </figcaption>
       </figure>
     </header>
@@ -72,8 +61,12 @@ const Page = (): React.JSX.Element => (
     </section>
 
     <section className={styles.afterword}>
-      <p>One render core. Native Metal, Vulkan, and DX12. Browser WebGPU.</p>
-      <Link href="/docs">Read the rendering contract →</Link>
+      <div>
+        <p>One render core. Native Metal, Vulkan, and DX12. Browser WebGPU.</p>
+        <Link className={styles.afterwordLink} href="/docs">
+          Read the rendering contract →
+        </Link>
+      </div>
     </section>
   </main>
 );
