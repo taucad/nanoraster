@@ -13,11 +13,11 @@
 
 ## Render profile
 
-| glTF 2.0 feature                                       | Supported |
-| ------------------------------------------------------ | --------- |
-| `baseColorFactor`, `metallicFactor`, `roughnessFactor` | Yes       |
-| Embedded PBR textures and texture coordinates          | No        |
-| Surface-less WebGPU rendering                          | Yes       |
+| glTF 2.0 feature                                                   | Supported |
+| ------------------------------------------------------------------ | --------- |
+| Factor-only `baseColorFactor`, `metallicFactor`, `roughnessFactor` | Yes       |
+| All texture-backed PBR materials                                   | No        |
+| Surface-less WebGPU rendering                                      | Yes       |
 
 Factor-only metallic-roughness materials use deterministic analytic studio
 lighting. Texture-backed materials return a parse error.
