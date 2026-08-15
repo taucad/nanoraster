@@ -1,13 +1,14 @@
 import path from 'node:path';
 
 // Initial 0.1.0 package contract measured on 2026-08-15; changes require explicit admission.
-const PACKAGE_FILE_COUNT_CEILING = 25;
+const PACKAGE_FILE_COUNT_CEILING = 26;
 
 export const PACKAGE_FILES = [
   'BREAKING_CHANGES.md',
   'CHANGELOG.md',
   'NOTICE',
   'README.md',
+  'compatibility.md',
   'dist/cjs-error.cjs',
   'dist/cjs-error.d.cts',
   'dist/image-file.d.mts',

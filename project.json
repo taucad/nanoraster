@@ -104,7 +104,19 @@
     },
     "quality": {
       "executor": "nx:noop",
-      "dependsOn": ["build", "check:size", "test", "typecheck", "validate-pack"]
+      "dependsOn": [
+        "build",
+        "check:dead-code",
+        "check:size",
+        "docs",
+        "format",
+        "lint",
+        "prose",
+        "test",
+        "typecheck",
+        "validate-pack",
+        "workflows"
+      ]
     }
   }
 }

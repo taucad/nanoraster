@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const THRESHOLD = 0.1;
 const MARKER = '<!-- nanoraster-benchmark -->';
@@ -33,7 +34,7 @@ export const compareBenchmark = (current, base) => {
   };
 };
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const currentPath = process.argv[2];
   const basePath = process.argv[3];
   const outputPath = process.argv[4];
