@@ -12,6 +12,7 @@ export default tseslint.config(
       'docs-site/.next/**',
       'docs-site/.source/**',
       'docs-site/out/**',
+      'docs-site/public/demo/render_wasm.d.ts',
       'docs-site/public/demo/render_wasm.js',
       'node_modules/**',
       'rust/target/**',
