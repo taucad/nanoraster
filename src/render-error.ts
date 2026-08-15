@@ -61,6 +61,7 @@ export class RenderError extends Error {
     return new RenderError(classify(message), message);
   }
 
+  /** Stable machine-readable failure classification. */
   public readonly code: RenderFailureCode;
 
   /**

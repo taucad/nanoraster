@@ -1,23 +1,97 @@
 ---
 title: Options
-description: Configure dimensions, format, and host behavior.
+description: Configure image format, camera, dimensions, and annotations.
 ---
 
-Width and height accept 16–4096 pixels. Encoder quality accepts 0–1, and the
-corner-fit margin accepts 0–0.5. `png`, `webp`, `jpeg`, and the `jpg` alias are
-supported.
+Use `createRenderImageOptions` or `createRenderImagesOptions` when you want
+TypeScript to preserve literal values and reject extra keys before rendering.
 
-Set `up` to `x`, `y`, or `z`. Set `projection` to `perspective` or
-`orthographic`. Backgrounds accept `#RRGGBB`, `#RRGGBBAA`, or four normalized
-RGBA channels.
+## Shared values
 
-Axes, labels, and physical scale overlays require both dimensions to be at
-least 192 pixels. Labels accept up to 64 supported Unicode code points. The
-exported range and pattern constants let callers validate UI input against the
-same contract.
+### `RenderImageFormat`
 
-<auto-type-table path="./props.ts" name="RenderImageOptions" />
+```typescript
+export type RenderImageFormat = 'png' | 'webp' | 'jpeg' | 'jpg';
+```
 
-<auto-type-table path="./props.ts" name="RenderImagesOptions" />
+| Value  | Meaning                                                 |
+| ------ | ------------------------------------------------------- |
+| `png`  | Lossless PNG output with alpha support.                 |
+| `webp` | WebP output with alpha support.                         |
+| `jpeg` | JPEG output; requires an opaque background.             |
+| `jpg`  | Alias for `jpeg`; filenames retain the `jpg` extension. |
 
-<auto-type-table path="./props.ts" name="RenderImageView" />
+### `RenderUpAxis`
+
+```typescript
+export type RenderUpAxis = 'x' | 'y' | 'z';
+```
+
+| Value | Meaning                                                           |
+| ----- | ----------------------------------------------------------------- |
+| `x`   | Treat world X as up.                                              |
+| `y`   | Treat world Y as up; this is the default and the glTF convention. |
+| `z`   | Treat world Z as up.                                              |
+
+### `RenderProjection`
+
+```typescript
+export type RenderProjection = 'perspective' | 'orthographic';
+```
+
+| Value          | Meaning                                                  |
+| -------------- | -------------------------------------------------------- |
+| `perspective`  | Perspective camera; the default for ordinary thumbnails. |
+| `orthographic` | Depth-invariant projection for canonical views.          |
+
+## Singular request
+
+### `RenderImageOptions`
+
+```typescript
+export type RenderImageOptions = RenderImageSharedOptions &
+  RenderLabelOptions & {
+    readonly phi?: number;
+    readonly theta?: number;
+  };
+```
+
+`RenderImageSharedOptions` and `RenderLabelOptions` are internal composition
+types; the generated table below is the complete consumer-visible shape.
+
+<auto-type-table path="./props.ts" name="RenderImageOptions" caption="RenderImageOptions properties" />
+
+## Batch request
+
+### `RenderImageView`
+
+```typescript
+export type RenderImageView<Id extends string = string> = {
+  readonly id: Id;
+  readonly label?: string;
+  readonly phi: number;
+  readonly theta: number;
+};
+```
+
+IDs must be unique within a request. Angles are finite degrees; `phi` is polar
+from the selected up axis and `theta` is right-handed azimuth around that axis.
+
+<auto-type-table path="./props.ts" name="RenderImageView" caption="RenderImageView properties" />
+
+### `RenderImagesOptions`
+
+```typescript
+export type RenderImagesOptions<Views extends readonly RenderImageView[] = readonly RenderImageView[]> =
+  RenderImageSharedOptions &
+    (
+      | { readonly includeLabel: true; readonly views: LabeledViews<Views> }
+      | { readonly includeLabel?: false; readonly views: Views }
+    );
+```
+
+`views` must be a non-empty ordered tuple with unique IDs. When `includeLabel`
+is `true`, every view must carry a label. `LabeledViews` is the internal mapped
+tuple that enforces that relationship without losing IDs or order.
+
+<auto-type-table path="./props.ts" name="RenderImagesOptions" caption="RenderImagesOptions properties" />

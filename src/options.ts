@@ -24,22 +24,32 @@ export type RenderUpAxis = 'x' | 'y' | 'z';
 export type RenderProjection = 'perspective' | 'orthographic';
 
 type RenderImageSharedOptions = {
+  /** Required output encoder. `jpg` is an alias for `jpeg`. */
   readonly format: RenderImageFormat;
+  /** Output width in pixels, inclusive range 16–4096. @default 768 */
   readonly width?: number;
+  /** Output height in pixels, inclusive range 16–4096. @default 432 */
   readonly height?: number;
+  /** Encoder quality from 0 to 1. @default 0.92 */
   readonly quality?: number;
+  /** Empty fraction around the fitted subject, from 0 to 0.5. @default 0.1 */
   readonly margin?: number;
+  /** World axis treated as up while placing and fitting the camera. @default 'y' */
   readonly up?: RenderUpAxis;
+  /** Camera projection used for the image. @default 'perspective' */
   readonly projection?: RenderProjection;
+  /** Transparent by default; otherwise `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. @default transparent */
   readonly background?: readonly [number, number, number, number] | string;
-  /** Include the bottom-right camera-aware XYZ indicator and front-on depth marker. */
+  /** Include the bottom-right camera-aware XYZ indicator and front-on depth marker. @default false */
   readonly includeAxes?: boolean;
-  /** Include the top-left caller-authored label verbatim. */
+  /** Include the top-left caller-authored label verbatim. Requires `label` on every rendered view. @default false */
   readonly includeLabel?: boolean;
   /**
    * Include a bottom-left physical scale. Perspective labels identify the
    * subject-center measurement plane with `@ center`; orthographic scale is
    * depth-invariant.
+   *
+   * @default false
    */
   readonly includeScale?: boolean;
 };
@@ -47,12 +57,11 @@ type RenderImageSharedOptions = {
 type RenderLabelOptions =
   | {
       readonly includeLabel: true;
-      /** Screen-upright caller-authored text rendered verbatim. */
+      /** Screen-upright text; 1–64 supported Unicode code points and required when labels are enabled. */
       readonly label: string;
     }
   | {
       readonly includeLabel?: false;
-      /** Retained but not drawn when label inclusion is disabled. */
       readonly label?: string;
     };
 
@@ -63,7 +72,9 @@ type RenderLabelOptions =
  */
 export type RenderImageOptions = RenderImageSharedOptions &
   RenderLabelOptions & {
+    /** Polar camera angle from the selected up axis, in finite degrees. @default 60 */
     readonly phi?: number;
+    /** Right-handed camera azimuth around the selected up axis, in finite degrees. @default -45 */
     readonly theta?: number;
   };
 
@@ -73,11 +84,13 @@ export type RenderImageOptions = RenderImageSharedOptions &
  * @public
  */
 export type RenderImageView<Id extends string = string> = {
-  /** Stable result and filename identity. */
+  /** Unique result and filename identity matching `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`. */
   readonly id: Id;
-  /** Screen-upright caller-authored text rendered verbatim. */
+  /** Screen-upright caller-authored text rendered verbatim; required when `includeLabel` is true. */
   readonly label?: string;
+  /** Polar camera angle from the selected up axis, in finite degrees. */
   readonly phi: number;
+  /** Right-handed camera azimuth around the selected up axis, in finite degrees. */
   readonly theta: number;
 };
 
@@ -93,8 +106,15 @@ type LabeledViews<Views extends readonly RenderImageView[]> = {
 export type RenderImagesOptions<Views extends readonly RenderImageView[] = readonly RenderImageView[]> =
   RenderImageSharedOptions &
     (
-      | { readonly includeLabel: true; readonly views: LabeledViews<Views> }
-      | { readonly includeLabel?: false; readonly views: Views }
+      | {
+          readonly includeLabel: true;
+          /** Non-empty ordered view tuple with unique IDs; every view needs a label when labels are enabled. */
+          readonly views: LabeledViews<Views>;
+        }
+      | {
+          readonly includeLabel?: false;
+          readonly views: Views;
+        }
     );
 
 /**
@@ -103,7 +123,9 @@ export type RenderImagesOptions<Views extends readonly RenderImageView[] = reado
  * @public
  */
 export type RenderedImage<Id extends string = string> = {
+  /** Stable identity copied from the corresponding input view. */
   readonly id: Id;
+  /** Owned encoded image file for this view. */
   readonly file: RenderedImageFile;
 };
 
