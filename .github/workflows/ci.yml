@@ -200,6 +200,7 @@ jobs:
           NANORASTER_CANDIDATE_DIR: candidate
 
   browser:
+    name: browser (${{ matrix.browser }})
     needs: candidate
     strategy:
       fail-fast: false
