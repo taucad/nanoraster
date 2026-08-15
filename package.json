@@ -76,7 +76,7 @@
     "test:coverage": "vitest run --coverage",
     "test:native-parity": "pnpm run build:napi && vitest run --config vitest.native.config.ts",
     "test:rust": "cargo test --manifest-path rust/Cargo.toml --workspace",
-    "test:rust-coverage": "./scripts/test-rust-coverage.sh",
+    "test:rust-coverage": "bash ./scripts/test-rust-coverage.sh",
     "test:package": "node scripts/test-package.mjs",
     "typecheck": "tsc --noEmit",
     "validate-pack": "node scripts/validate-pack.mjs",
