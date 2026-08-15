@@ -86,7 +86,7 @@ export const ApiTypeTable = ({
       )}
       {...props}
     >
-      <div className="flex min-h-9 items-center gap-3 px-3 text-xs font-medium text-fd-muted-foreground not-prose">
+      <div className="flex min-h-8 items-center gap-3 px-3 text-xs font-medium text-fd-muted-foreground not-prose">
         <div className="hidden min-w-0 flex-1 grid-cols-[minmax(9rem,1fr)_minmax(12rem,2fr)_auto] gap-4 @xl:grid">
           <span>Property</span>
           <span>Type</span>
@@ -95,7 +95,7 @@ export const ApiTypeTable = ({
         <button
           type="button"
           onClick={toggleAll}
-          className="ms-auto rounded-md px-2 py-1 font-medium text-fd-foreground transition-colors hover:bg-fd-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fd-ring motion-reduce:transition-none"
+          className="ms-auto rounded-md px-2 py-0.5 font-medium text-fd-foreground transition-colors hover:bg-fd-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fd-ring motion-reduce:transition-none"
         >
           {allOpen ? 'Collapse all' : 'Expand all'}
         </button>
@@ -122,11 +122,11 @@ export const ApiTypeTable = ({
                 : 'border-transparent hover:border-fd-border/70',
             )}
           >
-            <CollapsibleTrigger className="group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-xl px-3 py-2.5 text-start not-prose transition-colors hover:bg-fd-accent/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-fd-ring motion-reduce:transition-none @xl:grid-cols-[minmax(9rem,1fr)_minmax(12rem,2fr)_auto_1.25rem] @xl:gap-4">
+            <CollapsibleTrigger className="group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 rounded-xl px-3 py-1.5 text-start not-prose transition-colors hover:bg-fd-accent/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-fd-ring motion-reduce:transition-none @xl:grid-cols-[minmax(9rem,1fr)_minmax(12rem,2fr)_auto_1.25rem] @xl:gap-4">
               <div className="flex min-w-0 items-center gap-2 @xl:col-start-1 @xl:row-start-1">
                 <code
                   className={cn(
-                    'truncate font-mono font-semibold text-fd-primary',
+                    'truncate font-mono font-semibold leading-4 text-fd-primary',
                     field.deprecated && 'line-through opacity-60',
                   )}
                 >
@@ -144,13 +144,13 @@ export const ApiTypeTable = ({
                 </span>
               </div>
 
-              <div className="col-span-2 min-w-0 overflow-x-auto pb-0.5 font-mono text-xs leading-5 fd-scroll-container @xl:col-span-1 @xl:col-start-2 @xl:row-start-1 @xl:pb-0">
+              <div className="col-span-2 min-w-0 overflow-x-auto whitespace-nowrap pb-0.5 font-mono text-xs leading-4 fd-scroll-container @xl:col-span-1 @xl:col-start-2 @xl:row-start-1 @xl:pb-0">
                 {fullType}
               </div>
 
               <span
                 className={cn(
-                  'hidden w-fit shrink-0 rounded-full border px-2 py-1 text-[0.6875rem] font-medium leading-none @xl:inline-flex @xl:col-start-3 @xl:row-start-1',
+                  'hidden w-fit shrink-0 rounded-full border px-2 py-0.5 text-[0.6875rem] font-medium leading-none @xl:inline-flex @xl:col-start-3 @xl:row-start-1',
                   field.required
                     ? 'border-fd-primary/25 bg-fd-primary/10 text-fd-primary'
                     : 'text-fd-muted-foreground',
