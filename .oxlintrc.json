@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": [
+    "coverage/**",
+    "dist/**",
+    "docs-site/.next/**",
+    "docs-site/.source/**",
+    "rust/target/**",
+    "src/native/**",
+    "src/wasm/**"
+  ],
+  "plugins": ["typescript", "unicorn"],
+  "overrides": [
+    {
+      "files": ["tests/**/*.mjs"],
+      "rules": { "typescript/no-floating-promises": "off" }
+    }
+  ]
+}

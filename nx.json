@@ -1,0 +1,63 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "defaultBase": "main",
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "runtime"],
+    "runtime": [
+      {
+        "runtime": "node --version"
+      },
+      {
+        "runtime": "pnpm --version"
+      },
+      {
+        "runtime": "rustc --version"
+      },
+      {
+        "runtime": "wasm-pack --version"
+      }
+    ]
+  },
+  "release": {
+    "projects": [
+      "nanoraster",
+      "nanoraster-darwin-arm64",
+      "nanoraster-linux-x64-gnu",
+      "nanoraster-win32-x64-msvc"
+    ],
+    "projectsRelationship": "fixed",
+    "version": {
+      "specifierSource": "version-plans",
+      "preVersionCommand": "pnpm nx run nanoraster:quality"
+    },
+    "versionPlans": {
+      "ignorePatternsForPlanCheck": [
+        "**/*.test.*",
+        "**/*.md",
+        ".github/**",
+        "docs-site/**",
+        "tests/**",
+        "bench/**"
+      ]
+    },
+    "changelog": {
+      "projectChangelogs": {
+        "file": "CHANGELOG.md",
+        "renderOptions": {
+          "authors": true,
+          "commitReferences": true,
+          "versionTitleDate": true
+        }
+      }
+    },
+    "releaseTag": {
+      "pattern": "v{version}"
+    },
+    "git": {
+      "commit": false,
+      "push": false,
+      "stageChanges": false,
+      "tag": false
+    }
+  }
+}

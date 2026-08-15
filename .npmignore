@@ -1,0 +1,10 @@
+# package.json#files is authoritative; this is a second deny-by-default boundary.
+*
+!dist/
+!dist/**
+!README.md
+!CHANGELOG.md
+!BREAKING_CHANGES.md
+!NOTICE
+!license
+!package.json

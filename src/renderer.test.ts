@@ -1,0 +1,112 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+const originalArchitecture = Object.getOwnPropertyDescriptor(process, 'arch');
+
+const restoreProperty = (
+  target: object,
+  key: PropertyKey,
+  descriptor: PropertyDescriptor | undefined,
+): void => {
+  if (descriptor === undefined) {
+    Reflect.deleteProperty(target, key);
+    return;
+  }
+  Object.defineProperty(target, key, descriptor);
+};
+
+afterEach(() => {
+  restoreProperty(globalThis, 'navigator', originalNavigator);
+  restoreProperty(process, 'platform', originalPlatform);
+  restoreProperty(process, 'arch', originalArchitecture);
+  vi.doUnmock('node:module');
+  vi.doUnmock('./wasm/render_wasm.js');
+  vi.resetModules();
+});
+
+describe('nativePackageName', () => {
+  it('maps every published native target and rejects the rest', async () => {
+    const { nativePackageName } = await import('#renderer.js');
+
+    expect(nativePackageName('darwin', 'arm64')).toBe('nanoraster-darwin-arm64');
+    expect(nativePackageName('linux', 'x64')).toBe('nanoraster-linux-x64-gnu');
+    expect(nativePackageName('win32', 'x64')).toBe('nanoraster-win32-x64-msvc');
+    expect(nativePackageName('freebsd', 'x64')).toBeUndefined();
+  });
+});
+
+describe('renderer binding selection', () => {
+  it('loads and caches the native package in Node', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' });
+    Object.defineProperty(process, 'arch', { configurable: true, value: 'arm64' });
+    const native = {
+      renderGlbToImage: vi.fn(() => new Uint8Array([1, 2])),
+      renderGlbToImages: vi.fn(() => [new Uint8Array([3]), new Uint8Array([4])]),
+    };
+    const require = vi.fn(() => native);
+    vi.doMock('node:module', () => ({ createRequire: vi.fn(() => require) }));
+    const { renderManyRaw, renderRaw } = await import('#renderer.js');
+    const glb = new Uint8Array([9]);
+
+    await expect(renderRaw(glb, '{}')).resolves.toEqual(new Uint8Array([1, 2]));
+    await expect(renderManyRaw(glb, '{"views":[]}')).resolves.toEqual([
+      new Uint8Array([3]),
+      new Uint8Array([4]),
+    ]);
+    expect(require).toHaveBeenCalledOnce();
+    expect(require).toHaveBeenCalledWith('nanoraster-darwin-arm64');
+  });
+
+  it('loads and initializes the WASM package when WebGPU is exposed', async () => {
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { gpu: {} } });
+    const initialize = vi.fn((_options: { module_or_path: URL }) => Promise.resolve(undefined));
+    const renderImage = vi.fn(() => Promise.resolve(new Uint8Array([5])));
+    const renderImages = vi.fn(() => Promise.resolve([new Uint8Array([6])]));
+    vi.doMock('./wasm/render_wasm.js', () => ({
+      default: initialize,
+      render_glb_to_image: renderImage,
+      render_glb_to_images: renderImages,
+    }));
+    const { renderManyRaw, renderRaw } = await import('#renderer.js');
+    const glb = new Uint8Array([9]);
+
+    await expect(renderRaw(glb, '{}')).resolves.toEqual(new Uint8Array([5]));
+    await expect(renderManyRaw(glb, '{}')).resolves.toEqual([new Uint8Array([6])]);
+    expect(initialize).toHaveBeenCalledWith({ module_or_path: expect.any(URL) });
+    expect(initialize.mock.calls[0]?.[0].module_or_path.pathname.endsWith('/wasm/render_wasm_bg.wasm')).toBe(
+      true,
+    );
+  });
+
+  it('reports an unpublished native target without attempting require', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'freebsd' });
+    Object.defineProperty(process, 'arch', { configurable: true, value: 'x64' });
+    const require = vi.fn();
+    vi.doMock('node:module', () => ({ createRequire: vi.fn(() => require) }));
+    const { renderRaw } = await import('#renderer.js');
+
+    await expect(renderRaw(new Uint8Array(0), '{}')).rejects.toMatchObject({
+      code: 'adapter-unavailable',
+      message: 'native render addon is not published for freebsd-x64',
+    });
+    expect(require).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [new Error('missing'), 'missing'],
+    ['raw failure', 'raw failure'],
+  ])('contains a failed native package load: %#', async (failure, detail) => {
+    vi.doMock('node:module', () => ({
+      createRequire: vi.fn(() => () => {
+        throw failure;
+      }),
+    }));
+    const { renderRaw } = await import('#renderer.js');
+
+    await expect(renderRaw(new Uint8Array(0), '{}')).rejects.toMatchObject({
+      code: 'adapter-unavailable',
+      message: expect.stringContaining(detail),
+    });
+  });
+});

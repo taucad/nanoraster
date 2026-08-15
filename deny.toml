@@ -1,0 +1,21 @@
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+  { id = "RUSTSEC-2026-0192", reason = "ttf-parser only parses the repository-pinned Geist font at build time; review by 2027-02-15 or when fontdue replaces it" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = ["Apache-2.0", "BSD-2-Clause", "ISC", "IJG", "MIT", "Unicode-3.0", "Zlib"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "simplest-path"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,0 +1,23 @@
+---
+title: Options
+description: Configure dimensions, format, and host behavior.
+---
+
+Width and height accept 16–4096 pixels. Encoder quality accepts 0–1, and the
+corner-fit margin accepts 0–0.5. `png`, `webp`, `jpeg`, and the `jpg` alias are
+supported.
+
+Set `up` to `x`, `y`, or `z`. Set `projection` to `perspective` or
+`orthographic`. Backgrounds accept `#RRGGBB`, `#RRGGBBAA`, or four normalized
+RGBA channels.
+
+Axes, labels, and physical scale overlays require both dimensions to be at
+least 192 pixels. Labels accept up to 64 supported Unicode code points. The
+exported range and pattern constants let callers validate UI input against the
+same contract.
+
+<auto-type-table path="./props.ts" name="RenderImageOptions" />
+
+<auto-type-table path="./props.ts" name="RenderImagesOptions" />
+
+<auto-type-table path="./props.ts" name="RenderImageView" />

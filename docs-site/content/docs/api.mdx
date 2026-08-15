@@ -1,0 +1,32 @@
+---
+title: API
+description: Public TypeScript interfaces generated from source JSDoc.
+---
+
+## Operations
+
+- `renderGlbToImage` renders one view.
+- `renderGlbToImages` renders an ordered set of identified views.
+- `createRenderImageOptions` and `createRenderImagesOptions` preserve literal
+  option types while rejecting extra keys.
+
+## Validation constants
+
+`renderImageDimensionRange`, `renderImageQualityRange`,
+`renderImageMarginRange`, `renderImageAnnotatedMinDimension`,
+`renderImageLabelMaxLength`, `renderImageLabelPattern`,
+`renderImageViewIdPattern`, and `renderImageBackgroundPattern` expose the
+runtime validation contract. `imageMimeTypes` maps every output format to its
+MIME type.
+
+<auto-type-table path="./props.ts" name="RenderedImageFile" />
+
+<auto-type-table path="./props.ts" name="RenderedImage" />
+
+<auto-type-table path="./props.ts" name="RenderedImages" />
+
+<auto-type-table path="./props.ts" name="RenderImageFormat" />
+
+<auto-type-table path="./props.ts" name="RenderUpAxis" />
+
+<auto-type-table path="./props.ts" name="RenderProjection" />

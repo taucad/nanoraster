@@ -1,0 +1,24 @@
+---
+title: Errors
+description: Handle stable error codes and host failures.
+---
+
+Rendering rejects with `RenderError`. Its `code` is one of
+`adapter-unavailable`, `device-lost`, `gpu`, `parse`, `encode`, or `unknown`.
+The `isGpuFault` getter identifies transient adapter, device, and driver
+failures. Parse and encode failures are deterministic for the same request.
+
+```typescript
+import { RenderError, renderGlbToImage } from 'nanoraster';
+
+try {
+  await renderGlbToImage(glb, options);
+} catch (error) {
+  const failure = RenderError.from(error);
+  if (!failure.isGpuFault) throw failure;
+}
+```
+
+<auto-type-table path="./props.ts" name="RenderError" />
+
+<auto-type-table path="./props.ts" name="RenderFailureCode" />

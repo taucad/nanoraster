@@ -1,0 +1,30 @@
+name: Setup repository
+description: Install the pinned Node, pnpm, Rust, and wasm toolchain.
+inputs:
+  node-version:
+    description: Exact Node version or supported major alias.
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0 # v4.1.0
+      with:
+        run_install: false
+        version: 11.7.0
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: pnpm
+    - uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2
+      with:
+        tool: cargo-llvm-cov@0.8.7,wasm-bindgen-cli@0.2.126,wasm-pack@0.13.1
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      with:
+        workspaces: rust
+    - shell: bash
+      run: |
+        for attempt in 1 2 3; do
+          pnpm install --frozen-lockfile && exit 0
+          test "$attempt" = 3 && exit 1
+          sleep "$((attempt * 5))"
+        done

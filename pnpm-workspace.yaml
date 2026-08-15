@@ -1,0 +1,11 @@
+packages:
+  - .
+  - docs-site
+  - npm/*
+
+allowBuilds:
+  '@napi-rs/cli': true
+  esbuild: true
+  nx: true
+
+linkWorkspacePackages: true

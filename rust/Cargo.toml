@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["render-core", "render-wasm", "render-napi"]
+exclude = ["vendor/image-webp"]
+
+[workspace.package]
+license = "Apache-2.0"
+repository = "https://github.com/taucad/nanoraster"
+
+# Speed-first release profile: opt-level=z throttled the codec crates up to
+# 7x (measured 2026-07-12; per-crate O3 overrides do not fully apply under fat
+# LTO) and saved only about 21 KB against the 1.5 MB-gz wasm budget.
+# panic stays "unwind" so napi-rs can contain panics instead of aborting Node.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
