@@ -61,7 +61,7 @@
     "benchmark": "node bench/gated.mjs",
     "build": "pnpm run build:wasm && tsdown && node scripts/copy-assets.mjs",
     "build:napi": "cargo build --manifest-path rust/Cargo.toml --release -p render-napi && node scripts/copy-native.mjs",
-    "build:wasm": "wasm-pack build rust/render-wasm --release --target web --out-dir ../../src/wasm && node scripts/clean-wasm-output.mjs",
+    "build:wasm": "node scripts/build-wasm.mjs && node scripts/clean-wasm-output.mjs",
     "check:dead-code": "knip",
     "check:wasm-size": "node scripts/check-wasm-size.mjs",
     "check:size": "size-limit && pnpm run check:wasm-size",
