@@ -84,7 +84,7 @@ pub(crate) fn prepare_view(
     scene: &Scene,
     options: &RenderOptions,
 ) -> Result<PreparedView, RenderError> {
-    debug_assert_eq!(FONTDUE_VERSION, "0.9.3");
+    debug_assert_eq!(FONTDUE_VERSION, "0.9.4");
     debug_assert_ne!(FONT_GENERATOR_FNV, 0);
     debug_assert_ne!(FONT_SOURCE_FNV, 0);
     debug_assert_ne!(FONT_ATLAS_FNV, 0);
@@ -1260,8 +1260,8 @@ mod tests {
                 .windows(2)
                 .all(|pair| pair[0].code < pair[1].code)
         );
-        assert_eq!(FONTDUE_VERSION, "0.9.3");
-        assert_eq!(FONT_GENERATOR_FNV, 0x69eb_05c8_ae9d_a2d5);
+        assert_eq!(FONTDUE_VERSION, "0.9.4");
+        assert_eq!(FONT_GENERATOR_FNV, 0x76e1_5f44_1a0d_dfa8);
         assert_eq!(FONT_SOURCE_FNV, 0x5d34_752d_5fd0_b666);
         assert_eq!(FONT_ATLAS_FNV, 0x7d64_8b80_86ba_a388);
         assert!(measure_text("Front — View From +Z", 14.0) > 0.0);

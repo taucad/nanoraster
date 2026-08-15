@@ -64,17 +64,19 @@ fn main() {
             (high << 4) | low
         })
         .collect::<Vec<_>>();
-    let generator_bytes = fs::read("build.rs").expect("read capture font generator");
+    let generator = fs::read_to_string("build.rs")
+        .expect("read capture font generator")
+        .replace("\r\n", "\n");
 
     let generated = format!(
-        "pub const FONTDUE_VERSION: &str = \"0.9.3\";\n\
+        "pub const FONTDUE_VERSION: &str = \"0.9.4\";\n\
          pub const FONT_GENERATOR_FNV: u64 = {:#x};\n\
          pub const FONT_SOURCE_FNV: u64 = {:#x};\n\
          pub const FONT_ATLAS_FNV: u64 = {:#x};\n\
          pub const FONT_SOURCE_SIZE: f32 = {SOURCE_SIZE:?};\n\
          pub static FONT_GLYPHS: &[Glyph] = &[{glyphs}];\n\
          pub static FONT_PIXELS: &[u8] = &{packed_pixels:?};\n",
-        fnv64(&generator_bytes),
+        fnv64(generator.as_bytes()),
         fnv64(&font_bytes),
         fnv64(&packed_pixels),
     );
