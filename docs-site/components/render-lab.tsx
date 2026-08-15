@@ -613,7 +613,8 @@ export const RenderLab = (): React.JSX.Element => {
               type="range"
               value={camera.phi}
               onChange={(event) => {
-                setCamera((current) => ({ ...current, phi: Number(event.currentTarget.value) }));
+                const phi = event.currentTarget.valueAsNumber;
+                setCamera((current) => ({ ...current, phi }));
               }}
             />
           </label>
@@ -628,7 +629,8 @@ export const RenderLab = (): React.JSX.Element => {
               type="range"
               value={camera.theta}
               onChange={(event) => {
-                setCamera((current) => ({ ...current, theta: Number(event.currentTarget.value) }));
+                const theta = event.currentTarget.valueAsNumber;
+                setCamera((current) => ({ ...current, theta }));
               }}
             />
           </label>
