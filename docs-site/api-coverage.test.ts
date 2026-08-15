@@ -200,5 +200,11 @@ describe('static agent documentation', () => {
 
     const apiHtml = resolve(output, 'docs/api.html');
     expect(statSync(apiHtml).size).toBeLessThan(669_367);
+
+    const optionsHtml = readFileSync(resolve(output, 'docs/options.html'), 'utf8');
+    expect(optionsHtml).toContain('aria-label="RenderImageOptions properties"');
+    expect(optionsHtml).toContain('aria-expanded="false"');
+    expect(optionsHtml).toContain('Expand all');
+    expect(optionsHtml).not.toContain('<table id="type-table-');
   });
 });
