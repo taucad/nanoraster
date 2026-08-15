@@ -1,18 +1,43 @@
+/*
+ * The workbench is a full-bleed band rather than a card: it supplies its own
+ * ground edge to edge, so no strip of the page shows around it. Content is
+ * held to a column by the `> *` rule below.
+ *
+ * Both themes are instrument chrome. The viewports stay dark in either,
+ * because they are render surfaces whose clear colour the demo itself owns.
+ */
 .lab {
+  --lab-ink: #17202a;
+  --lab-muted: #5b6874;
+  --lab-line: #ccd4da;
+  --lab-panel: #ffffff;
+  --lab-well: #0c1015;
+  --lab-field: #f4f7f9;
+  --lab-signal: #0e7c98;
+  --lab-ground: #e3e8ec;
+
+  padding: clamp(56px, 7vw, 104px) 24px;
+  color: var(--lab-ink);
+  background: var(--lab-ground);
+  border-top: 1px solid var(--lab-line);
+  border-bottom: 1px solid var(--lab-line);
+}
+
+:global(.dark) .lab {
   --lab-ink: #e8edf2;
   --lab-muted: #8c9aa8;
   --lab-line: #29333d;
   --lab-panel: #11171d;
   --lab-well: #0c1015;
+  --lab-field: #0c1015;
   --lab-signal: #6cdcf1;
+  --lab-ground: #0d1217;
+}
 
+/** Full-bleed ground, single readable column. */
+.lab > * {
   max-width: 1320px;
-  margin: 0 auto;
-  padding: 40px;
-  color: var(--lab-ink);
-  background: #0d1217;
-  border: 1px solid #26303a;
-  box-shadow: 0 30px 90px rgb(8 13 18 / 18%);
+  margin-inline: auto;
 }
 
 .labHeader {
@@ -27,11 +52,11 @@
 .labHeader h2 {
   max-width: 760px;
   margin: 4px 0 0;
-  font-family: 'Arial Narrow', 'Helvetica Neue', sans-serif;
-  font-size: clamp(2rem, 5vw, 4.6rem);
+  font-size: clamp(1.9rem, 4vw, 3.6rem);
   font-weight: 800;
-  line-height: 0.95;
-  letter-spacing: -0.045em;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
 }
 
 .labHeader > p {
@@ -172,7 +197,7 @@
 
 .telemetry span + span::before {
   margin-right: 12px;
-  color: #3b4651;
+  color: var(--lab-line);
   content: '/';
 }
 
@@ -215,10 +240,9 @@
 
 .emptyCapture span {
   color: #35404a;
-  font-family: 'Arial Narrow', sans-serif;
-  font-size: clamp(3.6rem, 8vw, 7rem);
-  font-weight: 900;
-  letter-spacing: -0.08em;
+  font-size: clamp(3rem, 7vw, 5.6rem);
+  font-weight: 800;
+  letter-spacing: -0.06em;
 }
 
 .emptyCapture p {
@@ -248,7 +272,7 @@
 .presets button {
   min-height: 40px;
   padding: 0 15px;
-  border: 1px solid #3a4651;
+  border: 1px solid var(--lab-line);
   border-radius: 2px;
   font-size: 0.78rem;
   font-weight: 700;
@@ -373,8 +397,8 @@
   min-height: 36px;
   padding: 0 9px;
   color: var(--lab-ink);
-  background: var(--lab-well);
-  border: 1px solid #34404a;
+  background: var(--lab-field);
+  border: 1px solid var(--lab-line);
   border-radius: 2px;
 }
 
@@ -382,8 +406,8 @@
   width: 100%;
   min-height: 36px;
   padding: 3px;
-  background: var(--lab-well);
-  border: 1px solid #34404a;
+  background: var(--lab-field);
+  border: 1px solid var(--lab-line);
 }
 
 .checkControl {
@@ -407,7 +431,7 @@
 
 @media (max-width: 1000px) {
   .lab {
-    padding: 26px;
+    padding: clamp(44px, 6vw, 64px) 24px;
   }
 
   .workbench {
@@ -431,9 +455,7 @@
 
 @media (max-width: 700px) {
   .lab {
-    padding: 18px;
-    border-right: 0;
-    border-left: 0;
+    padding: 44px 16px;
   }
 
   .labHeader {
