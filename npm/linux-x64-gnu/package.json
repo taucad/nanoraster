@@ -1,6 +1,6 @@
 {
   "name": "nanoraster-linux-x64-gnu",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Native nanoraster addon for Linux x64 glibc.",
   "license": "Apache-2.0",
   "repository": {
