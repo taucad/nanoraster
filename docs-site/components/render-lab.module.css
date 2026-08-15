@@ -5,6 +5,7 @@
   --lab-panel: #11171d;
   --lab-well: #0c1015;
   --lab-signal: #6cdcf1;
+
   max-width: 1320px;
   margin: 0 auto;
   padding: 40px;
@@ -286,7 +287,7 @@
   width: 1px;
   height: 1px;
   overflow: hidden;
-  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 

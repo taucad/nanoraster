@@ -34,7 +34,7 @@ for (let index = 0; index < iterations; index += 1) {
 durations.sort((left, right) => left - right);
 
 const report = {
-  name: 'gear-pbr-parse-raster-encode-512x384-v2',
+  name: 'gear-parse-raster-encode-512x384-v1',
   adapter: native.describeAdapter(),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,
