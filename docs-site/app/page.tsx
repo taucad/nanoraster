@@ -5,6 +5,7 @@ import { RenderLab } from '@/components/render-lab';
 
 import styles from './page.module.css';
 
+/** Render the NanoRaster homepage and live capture workbench. */
 const Page = (): React.JSX.Element => (
   <main className={styles.page}>
     <nav className={styles.nav} aria-label="Primary navigation">

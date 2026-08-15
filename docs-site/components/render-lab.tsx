@@ -74,6 +74,7 @@ const CAMERA_FOV = 45;
 const DEFAULT_GLB = '/demo/gear-12-metal.glb';
 let wasmRenderer: Promise<WasmRenderer> | undefined;
 
+/** Load and cache the browser demonstration's generated NanoRaster binding. */
 const loadWasmRenderer = async (): Promise<WasmRenderer> => {
   wasmRenderer ??= (async () => {
     const moduleUrl = new URL('/demo/render_wasm.js', window.location.href).href;
@@ -86,6 +87,7 @@ const loadWasmRenderer = async (): Promise<WasmRenderer> => {
   return wasmRenderer;
 };
 
+/** Convert an opaque CSS hex color to NanoRaster's normalized RGBA tuple shape. */
 const colorChannels = (hex: string): readonly [number, number, number, number] => [
   Number.parseInt(hex.slice(1, 3), 16) / 255,
   Number.parseInt(hex.slice(3, 5), 16) / 255,
@@ -93,17 +95,20 @@ const colorChannels = (hex: string): readonly [number, number, number, number] =
   1,
 ];
 
+/** Round camera telemetry without changing the underlying coordinate convention. */
 const round = (value: number, precision = 1): number => {
   const factor = 10 ** precision;
   return Math.round(value * factor) / factor;
 };
 
+/** Resolve the selected NanoRaster up axis as a Three.js vector. */
 const axisVector = (up: RenderUpAxis): THREE.Vector3 => {
   if (up === 'x') return new THREE.Vector3(1, 0, 0);
   if (up === 'z') return new THREE.Vector3(0, 0, 1);
   return new THREE.Vector3(0, 1, 0);
 };
 
+/** Enumerate all eight corners of an axis-aligned model bound. */
 const boxCorners = ({ min, max }: THREE.Box3): THREE.Vector3[] =>
   Array.from(
     { length: 8 },
@@ -111,6 +116,7 @@ const boxCorners = ({ min, max }: THREE.Box3): THREE.Vector3[] =>
       new THREE.Vector3(index & 1 ? max.x : min.x, index & 2 ? max.y : min.y, index & 4 ? max.z : min.z),
   );
 
+/** Fit a perspective camera to the model using NanoRaster's margin semantics. */
 const fitPerspective = (
   camera: THREE.PerspectiveCamera,
   bounds: THREE.Box3,
@@ -139,6 +145,7 @@ const fitPerspective = (
   camera.updateProjectionMatrix();
 };
 
+/** Fit an orthographic camera to the model using NanoRaster's margin semantics. */
 const fitOrthographic = (
   camera: THREE.OrthographicCamera,
   bounds: THREE.Box3,
@@ -168,6 +175,7 @@ const fitOrthographic = (
   camera.updateProjectionMatrix();
 };
 
+/** Release geometry, material, and texture resources owned by a loaded GLB. */
 const disposeModel = (model: THREE.Object3D): void => {
   model.traverse((object) => {
     if (!(object instanceof THREE.LineSegments || object instanceof THREE.Mesh)) return;
@@ -184,10 +192,12 @@ const disposeModel = (model: THREE.Object3D): void => {
   });
 };
 
+/** Draw the current interactive scene once. */
 const renderViewport = (viewport: Viewport): void => {
   viewport.renderer.render(viewport.scene, viewport.active);
 };
 
+/** Apply the public NanoRaster camera controls to the interactive Three.js view. */
 const applyCamera = (viewport: Viewport, camera: Camera, settings: Settings): void => {
   viewport.synchronizing = true;
   const next = settings.projection === 'orthographic' ? viewport.orthographic : viewport.perspective;
@@ -219,6 +229,7 @@ const applyCamera = (viewport: Viewport, camera: Camera, settings: Settings): vo
   renderViewport(viewport);
 };
 
+/** Sample the live camera position for the capture evidence readout. */
 const capturePosition = (viewport: Viewport): readonly [number, number, number] => [
   round(viewport.active.position.x, 2),
   round(viewport.active.position.y, 2),
@@ -286,6 +297,7 @@ export const RenderLab = (): React.JSX.Element => {
     };
     viewportRef.current = viewport;
 
+    /** Keep the drawing buffer and camera fit aligned with the responsive panel. */
     const resize = (): void => {
       const width = Math.max(1, mount.clientWidth);
       const height = Math.max(1, mount.clientHeight);
@@ -379,10 +391,12 @@ export const RenderLab = (): React.JSX.Element => {
     [],
   );
 
+  /** Update one capture setting while preserving the rest. */
   const updateSettings = <Key extends keyof Settings>(key: Key, value: Settings[Key]): void => {
     setSettings((current) => ({ ...current, [key]: value }));
   };
 
+  /** Validate and load a user-selected binary glTF into both render paths. */
   const loadFile = async (file: File): Promise<void> => {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
@@ -397,6 +411,7 @@ export const RenderLab = (): React.JSX.Element => {
     }
   };
 
+  /** Sample the live camera and encode the corresponding NanoRaster WebP. */
   const renderFrame = async (): Promise<void> => {
     const viewport = viewportRef.current;
     if (!viewport || !glb) return;
@@ -447,6 +462,7 @@ export const RenderLab = (): React.JSX.Element => {
     }
   };
 
+  /** Apply a named camera preset through the same public angle controls. */
   const usePreset = (next: Camera): void => {
     setCamera(next);
   };

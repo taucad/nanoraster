@@ -7,6 +7,7 @@ type Vector3Tuple = readonly [x: number, y: number, z: number];
 const degrees = 180 / Math.PI;
 const radians = Math.PI / 180;
 
+/** Constrain a scalar to an inclusive range. */
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(maximum, Math.max(minimum, value));
 
