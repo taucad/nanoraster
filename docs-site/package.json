@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "next build",
+    "build": "pnpm --dir .. exec tsdown && next build",
     "dev": "next dev",
     "generate:source": "fumadocs-mdx",
     "lint": "eslint .",
