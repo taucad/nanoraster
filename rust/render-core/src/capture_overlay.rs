@@ -938,8 +938,8 @@ fn composite_coverage(rendered: &mut Rendered, coverage: &[u8], rect: Rect, colo
             let destination_alpha = u32::from(rendered.rgba[index + 3]);
             let output_alpha =
                 source_alpha + (destination_alpha * (255 - source_alpha) + 127) / 255;
-            for channel in 0..3 {
-                let source = u32::from(color[channel]) * source_alpha;
+            for (channel, source_channel) in color.iter().take(3).enumerate() {
+                let source = u32::from(*source_channel) * source_alpha;
                 let destination = u32::from(rendered.rgba[index + channel])
                     * destination_alpha
                     * (255 - source_alpha)

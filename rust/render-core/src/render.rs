@@ -125,7 +125,7 @@ pub(crate) fn camera_state(scene: &Scene, options: &RenderOptions) -> CameraStat
     let max = Vec3::from(max);
     let center = (min + max) * 0.5;
     let mut radius = (max - center).length();
-    if !(radius > 0.0) {
+    if radius <= 0.0 || radius.is_nan() {
         // Matches resetCamera's degenerate-geometry fallback.
         radius = 1000.0;
     }
@@ -166,16 +166,16 @@ pub(crate) fn camera_state(scene: &Scene, options: &RenderOptions) -> CameraStat
 
     // DirectX/WebGPU NDC convention: Z in [0, 1], Y-up.
     let mut projection = glam::camera::rh::proj::directx::perspective(fov, aspect, near, far);
-    let zoom = fit_zoom(
+    let zoom = fit_zoom(FitZoomInput {
         eye,
-        center,
+        target: center,
         min,
         max,
         fov,
         aspect,
-        options.padding_factor,
-        up,
-    );
+        padding: options.padding_factor,
+        world_up: up,
+    });
     // three.js PerspectiveCamera.zoom divides the frustum extents.
     projection.x_axis.x *= zoom;
     projection.y_axis.y *= zoom;
@@ -257,7 +257,8 @@ fn spherical_eye(distance: f32, phi: f32, theta: f32, up: UpAxis) -> (Vec3, Vec3
 /// Equivalent to `computeViewFittingZoom` (`camera.utils.ts`): perspective-correct
 /// per-corner angular extents against the frustum. `world_up` is the explicit
 /// spherical-placement up axis.
-fn fit_zoom(
+#[derive(Clone, Copy)]
+struct FitZoomInput {
     eye: Vec3,
     target: Vec3,
     min: Vec3,
@@ -266,7 +267,19 @@ fn fit_zoom(
     aspect: f32,
     padding: f32,
     world_up: Vec3,
-) -> f32 {
+}
+
+fn fit_zoom(input: FitZoomInput) -> f32 {
+    let FitZoomInput {
+        eye,
+        target,
+        min,
+        max,
+        fov,
+        aspect,
+        padding,
+        world_up,
+    } = input;
     const EPSILON: f32 = 1e-6;
     let to_target = target - eye;
     if to_target.length_squared() < EPSILON
@@ -1082,7 +1095,16 @@ mod tests {
             .into_iter()
             .map(|axis| {
                 let (offset, up) = spherical_eye(8.0, phi, theta, axis);
-                fit_zoom(offset, Vec3::ZERO, min, max, fov, 16.0 / 9.0, 0.9, up)
+                fit_zoom(FitZoomInput {
+                    eye: offset,
+                    target: Vec3::ZERO,
+                    min,
+                    max,
+                    fov,
+                    aspect: 16.0 / 9.0,
+                    padding: 0.9,
+                    world_up: up,
+                })
             })
             .collect();
         assert!(zooms[0] > 0.0);
@@ -1095,8 +1117,21 @@ mod tests {
         let (min, max) = (Vec3::splat(-1.0), Vec3::splat(1.0));
         let fov = 45f32.to_radians();
         let (offset, up) = spherical_eye(8.0, 60f32.to_radians(), -45f32.to_radians(), UpAxis::Y);
-        let full = fit_zoom(offset, Vec3::ZERO, min, max, fov, 16.0 / 9.0, 0.9, up);
-        let half = fit_zoom(offset, Vec3::ZERO, min, max, fov, 16.0 / 9.0, 0.45, up);
+        let input = FitZoomInput {
+            eye: offset,
+            target: Vec3::ZERO,
+            min,
+            max,
+            fov,
+            aspect: 16.0 / 9.0,
+            padding: 0.9,
+            world_up: up,
+        };
+        let full = fit_zoom(input);
+        let half = fit_zoom(FitZoomInput {
+            padding: 0.45,
+            ..input
+        });
         assert!((half - full * 0.5).abs() < 1e-5);
     }
 
@@ -1106,16 +1141,16 @@ mod tests {
         // world up, exercising the fallback basis branch.
         let (min, max) = (Vec3::splat(-1.0), Vec3::splat(1.0));
         let (offset, up) = spherical_eye(8.0, 0.0, 0.0, UpAxis::Y);
-        let zoom = fit_zoom(
-            offset,
-            Vec3::ZERO,
+        let zoom = fit_zoom(FitZoomInput {
+            eye: offset,
+            target: Vec3::ZERO,
             min,
             max,
-            45f32.to_radians(),
-            16.0 / 9.0,
-            0.9,
-            up,
-        );
+            fov: 45f32.to_radians(),
+            aspect: 16.0 / 9.0,
+            padding: 0.9,
+            world_up: up,
+        });
         assert!(zoom > 0.0 && zoom.is_finite());
     }
 
@@ -1127,16 +1162,16 @@ mod tests {
             (Vec3::new(0.0, -2.0, 0.0), Vec3::new(0.0, 2.0, 0.0)),
             (Vec3::new(-2.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0)),
         ] {
-            let zoom = fit_zoom(
-                Vec3::new(0.0, 0.0, 10.0),
-                Vec3::ZERO,
+            let zoom = fit_zoom(FitZoomInput {
+                eye: Vec3::new(0.0, 0.0, 10.0),
+                target: Vec3::ZERO,
                 min,
                 max,
                 fov,
-                1.0,
-                1.0,
-                Vec3::Y,
-            );
+                aspect: 1.0,
+                padding: 1.0,
+                world_up: Vec3::Y,
+            });
             assert!((zoom - expected).abs() < 1e-5);
         }
     }
@@ -1144,32 +1179,32 @@ mod tests {
     #[test]
     fn fit_zoom_uses_explicit_non_default_up_axis() {
         let fov = 45f32.to_radians();
-        let zoom = fit_zoom(
-            Vec3::new(0.0, 0.0, 10.0),
-            Vec3::ZERO,
-            Vec3::new(-2.0, -1.0, 0.0),
-            Vec3::new(2.0, 1.0, 0.0),
+        let zoom = fit_zoom(FitZoomInput {
+            eye: Vec3::new(0.0, 0.0, 10.0),
+            target: Vec3::ZERO,
+            min: Vec3::new(-2.0, -1.0, 0.0),
+            max: Vec3::new(2.0, 1.0, 0.0),
             fov,
-            1.0,
-            1.0,
-            Vec3::X,
-        );
+            aspect: 1.0,
+            padding: 1.0,
+            world_up: Vec3::X,
+        });
         let expected = 10.0 * (fov / 2.0).tan() / 2.0;
         assert!((zoom - expected).abs() < 1e-5);
     }
 
     #[test]
     fn fit_zoom_agrees_with_typescript_for_shared_asymmetric_fixture() {
-        let zoom = fit_zoom(
-            Vec3::new(6.0, 7.0, 8.0),
-            Vec3::new(1.0, -2.0, 0.5),
-            Vec3::new(-3.0, -1.0, -2.0),
-            Vec3::new(4.0, 5.0, 3.0),
-            47f32.to_radians(),
-            4.0 / 3.0,
-            0.9,
-            Vec3::Z,
-        );
+        let zoom = fit_zoom(FitZoomInput {
+            eye: Vec3::new(6.0, 7.0, 8.0),
+            target: Vec3::new(1.0, -2.0, 0.5),
+            min: Vec3::new(-3.0, -1.0, -2.0),
+            max: Vec3::new(4.0, 5.0, 3.0),
+            fov: 47f32.to_radians(),
+            aspect: 4.0 / 3.0,
+            padding: 0.9,
+            world_up: Vec3::Z,
+        });
 
         assert!((zoom - 0.488_220_08).abs() < 1e-5);
     }
@@ -1184,16 +1219,16 @@ mod tests {
         );
         for (fov, aspect) in [(0.0, 1.0), (f32::NAN, 1.0), (45f32.to_radians(), 0.0)] {
             assert_eq!(
-                fit_zoom(
-                    arguments.0,
-                    arguments.1,
-                    arguments.2,
-                    arguments.3,
+                fit_zoom(FitZoomInput {
+                    eye: arguments.0,
+                    target: arguments.1,
+                    min: arguments.2,
+                    max: arguments.3,
                     fov,
                     aspect,
-                    0.9,
-                    Vec3::Y,
-                ),
+                    padding: 0.9,
+                    world_up: Vec3::Y,
+                }),
                 1.0
             );
         }
@@ -1210,19 +1245,31 @@ mod tests {
                 Vec3::new(1.0, 1.0, 0.0).normalize(),
             ),
         ] {
-            assert!(fit_zoom(eye, Vec3::ZERO, bounds.0, bounds.1, fov, 1.0, 0.9, up).is_finite());
+            assert!(
+                fit_zoom(FitZoomInput {
+                    eye,
+                    target: Vec3::ZERO,
+                    min: bounds.0,
+                    max: bounds.1,
+                    fov,
+                    aspect: 1.0,
+                    padding: 0.9,
+                    world_up: up,
+                })
+                .is_finite()
+            );
         }
         assert_eq!(
-            fit_zoom(
-                Vec3::ZERO,
-                Vec3::Z,
-                Vec3::splat(-2.0),
-                Vec3::splat(-1.0),
+            fit_zoom(FitZoomInput {
+                eye: Vec3::ZERO,
+                target: Vec3::Z,
+                min: Vec3::splat(-2.0),
+                max: Vec3::splat(-1.0),
                 fov,
-                1.0,
-                0.9,
-                Vec3::Y,
-            ),
+                aspect: 1.0,
+                padding: 0.9,
+                world_up: Vec3::Y,
+            }),
             1.0
         );
     }

@@ -39,4 +39,4 @@ pollster = "1.0.1"
 zune-jpeg = "0.5.15"
 
 [build-dependencies]
-fontdue = { version = "=0.9.3", default-features = false, features = ["std"] }
+fontdue = { version = "=0.9.4", default-features = false, features = ["std"] }

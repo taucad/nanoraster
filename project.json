@@ -69,6 +69,7 @@
     },
     "docs": {
       "executor": "nx:run-commands",
+      "dependsOn": ["build"],
       "options": {
         "command": "pnpm run docs:build && pnpm run docs:test"
       }
