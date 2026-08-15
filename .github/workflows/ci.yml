@@ -153,6 +153,8 @@ jobs:
           pattern: native-*
           path: candidate
           merge-multiple: true
+      - name: Install lavapipe software Vulkan
+        run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
       - run: pnpm run build
       - run: pnpm run pkgcheck
       - run: pnpm run check:size
@@ -187,6 +189,8 @@ jobs:
         with:
           name: npm-candidate
           path: candidate
+      - name: Install lavapipe software Vulkan
+        run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
       - run: pnpm run test:package
         env:
           NANORASTER_CANDIDATE_DIR: candidate
