@@ -170,16 +170,16 @@ export const ApiTypeTable = ({
             </CollapsibleTrigger>
 
             <CollapsibleContent>
-              <div className="border-t px-3 py-4">
+              <div className="border-t px-3 py-2.5">
                 {field.description && (
-                  <div className="prose prose-no-margin mb-4 text-sm empty:hidden">{field.description}</div>
+                  <div className="prose prose-no-margin mb-2 text-sm empty:hidden">{field.description}</div>
                 )}
 
                 {(field.default != null ||
                   field.typeDescriptionLink ||
                   field.parameters?.length ||
                   field.returns) && (
-                  <dl className="grid grid-cols-[minmax(5rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-3 border-t pt-3">
+                  <dl className="grid grid-cols-[minmax(5rem,auto)_minmax(0,1fr)] items-center gap-x-4 gap-y-2 border-t pt-2 not-prose">
                     {field.typeDescriptionLink && (
                       <Detail label="Reference">
                         <Link href={field.typeDescriptionLink} className="font-mono text-xs underline">
