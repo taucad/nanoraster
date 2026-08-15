@@ -1,3 +1,13 @@
+## 0.2.0 (2026-08-15)
+
+### 🚀 Features
+
+- Add factor-only glTF metallic-roughness PBR rendering. ([#8](https://github.com/taucad/nanoraster/pull/8))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.1.0 (2026-08-15)
 
 ### 🚀 Features
