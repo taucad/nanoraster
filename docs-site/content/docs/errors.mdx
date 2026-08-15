@@ -1,12 +1,55 @@
 ---
 title: Errors
-description: Handle stable error codes and host failures.
+description: Handle stable failure codes and decide when a render can be retried.
 ---
 
-Rendering rejects with `RenderError`. Its `code` is one of
-`adapter-unavailable`, `device-lost`, `gpu`, `parse`, `encode`, or `unknown`.
-The `isGpuFault` getter identifies transient adapter, device, and driver
-failures. Parse and encode failures are deterministic for the same request.
+Rendering rejects with `RenderError`. Parse and encode failures are
+deterministic for the same request; GPU faults may succeed after the host or
+device recovers.
+
+## Failure taxonomy
+
+### `RenderFailureCode`
+
+```typescript
+export type RenderFailureCode =
+  | 'adapter-unavailable'
+  | 'device-lost'
+  | 'gpu'
+  | 'parse'
+  | 'encode'
+  | 'unknown';
+```
+
+| Value                 | Meaning                                                     | Retry guidance                                              |
+| --------------------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
+| `adapter-unavailable` | No compatible GPU adapter was available.                    | Keep the last image and retry after host recovery.          |
+| `device-lost`         | The GPU device was lost during rendering.                   | Keep the last image and retry with a new device.            |
+| `gpu`                 | Another adapter, driver, or render-pass failure occurred.   | Treat as transient unless host diagnostics prove otherwise. |
+| `parse`               | GLB bytes or request options violated the input contract.   | Fix the same input before retrying.                         |
+| `encode`              | The selected encoder could not produce the requested image. | Fix the format or background before retrying.               |
+| `unknown`             | The thrown value had no recognized failure tag.             | Inspect `message` and preserve the original context.        |
+
+## Typed error
+
+### `RenderError`
+
+`RenderError` extends the native `Error` class and adds this public surface:
+
+```typescript
+export declare class RenderError extends Error {
+  readonly code: RenderFailureCode;
+  constructor(code: RenderFailureCode, message: string);
+  static from(error: unknown): RenderError;
+  get isGpuFault(): boolean;
+}
+```
+
+- `constructor(code, message)` creates an explicitly classified error.
+- `RenderError.from(error)` returns an existing `RenderError` unchanged or
+  classifies any other thrown value; it never throws.
+- `code` is the stable machine-readable classification.
+- `isGpuFault` is `true` for `adapter-unavailable`, `device-lost`, and `gpu`.
 
 ```typescript
 import { RenderError, renderGlbToImage } from 'nanoraster';
@@ -18,7 +61,3 @@ try {
   if (!failure.isGpuFault) throw failure;
 }
 ```
-
-<auto-type-table path="./props.ts" name="RenderError" />
-
-<auto-type-table path="./props.ts" name="RenderFailureCode" />
