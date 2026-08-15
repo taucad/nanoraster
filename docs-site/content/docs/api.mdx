@@ -1,32 +1,176 @@
 ---
 title: API
-description: Public TypeScript interfaces generated from source JSDoc.
+description: Render GLB bytes and work with typed results.
 ---
+
+Import every public API from `nanoraster`. Request shapes live on the
+[Options page](/docs/options), and failure handling lives on the
+[Errors page](/docs/errors).
 
 ## Operations
 
-- `renderGlbToImage` renders one view.
-- `renderGlbToImages` renders an ordered set of identified views.
-- `createRenderImageOptions` and `createRenderImagesOptions` preserve literal
-  option types while rejecting extra keys.
+### `renderGlbToImage`
+
+Render one GLB camera view to one owned image file.
+Import: `import { renderGlbToImage } from 'nanoraster';`
+
+```typescript
+export declare const renderGlbToImage: (
+  glb: Uint8Array<ArrayBuffer>,
+  options: RenderImageOptions,
+) => Promise<RenderedImageFile>;
+```
+
+- **Parameters:** owned GLB bytes and one validated render request.
+- **Returns:** a newly allocated `thumbnail.<format>` file.
+- **Throws:** `RenderError` for invalid requests, malformed GLB data, GPU faults,
+  or encoding failures.
+
+### `renderGlbToImages`
+
+Parse and upload a GLB once, then render an ordered set of identified views.
+Import: `import { renderGlbToImages } from 'nanoraster';`
+
+```typescript
+export declare const renderGlbToImages: <const Options extends RenderImagesOptions>(
+  glb: Uint8Array<ArrayBuffer>,
+  options: StrictRenderImagesOptions<Options>,
+) => Promise<RenderedImages<Options['views']>>;
+```
+
+`StrictRenderImagesOptions` is the package's internal exactness check: callers
+pass `RenderImagesOptions`, while TypeScript rejects extra keys, empty view
+tuples, and misplaced per-view settings.
+
+- **Parameters:** owned GLB bytes and shared settings with a non-empty view tuple.
+- **Returns:** a tuple with the input view IDs and order preserved.
+- **Throws:** `RenderError` for invalid requests, malformed GLB data, GPU faults,
+  encoding failures, or a renderer cardinality violation.
+
+### `createRenderImageOptions`
+
+Preserve literal singular option values while rejecting misspelled keys.
+Import: `import { createRenderImageOptions } from 'nanoraster';`
+
+```typescript
+export declare const createRenderImageOptions: <const Options extends RenderImageOptions>(
+  options: NoExtraKeys<Options, RenderImageOptions>,
+) => Options;
+```
+
+The helper returns the same object. `NoExtraKeys` is an internal compile-time
+check and adds no runtime work.
+
+### `createRenderImagesOptions`
+
+Preserve literal view IDs and tuple order while rejecting misplaced or
+misspelled keys.
+Import: `import { createRenderImagesOptions } from 'nanoraster';`
+
+```typescript
+export declare const createRenderImagesOptions: <const Options extends RenderImagesOptions>(
+  options: StrictRenderImagesOptions<Options>,
+) => Options;
+```
+
+The helper returns the same object. Use its inferred result directly with
+`renderGlbToImages`.
+
+## Output formats
+
+### `imageMimeTypes`
+
+The readonly runtime map contains every accepted output format and its emitted
+MIME type.
+
+```typescript
+export declare const imageMimeTypes: {
+  readonly png: 'image/png';
+  readonly webp: 'image/webp';
+  readonly jpeg: 'image/jpeg';
+  readonly jpg: 'image/jpeg';
+};
+```
+
+## Results
+
+### `RenderedImageFile`
+
+```typescript
+export type RenderedImageFile = {
+  name: string;
+  bytes: Uint8Array<ArrayBuffer>;
+  mimeType: 'image/png' | 'image/webp' | 'image/jpeg';
+};
+```
+
+<auto-type-table path="./props.ts" name="RenderedImageFile" caption="RenderedImageFile properties" />
+
+### `RenderedImage`
+
+```typescript
+export type RenderedImage<Id extends string = string> = {
+  readonly id: Id;
+  readonly file: RenderedImageFile;
+};
+```
+
+<auto-type-table path="./props.ts" name="RenderedImage" caption="RenderedImage properties" />
+
+### `RenderedImages`
+
+```typescript
+export type RenderedImages<Views extends readonly RenderImageView[]> = {
+  readonly [Index in keyof Views]: Views[Index] extends RenderImageView<infer Id> ? RenderedImage<Id> : never;
+};
+```
+
+This mapped tuple preserves each input view's literal ID, position, and tuple
+length. It does not expose `Array` prototype members as result fields.
 
 ## Validation constants
 
-`renderImageDimensionRange`, `renderImageQualityRange`,
-`renderImageMarginRange`, `renderImageAnnotatedMinDimension`,
-`renderImageLabelMaxLength`, `renderImageLabelPattern`,
-`renderImageViewIdPattern`, and `renderImageBackgroundPattern` expose the
-runtime validation contract. `imageMimeTypes` maps every output format to its
-MIME type.
+All ranges are inclusive. The regular expressions are the exact runtime values.
 
-<auto-type-table path="./props.ts" name="RenderedImageFile" />
+| Export                             | Runtime value                             | Unit or syntax             | Affected field              |
+| ---------------------------------- | ----------------------------------------- | -------------------------- | --------------------------- |
+| `renderImageDimensionRange`        | `readonly [16, 4096]`                     | pixels                     | `width`, `height`           |
+| `renderImageQualityRange`          | `readonly [0, 1]`                         | normalized encoder quality | `quality`                   |
+| `renderImageMarginRange`           | `readonly [0, 0.5]`                       | fraction of fitted extent  | `margin`                    |
+| `renderImageAnnotatedMinDimension` | `192`                                     | pixels                     | annotated `width`, `height` |
+| `renderImageLabelMaxLength`        | `64`                                      | Unicode code points        | `label`                     |
+| `renderImageLabelPattern`          | `/^[\u0020-\u007E\u00B5\u2014\u2212]+$/u` | supported characters       | `label`                     |
+| `renderImageViewIdPattern`         | `/^[\dA-Za-z][\w-]{0,63}$/u`              | identifier syntax          | `id`                        |
+| `renderImageBackgroundPattern`     | `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`   | hexadecimal color          | `background`                |
 
-<auto-type-table path="./props.ts" name="RenderedImage" />
+### `renderImageDimensionRange`
 
-<auto-type-table path="./props.ts" name="RenderedImages" />
+Inclusive pixel bounds for both image dimensions: `readonly [16, 4096]`.
 
-<auto-type-table path="./props.ts" name="RenderImageFormat" />
+### `renderImageQualityRange`
 
-<auto-type-table path="./props.ts" name="RenderUpAxis" />
+Inclusive encoder-quality bounds: `readonly [0, 1]`.
 
-<auto-type-table path="./props.ts" name="RenderProjection" />
+### `renderImageMarginRange`
+
+Inclusive corner-fit margin bounds: `readonly [0, 0.5]`.
+
+### `renderImageAnnotatedMinDimension`
+
+Minimum width and height when axes, a label, or a scale is enabled: `192` pixels.
+
+### `renderImageLabelMaxLength`
+
+Maximum label length: `64` Unicode code points.
+
+### `renderImageLabelPattern`
+
+Supported label characters: `/^[\u0020-\u007E\u00B5\u2014\u2212]+$/u`.
+
+### `renderImageViewIdPattern`
+
+Stable view identifier syntax: `/^[\dA-Za-z][\w-]{0,63}$/u`.
+
+### `renderImageBackgroundPattern`
+
+Hex clear-color syntax: `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`.

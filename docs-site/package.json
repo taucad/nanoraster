@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "if [ ! -f ../dist/index.d.mts ]; then pnpm --dir .. exec tsdown; fi && next build",
+    "build": "if [ ! -f ../dist/index.d.mts ]; then pnpm --dir .. exec tsdown; fi && next build && VERIFY_STATIC_OUTPUT=true vitest run api-coverage.test.ts",
     "dev": "next dev",
     "generate:source": "fumadocs-mdx",
     "lint": "eslint .",
