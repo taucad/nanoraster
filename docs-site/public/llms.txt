@@ -2,6 +2,6 @@
 
 Tiny headless WebGPU GLTF renderer for deterministic PNG, WebP, and JPEG output.
 
-- Overview: https://nanoraster.tau.new/docs
-- Quick start: https://nanoraster.tau.new/docs/quick-start
-- API: https://nanoraster.tau.new/docs/api
+- Overview: https://nanoraster.xyz/docs
+- Quick start: https://nanoraster.xyz/docs/quick-start
+- API: https://nanoraster.xyz/docs/api

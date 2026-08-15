@@ -57,7 +57,7 @@ registry signatures with `npm audit signatures`.
 
 ## Documentation
 
-- [Documentation](https://nanoraster.tau.new)
+- [Documentation](https://nanoraster.xyz)
 - [Source](https://github.com/taucad/nanoraster)
 - [Changelog](CHANGELOG.md)
 - [Issues](https://github.com/taucad/nanoraster/issues)

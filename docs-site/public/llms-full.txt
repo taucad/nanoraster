@@ -12,6 +12,6 @@ background, and optional axes, label, and physical scale overlays.
 RenderError exposes stable adapter-unavailable, device-lost, gpu, parse,
 encode, and unknown codes. isGpuFault is true for transient GPU failures.
 
-Documentation: https://nanoraster.tau.new/docs
+Documentation: https://nanoraster.xyz/docs
 Source: https://github.com/taucad/nanoraster
 Package: https://www.npmjs.com/package/nanoraster
