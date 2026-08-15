@@ -7,7 +7,9 @@ import './global.css';
 export const metadata: Metadata = {
   description: 'Tiny headless WebGPU GLTF renderer for deterministic PNG, WebP, and JPEG output.',
   icons: {
-    apple: '/favicon.ico',
+    // iOS masks the icon itself, so this one is full-bleed and opaque
+    // rather than the rounded, transparent-cornered tile.
+    apple: { sizes: '180x180', url: '/apple-touch-icon.png' },
     icon: [
       { url: '/favicon.svg', type: 'image/svg+xml' },
       { url: '/favicon.ico', sizes: '32x32' },

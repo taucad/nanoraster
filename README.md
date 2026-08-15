@@ -1,6 +1,6 @@
-<p align="center">
+<h1 align="center">
   <img src="images/banner.svg" alt="nanoraster" width="100%">
-</p>
+</h1>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/nanoraster"><img src="https://img.shields.io/npm/v/nanoraster?logo=npm&logoColor=white&label=npm&color=cb3837" alt="npm version"></a>
