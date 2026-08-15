@@ -1,0 +1,17 @@
+---
+title: Rendering
+description: Understand the primary operation and output contract.
+---
+
+`renderGlbToImage` accepts owned GLB bytes and one camera configuration. It
+returns a named image with owned bytes and the matching MIME type. The default
+camera uses a perspective projection, a `z` up axis, and a transparent
+background.
+
+`renderGlbToImages` applies shared settings to an ordered tuple of identified
+views. Result IDs and order match the input tuple. Use this form when a model
+needs several canonical thumbnails without reparsing the GLB for each view.
+
+Node.js loads the native package for the active host. Browsers load the wasm
+module and request a WebGPU adapter. Both paths use the same Rust render core
+and codec implementations.

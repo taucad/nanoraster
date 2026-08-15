@@ -1,13 +1,131 @@
 {
   "name": "nanoraster",
   "version": "0.0.0",
-  "description": "Placeholder for NanoRaster.",
+  "description": "Tiny headless WebGPU GLTF renderer for deterministic PNG, WebP, and JPEG output.",
+  "keywords": [
+    "gltf",
+    "renderer",
+    "thumbnail",
+    "wasm",
+    "webgpu"
+  ],
+  "homepage": "https://nanoraster.tau.new",
+  "bugs": {
+    "url": "https://github.com/taucad/nanoraster/issues"
+  },
   "license": "Apache-2.0",
+  "author": "Richard Fontein",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/taucad/nanoraster.git"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "compatibility.md",
+    "CHANGELOG.md",
+    "BREAKING_CHANGES.md",
+    "NOTICE",
+    "license"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "imports": {
+    "#*.js": "./src/*.ts",
+    "#*": "./src/*"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs-error.d.cts",
+        "default": "./dist/cjs-error.cjs"
+      },
+      "default": "./dist/index.mjs"
+    },
+    "./wasm": {
+      "default": "./dist/wasm/render_wasm_bg.wasm"
+    },
+    "./package.json": "./package.json"
+  },
   "publishConfig": {
-    "access": "public"
-  }
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "benchmark": "node bench/gated.mjs",
+    "build": "pnpm run build:wasm && tsdown && node scripts/copy-assets.mjs",
+    "build:napi": "cargo build --manifest-path rust/Cargo.toml --release -p render-napi && node scripts/copy-native.mjs",
+    "build:wasm": "wasm-pack build rust/render-wasm --release --target web --out-dir ../../src/wasm && node scripts/clean-wasm-output.mjs",
+    "check:dead-code": "knip",
+    "check:wasm-size": "node scripts/check-wasm-size.mjs",
+    "check:size": "size-limit && pnpm run check:wasm-size",
+    "docs:build": "pnpm --filter nanoraster-docs build",
+    "docs:test": "pnpm --filter nanoraster-docs test",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint --deny-warnings --type-aware && eslint .",
+    "plan:check": "nx release plan:check",
+    "pkgcheck": "pnpm run validate-pack && publint && attw --pack . --profile esm-only --entrypoints .",
+    "prose": "./scripts/check-prose.sh",
+    "test": "vitest run",
+    "test:browser": "pnpm run build:wasm && vitest run --config vitest.browser.config.ts",
+    "test:coverage": "vitest run --coverage",
+    "test:native-parity": "pnpm run build:napi && vitest run --config vitest.native.config.ts",
+    "test:rust": "cargo test --manifest-path rust/Cargo.toml --workspace",
+    "test:rust-coverage": "bash ./scripts/test-rust-coverage.sh",
+    "test:package": "node scripts/test-package.mjs",
+    "typecheck": "tsc --noEmit",
+    "validate-pack": "node scripts/validate-pack.mjs",
+    "workflows": "./scripts/check-workflows.sh",
+    "prepublishOnly": "pnpm nx run nanoraster:validate-pack",
+    "release:prepare": "node scripts/prepare-release.mjs"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
+    "@eslint/js": "9.32.0",
+    "@nx/js": "23.1.1",
+    "@size-limit/file": "13.0.3",
+    "@types/mdx": "2.0.14",
+    "@types/node": "24.13.3",
+    "@vitest/browser-playwright": "4.1.10",
+    "@vitest/coverage-v8": "4.1.10",
+    "eslint": "9.32.0",
+    "globals": "17.11.0",
+    "knip": "6.17.1",
+    "nx": "23.1.1",
+    "oxfmt": "0.36.0",
+    "oxlint": "1.70.0",
+    "oxlint-tsgolint": "0.22.1",
+    "playwright": "1.62.0",
+    "publint": "0.3.23",
+    "semver": "7.8.5",
+    "size-limit": "13.0.3",
+    "tsdown": "0.22.14",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.61.1",
+    "vitest": "4.1.10"
+  },
+  "optionalDependencies": {
+    "nanoraster-darwin-arm64": "0.0.0",
+    "nanoraster-linux-x64-gnu": "0.0.0",
+    "nanoraster-win32-x64-msvc": "0.0.0"
+  },
+  "napi": {
+    "binaryName": "nanoraster",
+    "packageName": "nanoraster",
+    "targets": [
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "x86_64-pc-windows-msvc"
+    ]
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "packageManager": "pnpm@11.7.0"
 }

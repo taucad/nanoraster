@@ -1,0 +1,12 @@
+nanoraster
+Copyright 2026 Richard Fontein
+
+This product includes generated glyph data from Geist Regular, copyright 2023
+Vercel in collaboration with basement.studio, licensed under the SIL Open Font
+License 1.1. Source and license text are retained under
+rust/render-core/assets/geist/.
+
+This product includes a modified fork of image-webp 0.2.4 from the image-rs
+project. The fork is licensed under MIT OR Apache-2.0. Its source, license text,
+and deterministic Huffman tie-break modifications are retained under
+rust/vendor/image-webp/.

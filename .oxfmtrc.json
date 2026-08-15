@@ -1,0 +1,15 @@
+{
+  "ignorePatterns": [
+    ".ci-tools/**",
+    "dist/**",
+    "docs-site/.next/**",
+    "docs-site/next-env.d.ts",
+    "docs-site/.source/**",
+    "docs-site/out/**",
+    "rust/target/**",
+    "src/native/**",
+    "src/wasm/**"
+  ],
+  "printWidth": 110,
+  "singleQuote": true
+}

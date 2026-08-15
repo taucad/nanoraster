@@ -1,0 +1,46 @@
+name: Benchmark drift
+
+on:
+  schedule:
+    - cron: '17 4 1 * *' # Origin: monthly exploratory cadence from picovoxel.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '26'
+      - run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
+      - run: pnpm run build:napi
+      - id: benchmark
+        continue-on-error: true # Origin: monthly drift opens an issue; the PR-vs-main gate remains fail-closed.
+        env:
+          MAX_MEDIAN_MS: '250' # Origin: 10x headroom over the extracted lavapipe spike; lower after five scheduled samples.
+        run: node bench/gated.mjs | tee benchmark.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: monthly-benchmark
+          path: benchmark.json
+      - if: steps.benchmark.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create claude \
+            --color 5319E7 \
+            --description 'Picked up by Claude automation' \
+            --force
+          gh issue create \
+            --title 'Benchmark drift detected' \
+            --body "Monthly benchmark drift failed in ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}." \
+            --label claude
+      - if: steps.benchmark.outcome == 'failure'
+        run: exit 1

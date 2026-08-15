@@ -1,0 +1,16 @@
+packages:
+  - .
+  - docs-site
+  - npm/*
+
+allowBuilds:
+  '@napi-rs/cli': true
+  esbuild: true
+  nx: true
+
+linkWorkspacePackages: true
+
+overrides:
+  'brace-expansion@>=5.0.0 <5.0.9': 5.0.9
+  'minimatch@>=10.0.0 <10.2.3': 10.2.3
+  'picomatch@>=4.0.0 <4.0.4': 4.0.4
