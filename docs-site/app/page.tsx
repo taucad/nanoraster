@@ -10,7 +10,7 @@ const Page = (): React.JSX.Element => (
   <main className={styles.page}>
     <nav className={styles.nav} aria-label="Primary navigation">
       <Link className={styles.wordmark} href="/">
-        <span aria-hidden="true">N</span>
+        <img alt="" className={styles.mark} src="/logo.svg" />
         nanoraster
       </Link>
       <div>

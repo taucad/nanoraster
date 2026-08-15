@@ -35,15 +35,10 @@
   letter-spacing: -0.025em;
 }
 
-.wordmark span {
-  display: grid;
+/* The mark carries its own dark tile, so it needs no ground of its own. */
+.mark {
   width: 28px;
   height: 28px;
-  place-items: center;
-  color: #e9edf0;
-  background: #17202a;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.72rem;
 }
 
 .hero {

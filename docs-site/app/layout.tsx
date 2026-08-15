@@ -6,6 +6,13 @@ import './global.css';
 
 export const metadata: Metadata = {
   description: 'Tiny headless WebGPU GLTF renderer for deterministic PNG, WebP, and JPEG output.',
+  icons: {
+    apple: '/favicon.ico',
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.ico', sizes: '32x32' },
+    ],
+  },
   metadataBase: new URL('https://nanoraster.xyz'),
   title: { default: 'nanoraster', template: `%s — nanoraster` },
 };

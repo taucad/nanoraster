@@ -7,7 +7,14 @@ import packageManifest from '../../../package.json';
 
 const Layout = ({ children }: { readonly children: ReactNode }): React.JSX.Element => (
   <DocsLayout
-    nav={{ title: `nanoraster ${packageManifest.version}` }}
+    nav={{
+      title: (
+        <>
+          <img alt="" className="h-5 w-5" src="/logo.svg" />
+          {`nanoraster ${packageManifest.version}`}
+        </>
+      ),
+    }}
     sidebar={{ footer: <TauAttributionFooter /> }}
     tree={source.pageTree}
   >
