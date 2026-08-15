@@ -10,6 +10,14 @@ pub(crate) const MODE_TRIANGLES: u32 = 4;
 pub(crate) const MODE_LINES: u32 = 1;
 
 #[derive(Debug, PartialEq)]
+pub(crate) struct Material {
+    /// Linear-space straight-alpha base color.
+    pub(crate) base_color: [f32; 4],
+    pub(crate) metallic: f32,
+    pub(crate) roughness: f32,
+}
+
+#[derive(Debug, PartialEq)]
 pub(crate) struct Primitive {
     /// 4 = TRIANGLES, 1 = LINES.
     pub(crate) mode: u32,
@@ -17,8 +25,7 @@ pub(crate) struct Primitive {
     /// Empty for LINES primitives without authored normals.
     pub(crate) normals: Vec<f32>,
     pub(crate) indices: Vec<u32>,
-    /// Linear-space straight-alpha color from material baseColorFactor.
-    pub(crate) color: [f32; 4],
+    pub(crate) material: Material,
 }
 
 #[derive(Debug, PartialEq)]
@@ -75,7 +82,7 @@ fn validate_vec3(accessor: gltf::Accessor<'_>, semantic: &str) -> Result<(), Str
     Ok(())
 }
 
-fn validate_material(material: &gltf::Material<'_>) -> Result<[f32; 4], String> {
+fn validate_material(material: &gltf::Material<'_>) -> Result<Material, String> {
     let pbr = material.pbr_metallic_roughness();
     if pbr.base_color_texture().is_some()
         || pbr.metallic_roughness_texture().is_some()
@@ -85,7 +92,11 @@ fn validate_material(material: &gltf::Material<'_>) -> Result<[f32; 4], String> 
     {
         return Err("texture-backed materials are not supported".into());
     }
-    Ok(pbr.base_color_factor())
+    Ok(Material {
+        base_color: pbr.base_color_factor(),
+        metallic: pbr.metallic_factor(),
+        roughness: pbr.roughness_factor(),
+    })
 }
 
 fn decode_mesh(mesh: gltf::Mesh<'_>, bin: &[u8]) -> Result<MeshAsset, String> {
@@ -170,7 +181,7 @@ fn decode_mesh(mesh: gltf::Mesh<'_>, bin: &[u8]) -> Result<MeshAsset, String> {
             positions,
             normals,
             indices,
-            color: validate_material(&primitive.material())?,
+            material: validate_material(&primitive.material())?,
         });
     }
     Ok(MeshAsset { primitives })
@@ -474,7 +485,11 @@ mod tests {
                 "accessors": accessors,
                 "bufferViews": views,
                 "buffers": [{"byteLength": bin.len()}],
-                "materials": [{"pbrMetallicRoughness": {"baseColorFactor": [0.25, 0.5, 0.75, 1]}}]
+                "materials": [{"pbrMetallicRoughness": {
+                    "baseColorFactor": [0.25, 0.5, 0.75, 1],
+                    "metallicFactor": 0.5,
+                    "roughnessFactor": 0.25
+                }}]
             }),
             bin,
         )
@@ -483,6 +498,8 @@ mod tests {
     #[test]
     fn standard_accessor_layouts_decode_to_identical_geometry() {
         let expected = parse_glb(&fixture(Layout::Packed, 5125, true)).expect("packed");
+        assert_eq!(expected.meshes[0].primitives[0].material.metallic, 0.5);
+        assert_eq!(expected.meshes[0].primitives[0].material.roughness, 0.25);
         for bytes in [
             fixture(Layout::Offset, 5125, true),
             fixture(Layout::Interleaved, 5125, true),
@@ -542,7 +559,10 @@ mod tests {
         assert_eq!(scene.meshes[0].primitives.len(), 2);
         assert_eq!(scene.meshes[0].primitives[0].mode, MODE_TRIANGLES);
         assert_eq!(scene.meshes[0].primitives[1].mode, MODE_LINES);
-        assert_eq!(scene.meshes[0].primitives[1].color, [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(
+            scene.meshes[0].primitives[1].material.base_color,
+            [0.0, 0.0, 0.0, 1.0]
+        );
         assert_eq!(scene.bounds, Some(([-4.5, -1.95, 0.0], [4.2, 2.15, 0.0])));
     }
 
@@ -816,7 +836,11 @@ mod tests {
                 positions: vec![2.0, 0.0, 0.0],
                 normals: vec![1.0, 0.0, 0.0],
                 indices: vec![0],
-                color: [1.0; 4],
+                material: Material {
+                    base_color: [1.0; 4],
+                    metallic: 1.0,
+                    roughness: 1.0,
+                },
             }],
         };
         let mut bounds = None;

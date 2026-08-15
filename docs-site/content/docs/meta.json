@@ -1,4 +1,4 @@
 {
   "title": "nanoraster",
-  "pages": ["index", "quick-start", "rendering", "options", "errors", "api"]
+  "pages": ["index", "quick-start", "rendering", "pbr-materials", "options", "errors", "api"]
 }

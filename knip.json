@@ -22,7 +22,8 @@
         "mdx-components.tsx",
         "source.config.ts",
         "*.config.{mjs,ts}"
-      ]
+      ],
+      "ignore": ["public/demo/render_wasm.js"]
     }
   }
 }

@@ -10,7 +10,8 @@ const sizes = {
     params: { [constants.BROTLI_PARAM_QUALITY]: 11 },
   }).byteLength,
 };
-const ceilings = { raw: 1_144_467, brotli11: 476_443 };
+// PBR build: 312,881 gzip-9 on macOS, 315,196 on Linux CI; raw 792,599, brotli-11 252,020.
+const ceilings = { raw: 800_000, gzip9: 316_000, brotli11: 255_000 };
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {

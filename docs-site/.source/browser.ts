@@ -7,6 +7,6 @@ const create = browser<typeof Config, import("fumadocs-mdx/runtime/types").Inter
   }
 }>();
 const browserCollections = {
-  docs: create.doc("docs", {"api.mdx": () => import("../content/docs/api.mdx?collection=docs"), "errors.mdx": () => import("../content/docs/errors.mdx?collection=docs"), "index.mdx": () => import("../content/docs/index.mdx?collection=docs"), "options.mdx": () => import("../content/docs/options.mdx?collection=docs"), "quick-start.mdx": () => import("../content/docs/quick-start.mdx?collection=docs"), "rendering.mdx": () => import("../content/docs/rendering.mdx?collection=docs"), }),
+  docs: create.doc("docs", {"api.mdx": () => import("../content/docs/api.mdx?collection=docs"), "errors.mdx": () => import("../content/docs/errors.mdx?collection=docs"), "index.mdx": () => import("../content/docs/index.mdx?collection=docs"), "options.mdx": () => import("../content/docs/options.mdx?collection=docs"), "pbr-materials.mdx": () => import("../content/docs/pbr-materials.mdx?collection=docs"), "quick-start.mdx": () => import("../content/docs/quick-start.mdx?collection=docs"), "rendering.mdx": () => import("../content/docs/rendering.mdx?collection=docs"), }),
 };
 export default browserCollections;

@@ -1,6 +1,8 @@
 import { beforeAll, expect, test } from 'vitest';
 import init, { codec_conformance, describe_adapter, render_glb_to_image } from 'nanoraster-wasm-candidate';
 
+import { withPbrFactors } from '../pbr-fixture.mjs';
+
 let glb;
 
 beforeAll(async () => {
@@ -26,4 +28,18 @@ test('wasm shell renders a deterministic 192x192 PNG', async () => {
   expect(view.getUint32(16)).toBe(192);
   expect(view.getUint32(20)).toBe(192);
   expect(png.byteLength).toBeGreaterThan(1_000);
+});
+
+test('PBR factors produce deterministic and distinguishable renders', async () => {
+  const options = JSON.stringify({ width: 192, height: 192, format: 'png' });
+  const matte = withPbrFactors(glb, { metallic: 0, roughness: 0.85 });
+  const metal = withPbrFactors(glb, { metallic: 1, roughness: 0.05 });
+  const matteFirst = await render_glb_to_image(matte, options);
+  const matteSecond = await render_glb_to_image(matte, options);
+  const metalFirst = await render_glb_to_image(metal, options);
+  const metalSecond = await render_glb_to_image(metal, options);
+
+  expect(matteFirst).toEqual(matteSecond);
+  expect(metalFirst).toEqual(metalSecond);
+  expect(matteFirst).not.toEqual(metalFirst);
 });

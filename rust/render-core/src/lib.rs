@@ -1,7 +1,7 @@
 //! GLB → image transcoder core: parses kernel-written GLB scenes and renders
-//! them with wgpu (matcap surfaces + line edges) into RGBA/PNG bytes, with no
-//! surface/canvas — works headless on native (Metal/Vulkan/DX12) and in the
-//! browser via WebGPU.
+//! them with wgpu (metallic-roughness surfaces + line edges) into RGBA/PNG
+//! bytes, with no surface/canvas — works headless on native
+//! (Metal/Vulkan/DX12) and in the browser via WebGPU.
 
 mod bench;
 mod capture_overlay;
@@ -133,7 +133,6 @@ pub struct RenderBatchProfile {
     pub glb_parses: u32,
     pub adapter_device_requests: u32,
     pub pipeline_sets: u32,
-    pub matcap_uploads: u32,
     pub scene_uploads: u32,
     pub target_allocations: u32,
     pub views: Vec<RenderViewProfile>,
@@ -318,7 +317,6 @@ async fn render_glb_to_images_inner(
         glb_parses: 1,
         adapter_device_requests: 1,
         pipeline_sets: 1,
-        matcap_uploads: 1,
         scene_uploads: 1,
         target_allocations: 1,
         views: view_profiles,
@@ -355,11 +353,33 @@ pub async fn describe_adapter() -> Result<String, RenderError> {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
     use std::cell::Cell;
+
+    use serde_json::json;
 
     use super::*;
 
     const FIXTURE: &[u8] = include_bytes!("../../../tests/fixtures/gear-12.glb");
+
+    fn material_variant(metallic: f32, roughness: f32) -> Vec<u8> {
+        let parsed = gltf::binary::Glb::from_slice(FIXTURE).expect("fixture");
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&parsed.json).expect("fixture JSON");
+        document["materials"][0]["pbrMetallicRoughness"]["metallicFactor"] = json!(metallic);
+        document["materials"][0]["pbrMetallicRoughness"]["roughnessFactor"] = json!(roughness);
+        gltf::binary::Glb {
+            header: gltf::binary::Header {
+                magic: *b"glTF",
+                version: 2,
+                length: 0,
+            },
+            json: Cow::Owned(serde_json::to_vec(&document).expect("variant JSON")),
+            bin: parsed.bin.map(|bytes| Cow::Owned(bytes.into_owned())),
+        }
+        .to_vec()
+        .expect("variant GLB")
+    }
 
     #[test]
     fn public_defaults_are_locked() {
@@ -590,17 +610,25 @@ mod tests {
             pollster::block_on(render_glb_to_rgba(FIXTURE, &options)).expect("RGBA render");
         assert_eq!(rendered.width, 192);
         assert_eq!(rendered.height, 192);
-        assert!(
-            pollster::block_on(render_glb_to_rgba(
-                FIXTURE,
-                &RenderOptions {
-                    width: 192,
-                    height: 192,
-                    ..Default::default()
-                },
-            ))
-            .is_ok()
-        );
+        let material_options = RenderOptions {
+            width: 192,
+            height: 192,
+            ..Default::default()
+        };
+        let baseline = pollster::block_on(render_glb_to_rgba(FIXTURE, &material_options))
+            .expect("baseline material");
+        let polished_metal = pollster::block_on(render_glb_to_rgba(
+            &material_variant(1.0, 0.05),
+            &material_options,
+        ))
+        .expect("polished metal material");
+        let polished_metal_repeat = pollster::block_on(render_glb_to_rgba(
+            &material_variant(1.0, 0.05),
+            &material_options,
+        ))
+        .expect("repeated polished metal material");
+        assert_ne!(baseline.rgba, polished_metal.rgba);
+        assert_eq!(polished_metal.rgba, polished_metal_repeat.rgba);
 
         let png = pollster::block_on(render_glb_to_image(FIXTURE, &options, ImageFormat::Png))
             .expect("PNG render");

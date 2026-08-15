@@ -1,0 +1,39 @@
+---
+title: PBR materials
+description: Use core glTF metallic-roughness materials, including a matcap-style finish.
+---
+
+nanoraster renders factor-only glTF 2.0 metallic-roughness materials. Set
+`baseColorFactor`, `metallicFactor`, and `roughnessFactor` in the GLB material.
+Texture-backed materials are outside the supported render profile.
+
+## Matcap-style finish
+
+Use a rough dielectric to retain the soft, evenly shaded appearance commonly
+associated with a neutral matcap:
+
+```json
+{
+  "pbrMetallicRoughness": {
+    "baseColorFactor": [0.2622506575, 0.3277780981, 0.4072402119, 1],
+    "metallicFactor": 0,
+    "roughnessFactor": 0.85
+  }
+}
+```
+
+The base color above is the linear-space glTF equivalent of sRGB `#8C9BAB`.
+Most glTF exporters perform that conversion when given an sRGB color. Keep
+`metallicFactor` at `0`, use `roughnessFactor` between `0.8` and `1`, and
+replace the base color with the desired surface tint.
+
+This is an approximation rather than pixel parity with a matcap texture. A
+matcap maps view-space normals directly into an image; PBR derives the result
+from the material, surface, camera, and lighting.
+
+## Lighting
+
+Every render uses the same view-space studio lights and analytic environment.
+The lighting is intentionally not an API option: fixed lighting keeps agent
+screenshots comparable across repeated renders and makes metallic and
+roughness changes visible without an environment asset.

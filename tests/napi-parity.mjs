@@ -6,6 +6,8 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { withPbrFactors } from './pbr-fixture.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const requireNative = createRequire(import.meta.url);
 const nativePackage = {
@@ -35,6 +37,19 @@ const width = png.readUInt32BE(16);
 const height = png.readUInt32BE(20);
 if (width !== 768 || height !== 432) {
   throw new Error(`expected 768x432, got ${width}x${height}`);
+}
+const pbrOptions = JSON.stringify({ width: 192, height: 192, format: 'png' });
+const matteGlb = Buffer.from(withPbrFactors(glb, { metallic: 0, roughness: 0.85 }));
+const metalGlb = Buffer.from(withPbrFactors(glb, { metallic: 1, roughness: 0.05 }));
+const matteFirst = native.renderGlbToImage(matteGlb, pbrOptions);
+const matteSecond = native.renderGlbToImage(matteGlb, pbrOptions);
+const metalFirst = native.renderGlbToImage(metalGlb, pbrOptions);
+const metalSecond = native.renderGlbToImage(metalGlb, pbrOptions);
+if (!matteFirst.equals(matteSecond) || !metalFirst.equals(metalSecond)) {
+  throw new Error('repeated PBR renders differ');
+}
+if (matteFirst.equals(metalFirst)) {
+  throw new Error('metallic and rough dielectric PBR renders are identical');
 }
 const interleavedPng = native.renderGlbToImage(
   interleavedGlb,
@@ -297,5 +312,6 @@ writeFileSync(join(here, 'out', 'napi-capture-isometric.png'), isometricPerspect
 writeFileSync(join(here, 'out', 'napi-interleaved.png'), interleavedPng);
 console.log(`webp ${webp.length}B, jpeg ${jpeg.length}B, transparent-jpeg rejected`);
 console.log(`batch ${batch.length} views matches singular bytes`);
+console.log('rough dielectric and polished metal repeat deterministically and remain distinguishable');
 console.log(`${parityCases} singular/batch parity cases plus reordered/repeated batches passed`);
 console.log('PASS → tests/out/napi.{png,webp,jpg} + napi-{axes,annotations,interleaved}.png + visual sizes');

@@ -10,3 +10,14 @@
 | Linux x64   | ✅        | `native (ubuntu-24.04, linux-x64-gnu)`  |
 | macOS arm64 | ✅        | `native (macos-14, darwin-arm64)`       |
 | Windows x64 | ✅        | `native (windows-2022, win32-x64-msvc)` |
+
+## Render profile
+
+| glTF 2.0 feature                                                   | Supported |
+| ------------------------------------------------------------------ | --------- |
+| Factor-only `baseColorFactor`, `metallicFactor`, `roughnessFactor` | Yes       |
+| All texture-backed PBR materials                                   | No        |
+| Surface-less WebGPU rendering                                      | Yes       |
+
+Factor-only metallic-roughness materials use deterministic analytic studio
+lighting. Texture-backed materials return a parse error.
