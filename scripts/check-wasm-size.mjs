@@ -10,7 +10,8 @@ const sizes = {
     params: { [constants.BROTLI_PARAM_QUALITY]: 11 },
   }).byteLength,
 };
-const ceilings = { raw: 1_144_467, brotli11: 476_443 };
+// PBR experiment baseline: 792,599 raw / 312,881 gzip-9 / 252,000 brotli-11.
+const ceilings = { raw: 800_000, gzip9: 315_000, brotli11: 255_000 };
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {

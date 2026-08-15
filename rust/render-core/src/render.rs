@@ -3,13 +3,12 @@
 //! with 256-byte row alignment. No canvas anywhere — the same code runs on
 //! native backends and browser WebGPU.
 
-use crate::glb::{MODE_TRIANGLES, Scene};
+use crate::glb::{MODE_TRIANGLES, Material, Scene};
 use crate::{DEFAULT_HEIGHT, Projection, RenderError, RenderOptions, UpAxis};
 use glam::{Mat4, Vec3};
 use std::fmt::Display;
 use wgpu::util::DeviceExt;
 
-const MATCAP_PNG: &[u8] = include_bytes!("../assets/matcap-soft.png");
 const MSAA_SAMPLES: u32 = 4;
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -361,49 +360,6 @@ fn srgb_to_linear(channel: f32) -> f64 {
     }
 }
 
-fn decode_matcap_bytes(
-    bytes: &[u8],
-    transformations: png::Transformations,
-) -> Result<(Vec<u8>, u32, u32), RenderError> {
-    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    // Normalize palette/16-bit/low-bit-depth variants to 8-bit channels.
-    decoder.set_transformations(transformations);
-    let mut reader = decoder.read_info().map_err(matcap_error)?;
-    let buffer_size = reader
-        .output_buffer_size()
-        .ok_or(RenderError::Encode("matcap: output size overflow".into()))?;
-    let mut buffer = vec![0u8; buffer_size];
-    let info = reader.next_frame(&mut buffer).map_err(matcap_error)?;
-    buffer.truncate(info.buffer_size());
-    let rgba = match info.color_type {
-        png::ColorType::Rgba => buffer,
-        png::ColorType::Rgb => buffer
-            .chunks_exact(3)
-            .flat_map(|px| [px[0], px[1], px[2], 255])
-            .collect(),
-        png::ColorType::Grayscale => buffer.iter().flat_map(|&g| [g, g, g, 255]).collect(),
-        png::ColorType::GrayscaleAlpha => buffer
-            .chunks_exact(2)
-            .flat_map(|px| [px[0], px[0], px[0], px[1]])
-            .collect(),
-        other => {
-            return Err(RenderError::Encode(format!(
-                "matcap: unsupported color type {other:?}"
-            )));
-        }
-    };
-    Ok((rgba, info.width, info.height))
-}
-
-fn matcap_error(error: png::DecodingError) -> RenderError {
-    RenderError::Encode(format!("matcap: {error}"))
-}
-
-fn decode_matcap() -> (Vec<u8>, u32, u32) {
-    decode_matcap_bytes(MATCAP_PNG, png::Transformations::normalize_to_color8())
-        .expect("embedded matcap PNG")
-}
-
 impl RenderSession {
     pub(crate) async fn new(scene: &Scene, options: &RenderOptions) -> Result<Self, RenderError> {
         let adapter = request_adapter().await?;
@@ -418,37 +374,6 @@ impl RenderSession {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("render-core"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        });
-
-        // Matcap texture (sRGB so sampling linearizes).
-        let (matcap_rgba, matcap_width, matcap_height) = decode_matcap();
-        let matcap_texture = device.create_texture_with_data(
-            &queue,
-            &wgpu::TextureDescriptor {
-                label: Some("matcap"),
-                size: wgpu::Extent3d {
-                    width: matcap_width,
-                    height: matcap_height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            &matcap_rgba,
-        );
-        let matcap_view = matcap_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let matcap_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("matcap"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
         });
 
         // line_width is specified at the default height and scales with output
@@ -469,52 +394,24 @@ impl RenderSession {
 
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+                count: None,
+            }],
         });
         let frame_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("frame"),
             layout: &frame_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: frame_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&matcap_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&matcap_sampler),
-                },
-            ],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: frame_buffer.as_entire_binding(),
+            }],
         });
 
         let prim_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -671,11 +568,15 @@ impl RenderSession {
 
         // Each source mesh is uploaded once. Lines are de-indexed into segment
         // endpoint pairs for the fat-line quad expansion.
-        let make_bind_group = |color: &[f32; 4]| {
+        let make_bind_group = |material: &Material| {
+            let mut data = [0.0f32; 8];
+            data[..4].copy_from_slice(&material.base_color);
+            data[4] = material.metallic;
+            data[5] = material.roughness;
             // The bind group keeps the uniform buffer alive; the handle can drop.
-            let color_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("color"),
-                contents: bytemuck::cast_slice(color),
+            let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("material"),
+                contents: bytemuck::cast_slice(&data),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
             device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -683,7 +584,7 @@ impl RenderSession {
                 layout: &prim_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: color_buffer.as_entire_binding(),
+                    resource: material_buffer.as_entire_binding(),
                 }],
             })
         };
@@ -694,7 +595,7 @@ impl RenderSession {
                 let mut surfaces = Vec::new();
                 let mut lines = Vec::new();
                 for primitive in &mesh.primitives {
-                    let bind_group = make_bind_group(&primitive.color);
+                    let bind_group = make_bind_group(&primitive.material);
                     if primitive.mode == MODE_TRIANGLES {
                         surfaces.push(GpuMesh {
                             positions: device.create_buffer_init(
@@ -973,20 +874,6 @@ impl RenderSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn png_fixture(color: png::ColorType, data: &[u8], palette: Option<Vec<u8>>) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
-        encoder.set_color(color);
-        encoder.set_depth(png::BitDepth::Eight);
-        if let Some(palette) = palette {
-            encoder.set_palette(palette);
-        }
-        let mut writer = encoder.write_header().expect("header");
-        writer.write_image_data(data).expect("data");
-        writer.finish().expect("finish");
-        bytes
-    }
 
     fn scene() -> Scene {
         Scene {
@@ -1281,31 +1168,6 @@ mod tests {
         assert!(srgb_to_linear(0.5) > srgb_to_linear(0.02));
         assert_eq!(srgb_to_linear(-1.0), 0.0);
         assert_eq!(srgb_to_linear(2.0), 1.0);
-    }
-
-    #[test]
-    fn synthetic_matcaps_cover_every_png_color_shape() {
-        let fixtures = [
-            (png::ColorType::Rgba, vec![1, 2, 3, 4], vec![1, 2, 3, 4]),
-            (png::ColorType::Rgb, vec![1, 2, 3], vec![1, 2, 3, 255]),
-            (png::ColorType::Grayscale, vec![7], vec![7, 7, 7, 255]),
-            (png::ColorType::GrayscaleAlpha, vec![7, 8], vec![7, 7, 7, 8]),
-        ];
-        for (color, input, expected) in fixtures {
-            let bytes = png_fixture(color, &input, None);
-            let (rgba, width, height) =
-                decode_matcap_bytes(&bytes, png::Transformations::normalize_to_color8())
-                    .expect("decode");
-            assert_eq!((width, height), (1, 1));
-            assert_eq!(rgba, expected);
-        }
-
-        let indexed = png_fixture(png::ColorType::Indexed, &[0], Some(vec![1, 2, 3]));
-        assert!(decode_matcap_bytes(&indexed, png::Transformations::IDENTITY).is_err());
-        assert!(decode_matcap_bytes(b"not png", png::Transformations::IDENTITY).is_err());
-        let mut truncated = png_fixture(png::ColorType::Rgba, &[1, 2, 3, 4], None);
-        truncated.truncate(40);
-        assert!(decode_matcap_bytes(&truncated, png::Transformations::IDENTITY).is_err());
     }
 
     #[test]
