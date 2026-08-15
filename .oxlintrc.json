@@ -5,6 +5,7 @@
     "dist/**",
     "docs-site/.next/**",
     "docs-site/.source/**",
+    "docs-site/public/demo/render_wasm.js",
     "rust/target/**",
     "src/native/**",
     "src/wasm/**"

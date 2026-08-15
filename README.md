@@ -6,6 +6,13 @@
 
 Tiny headless WebGPU GLTF renderer for deterministic PNG, WebP, and JPEG output.
 
+[![PBR helical gear rendered to WebP by nanoraster](https://nanoraster.xyz/demo/helical-gear-pbr.webp)](https://nanoraster.xyz/#live-demo)
+
+The [live camera demo](https://nanoraster.xyz/#live-demo) lets you orbit a GLB
+in Three.js, then passes that camera to nanoraster for a browser WebGPU capture.
+
+[![Three.js live camera and matching nanoraster WebP capture](https://nanoraster.xyz/demo/live-camera-capture.png)](https://nanoraster.xyz/#live-demo)
+
 | I want to…               | Start here                                                          |
 | ------------------------ | ------------------------------------------------------------------- |
 | Install the package      | [Install](#install)                                                 |

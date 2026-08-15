@@ -6,6 +6,7 @@
     "docs-site/next-env.d.ts",
     "docs-site/.source/**",
     "docs-site/out/**",
+    "docs-site/public/demo/render_wasm.js",
     "rust/target/**",
     "src/native/**",
     "src/wasm/**"

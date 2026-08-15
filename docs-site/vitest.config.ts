@@ -1,5 +1,5 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  test: { include: ['api-coverage.test.ts'] },
+  test: { include: ['api-coverage.test.ts', 'components/**/*.test.ts'] },
 });
