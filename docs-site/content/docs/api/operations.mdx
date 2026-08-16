@@ -1,0 +1,128 @@
+---
+title: Operations
+description: The two render entry points and the two option helpers that preserve literal types.
+---
+
+Every public API is imported from `nanoraster`. Request shapes are on the
+[Options page](options), results on the [Results page](results), and failures on
+the [Errors page](errors).
+
+## Render
+
+### `renderGlbToImage`
+
+Render one GLB camera view to one owned image file.
+
+```typescript
+export declare const renderGlbToImage: (
+  glb: Uint8Array<ArrayBuffer>,
+  options: RenderImageOptions,
+) => Promise<RenderedImageFile>;
+```
+
+- **Parameters:** owned GLB bytes and one validated render request.
+- **Returns:** a newly allocated `thumbnail.<format>` file.
+- **Throws:** `RenderError` for invalid requests, malformed GLB data, GPU faults,
+  or encoding failures.
+
+#### Usage
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+const image = await renderGlbToImage(glb, { format: 'png', width: 512 });
+```
+
+### `renderGlbToImages`
+
+Parse and upload a GLB once, then render an ordered set of identified views.
+
+```typescript
+export declare const renderGlbToImages: <const Options extends RenderImagesOptions>(
+  glb: Uint8Array<ArrayBuffer>,
+  options: StrictRenderImagesOptions<Options>,
+) => Promise<RenderedImages<Options['views']>>;
+```
+
+`StrictRenderImagesOptions` is the package's internal exactness check: callers
+pass `RenderImagesOptions`, while TypeScript rejects extra keys, empty view
+tuples, and misplaced per-view settings.
+
+- **Parameters:** owned GLB bytes and shared settings with a non-empty view tuple.
+- **Returns:** a tuple with the input view IDs and order preserved.
+- **Throws:** `RenderError` for invalid requests, malformed GLB data, GPU faults,
+  encoding failures, or a renderer cardinality violation.
+
+#### Usage
+
+```typescript
+import { renderGlbToImages } from 'nanoraster';
+
+const [iso, front] = await renderGlbToImages(glb, {
+  format: 'png',
+  views: [
+    { id: 'iso', phi: 60, theta: -45 },
+    { id: 'front', phi: 90, theta: 0 },
+  ],
+});
+```
+
+## Option helpers
+
+Both helpers return the same object and add no runtime work. They exist to stop
+TypeScript widening literal values when options are assigned to a variable
+before the call.
+
+### `createRenderImageOptions`
+
+Preserve literal singular option values while rejecting misspelled keys.
+
+```typescript
+export declare const createRenderImageOptions: <const Options extends RenderImageOptions>(
+  options: NoExtraKeys<Options, RenderImageOptions>,
+) => Options;
+```
+
+`NoExtraKeys` is an internal compile-time check.
+
+#### Usage
+
+```typescript
+import { createRenderImageOptions, renderGlbToImage } from 'nanoraster';
+
+const options = createRenderImageOptions({ format: 'webp', quality: 0.8 });
+const image = await renderGlbToImage(glb, options);
+```
+
+### `createRenderImagesOptions`
+
+Preserve literal view IDs and tuple order while rejecting misplaced or
+misspelled keys.
+
+```typescript
+export declare const createRenderImagesOptions: <const Options extends RenderImagesOptions>(
+  options: StrictRenderImagesOptions<Options>,
+) => Options;
+```
+
+#### Usage
+
+```typescript
+import { createRenderImagesOptions, renderGlbToImages } from 'nanoraster';
+
+const options = createRenderImagesOptions({
+  format: 'png',
+  views: [{ id: 'iso', phi: 60, theta: -45 }],
+});
+
+const [iso] = await renderGlbToImages(glb, options);
+```
+
+## Related
+
+- [Quick start](../getting-started/quick-start) — the smallest call to
+  `renderGlbToImage`.
+- [Render multiple views](../guides/render-multiple-views) — `renderGlbToImages`
+  and the helpers in practice.
+- [Rendering pipeline](../concepts/rendering-pipeline) — why the batch call is
+  cheaper than repeated singular calls.

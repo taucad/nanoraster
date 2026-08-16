@@ -84,7 +84,7 @@ const defaults = {
 
 const generateDoc = async (name: (typeof tableNames)[number]): Promise<GeneratedDoc> => {
   const [document] = await generator.generateTypeTable(
-    { path: 'content/docs/props.ts', name },
+    { path: 'content/docs/api/props.ts', name },
     { basePath: import.meta.dirname },
   );
   return document;
@@ -170,7 +170,16 @@ describe('static agent documentation', () => {
     const files = globSync('**/*', { cwd: output });
     expect(files).toContain('llms.txt');
     expect(files).toContain('llms-full.txt');
-    for (const slug of ['index', 'quick-start', 'rendering', 'options', 'errors', 'api']) {
+    const slugs = [
+      'index',
+      'getting-started/quick-start',
+      'guides/render-multiple-views',
+      'concepts/rendering-pipeline',
+      'api/options',
+      'api/errors',
+      'api/operations',
+    ];
+    for (const slug of slugs) {
       expect(files).toContain(`docs/md/${slug}`);
       const metadata = JSON.parse(
         readFileSync(resolve(import.meta.dirname, `.next/server/app/docs/md/${slug}.meta`), 'utf8'),
@@ -188,7 +197,7 @@ describe('static agent documentation', () => {
     expect(full).not.toContain('**`toString`**');
 
     const index = readFileSync(resolve(output, 'llms.txt'), 'utf8');
-    expect(index).toContain('[Overview](https://nanoraster.xyz/docs/md/index)');
+    expect(index).toContain('[nanoraster Documentation](https://nanoraster.xyz/docs/md/index)');
     expect(index).not.toContain('](https://nanoraster.xyz/docs)');
 
     for (const route of ['llms.txt', 'llms-full.txt']) {
@@ -198,10 +207,10 @@ describe('static agent documentation', () => {
       expect(metadata.headers['content-type']).toBe('text/markdown; charset=utf-8');
     }
 
-    const apiHtml = resolve(output, 'docs/api.html');
+    const apiHtml = resolve(output, 'docs/api/operations.html');
     expect(statSync(apiHtml).size).toBeLessThan(669_367);
 
-    const optionsHtml = readFileSync(resolve(output, 'docs/options.html'), 'utf8');
+    const optionsHtml = readFileSync(resolve(output, 'docs/api/options.html'), 'utf8');
     expect(optionsHtml).toContain('aria-label="RenderImageOptions properties"');
     expect(optionsHtml).toContain('aria-expanded="false"');
     expect(optionsHtml).toContain('Expand all');

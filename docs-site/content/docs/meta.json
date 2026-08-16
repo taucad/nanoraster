@@ -1,4 +1,14 @@
 {
   "title": "nanoraster",
-  "pages": ["index", "quick-start", "rendering", "pbr-materials", "options", "errors", "api"]
+  "pages": [
+    "index",
+    "---Getting Started---",
+    "...getting-started",
+    "---Guides---",
+    "...guides",
+    "---Concepts---",
+    "...concepts",
+    "---Reference---",
+    "...api"
+  ]
 }

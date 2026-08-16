@@ -1,12 +1,48 @@
 ---
-title: Overview
-description: 'Tiny headless WebGPU GLTF renderer for deterministic PNG, WebP, and JPEG output.'
+title: nanoraster Documentation
+description: Deterministic GLB-to-image rendering for Node.js and WebGPU browsers, with typed options and failures.
 ---
 
-nanoraster provides deterministic GLB-to-image rendering in Node.js and WebGPU browsers.
+nanoraster turns a GLB file into image bytes you own. It runs headless in Node.js
+on a native binary, and in the browser on WebGPU, from one Rust render core.
 
-## Install
+The same request produces the same pixels on the same host, which is what makes
+the output usable as evidence in a CAD pipeline or an agent loop rather than
+just as a picture.
 
-```bash
-npm install nanoraster
-```
+## Start here
+
+| I want to…                            | Go to                                                              |
+| ------------------------------------- | ------------------------------------------------------------------ |
+| Install the package                   | [Installation](getting-started/installation)                       |
+| Render my first image                 | [Quick start](getting-started/quick-start)                         |
+| Learn the API properly                | [Render a view sheet](getting-started/render-a-view-sheet)         |
+| Solve a specific problem              | [Guides](guides/render-multiple-views)                             |
+| Understand how it works               | [Concepts](concepts/rendering-pipeline)                            |
+| Look up a type or function            | [Reference](api/operations)                                        |
+
+## What it does
+
+- **One call per image, or one call per set.** [`renderGlbToImage`](api/operations)
+  renders a single camera view; [`renderGlbToImages`](api/operations) parses and
+  uploads the GLB once, then renders an ordered tuple of identified views.
+- **Four output formats.** PNG, WebP, and JPEG, with `jpg` as an alias. See
+  [Choose a format and quality](guides/choose-format-and-quality).
+- **Typed failures.** Every rejection is a `RenderError` carrying a stable
+  machine-readable code. See [Handle render failures](guides/handle-render-failures).
+- **Fixed lighting.** Lighting is deliberately not an option, which is what keeps
+  repeated renders comparable. See [Determinism](concepts/determinism).
+
+## What it does not do
+
+- Texture-backed materials. The supported profile is factor-only glTF
+  metallic-roughness — see [Material model](concepts/material-model).
+- Animation, scene graphs beyond static geometry, or physically-measured
+  lighting.
+
+## Next steps
+
+- [Installation](getting-started/installation) — package managers, native
+  binaries, and the browser build.
+- [Rendering pipeline](concepts/rendering-pipeline) — what happens between GLB
+  bytes and image bytes.

@@ -38,11 +38,39 @@ var formatDocument = (document) => {
 
 ${properties}`;
 };
+var formatMermaid = (node) => {
+  const attribute = node.attributes.find(({ name }) => name === "chart");
+  const chart = typeof attribute?.value === "string" ? attribute.value : void 0;
+  return chart === void 0 ? void 0 : `\`\`\`mermaid
+${chart}
+\`\`\``;
+};
 var llmStringifyMdx = (...args) => {
   const [node] = args;
-  if (!isMdxJsxElement(node) || node.name !== "TypeTable") return void 0;
+  if (!isMdxJsxElement(node)) return void 0;
+  if (node.name === "Mermaid") return formatMermaid(node);
+  if (node.name !== "TypeTable") return void 0;
   const document = readGeneratedDoc(node);
   return document ? formatDocument(document) : void 0;
+};
+
+// lib/remark-mermaid.ts
+var toMermaidElement = (chart) => ({
+  type: "mdxJsxFlowElement",
+  name: "Mermaid",
+  attributes: [{ type: "mdxJsxAttribute", name: "chart", value: chart }],
+  children: []
+});
+var isMermaidFence = (node) => node.type === "code" && node.lang === "mermaid" && typeof node.value === "string";
+var convert = (node) => {
+  if (!node.children) return;
+  node.children = node.children.map(
+    (child) => isMermaidFence(child) ? toMermaidElement(child.value ?? "") : child
+  );
+  for (const child of node.children) convert(child);
+};
+var remarkMermaid = () => (tree) => {
+  convert(tree);
 };
 
 // source.config.ts
@@ -59,7 +87,7 @@ var docs = defineDocs({
 });
 var source_config_default = defineConfig({
   mdxOptions: {
-    remarkPlugins: [[remarkAutoTypeTable, { generator }]]
+    remarkPlugins: [[remarkAutoTypeTable, { generator }], remarkMermaid]
   }
 });
 export {

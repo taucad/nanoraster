@@ -1,0 +1,98 @@
+---
+title: Render multiple views
+description: Render an ordered set of identified camera views from one GLB without reparsing it for each image.
+---
+
+Render several camera angles of one model in a single call, keeping the IDs and
+order you declared.
+
+## Prerequisites
+
+- Completed the [Quick start](../getting-started/quick-start).
+- Familiarity with `phi` and `theta` — see [Frame the model](frame-the-model).
+
+## Steps
+
+### 1. Declare the views as a tuple
+
+Each view needs a unique `id` and its own angles. Shared settings — format,
+dimensions, background — sit alongside `views`, not inside it.
+
+```typescript
+import { renderGlbToImages } from 'nanoraster';
+
+import { readFile } from 'node:fs/promises';
+
+const glb = Uint8Array.from(await readFile('model.glb'));
+
+const images = await renderGlbToImages(glb, {
+  format: 'webp',
+  width: 640,
+  height: 480,
+  views: [
+    { id: 'iso', phi: 60, theta: -45 },
+    { id: 'front', phi: 90, theta: 0 },
+  ],
+});
+```
+
+### 2. Read the results positionally or by ID
+
+The result is a tuple, not a map. Position and length match the input, and each
+entry carries the literal ID you wrote.
+
+```typescript
+const [iso, front] = images;
+
+console.log(iso.id); // 'iso'
+console.log(front.file.name); // 'front.webp'
+```
+
+TypeScript preserves the literal IDs, so `iso.id` is typed `'iso'` rather than
+`string`. That only holds when the options object is inferred as const — pass
+it inline as above, or wrap it with `createRenderImagesOptions`.
+
+### 3. Preserve literal types across a variable
+
+Assigning options to a variable first widens the literals and loses the IDs.
+The helper prevents that without changing runtime behaviour.
+
+```typescript
+import { createRenderImagesOptions, renderGlbToImages } from 'nanoraster';
+
+const options = createRenderImagesOptions({
+  format: 'png',
+  views: [
+    { id: 'iso', phi: 60, theta: -45 },
+    { id: 'top', phi: 0, theta: 0 },
+  ],
+});
+
+const images = await renderGlbToImages(glb, options);
+```
+
+The helper returns the same object and adds no runtime work. Its only job is to
+hold the inference still.
+
+## Variations
+
+**One image only.** If you need a single view, use `renderGlbToImage` instead —
+the batch call requires a non-empty tuple and returns a tuple even for one view.
+
+**Labels on every view.** Setting `includeLabel: true` changes the required
+shape of `views`: each entry must then carry a `label`. See
+[Annotate renders](annotate-renders).
+
+**Different formats per view.** Not supported. Format, dimensions, quality,
+background and annotations are shared across the whole request; only `id`,
+`label`, `phi` and `theta` vary per view. Issue separate calls if you need
+different formats.
+
+## Related
+
+- [Camera model](../concepts/camera-model) — why views are spherical
+  coordinates rather than matrices.
+- [Reference: operations](../api/operations) — the full signature and the
+  exactness rules the batch call enforces.
+- [Render a view sheet](../getting-started/render-a-view-sheet) — a guided
+  build using this call.

@@ -54,10 +54,22 @@ export declare class RenderError extends Error {
 ```typescript
 import { RenderError, renderGlbToImage } from 'nanoraster';
 
+import { readFile } from 'node:fs/promises';
+
+const glb = Uint8Array.from(await readFile('model.glb'));
+
 try {
-  await renderGlbToImage(glb, options);
+  await renderGlbToImage(glb, { format: 'png' });
 } catch (error) {
   const failure = RenderError.from(error);
   if (!failure.isGpuFault) throw failure;
 }
 ```
+
+## Related
+
+- [Handle render failures](../guides/handle-render-failures) — retry policy and
+  keeping the last good image.
+- [Determinism](../concepts/determinism) — why input failures reproduce and GPU
+  faults do not.
+- [Reference: operations](operations) — the calls that throw these errors.
