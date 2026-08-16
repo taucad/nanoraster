@@ -96,14 +96,24 @@ const formatMermaid = (node: MdxJsxElement): string | undefined => {
   return chart === undefined ? undefined : `\`\`\`mermaid\n${chart}\n\`\`\``;
 };
 
+/** Write a `<RenderDemo>` back out as the TypeScript example it wraps. */
+const formatRenderDemo = (node: MdxJsxElement): string | undefined => {
+  const attribute = node.attributes.find(({ name }) => name === 'code');
+  const code = typeof attribute?.value === 'string' ? attribute.value : undefined;
+  return code === undefined ? undefined : `\`\`\`typescript\n${code}\n\`\`\``;
+};
+
 /**
  * Render components as text for agents: TypeTable data as property bullets,
- * and Mermaid elements as the diagram source they were authored from.
+ * Mermaid elements as their diagram source, and RenderDemo as the example it
+ * wraps. Every interactive surface has a text projection carrying the same
+ * information, so the markdown endpoints never show less than the page does.
  */
 export const llmStringifyMdx = (...args: readonly unknown[]): string | undefined => {
   const [node] = args;
   if (!isMdxJsxElement(node)) return undefined;
   if (node.name === 'Mermaid') return formatMermaid(node);
+  if (node.name === 'RenderDemo') return formatRenderDemo(node);
   if (node.name !== 'TypeTable') return undefined;
   const document = readGeneratedDoc(node);
   return document ? formatDocument(document) : undefined;

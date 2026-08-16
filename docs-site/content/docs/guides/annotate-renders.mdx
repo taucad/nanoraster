@@ -53,14 +53,22 @@ TypeScript enforces it before the call runs.
 
 ### 3. Add a physical scale
 
+<RenderDemo>
+
 ```typescript
+import { renderGlbToImage } from 'nanoraster';
+
 const image = await renderGlbToImage(glb, {
   format: 'png',
   width: 512,
   height: 512,
+  includeAxes: false,
   includeScale: true,
+  includeLabel: false,
 });
 ```
+
+</RenderDemo>
 
 A scale bar is drawn bottom-left in the model's own units. Under a perspective
 projection the bar is only accurate at one depth, so its label names that plane

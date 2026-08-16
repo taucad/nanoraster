@@ -45,10 +45,18 @@ var formatMermaid = (node) => {
 ${chart}
 \`\`\``;
 };
+var formatRenderDemo = (node) => {
+  const attribute = node.attributes.find(({ name }) => name === "code");
+  const code = typeof attribute?.value === "string" ? attribute.value : void 0;
+  return code === void 0 ? void 0 : `\`\`\`typescript
+${code}
+\`\`\``;
+};
 var llmStringifyMdx = (...args) => {
   const [node] = args;
   if (!isMdxJsxElement(node)) return void 0;
   if (node.name === "Mermaid") return formatMermaid(node);
+  if (node.name === "RenderDemo") return formatRenderDemo(node);
   if (node.name !== "TypeTable") return void 0;
   const document = readGeneratedDoc(node);
   return document ? formatDocument(document) : void 0;
@@ -73,6 +81,22 @@ var remarkMermaid = () => (tree) => {
   convert(tree);
 };
 
+// lib/remark-render-demo.ts
+var firstCodeChild = (node) => node.children?.find((child) => child.type === "code" && typeof child.value === "string");
+var inject = (node) => {
+  if (node.type === "mdxJsxFlowElement" && node.name === "RenderDemo") {
+    const code = firstCodeChild(node);
+    if (code?.value !== void 0) {
+      node.attributes ??= [];
+      node.attributes.push({ type: "mdxJsxAttribute", name: "code", value: code.value });
+    }
+  }
+  for (const child of node.children ?? []) inject(child);
+};
+var remarkRenderDemo = () => (tree) => {
+  inject(tree);
+};
+
 // source.config.ts
 var generator = createGenerator({ tsconfigPath: "./tsconfig.json" });
 var docs = defineDocs({
@@ -87,7 +111,7 @@ var docs = defineDocs({
 });
 var source_config_default = defineConfig({
   mdxOptions: {
-    remarkPlugins: [[remarkAutoTypeTable, { generator }], remarkMermaid]
+    remarkPlugins: [[remarkAutoTypeTable, { generator }], remarkMermaid, remarkRenderDemo]
   }
 });
 export {
