@@ -51,21 +51,6 @@ const catalogue: Record<string, DemoControl> = {
   },
 };
 
-/** Defaults matching the package and the glTF specification. */
-export const demoDefaults: Record<string, DemoValue> = {
-  phi: 60,
-  theta: -45,
-  margin: 0.1,
-  up: 'y',
-  projection: 'perspective',
-  includeAxes: false,
-  includeScale: false,
-  includeLabel: false,
-  baseColorFactor: [1, 1, 1, 1],
-  metallicFactor: 1,
-  roughnessFactor: 1,
-};
-
 const parseValue = (raw: string): DemoValue | undefined => {
   if (raw === 'true') return true;
   if (raw === 'false') return false;
@@ -109,6 +94,10 @@ export const demoControls = (code: string): readonly DemoControl[] => {
     .filter((key) => key in present)
     .map((key) => catalogue[key]);
 };
+
+/** True when a value belongs in the model rather than in the render request. */
+export const isMaterialKey = (key: string): boolean =>
+  key in catalogue && catalogue[key].scope === 'material';
 
 /** Format a value the way it would appear in the example's source. */
 export const formatValue = (value: DemoValue): string => {
