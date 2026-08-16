@@ -40,6 +40,21 @@ latitude:
 `theta` rotates around the up axis, right-handed. At `phi: 0` the subject is
 seen down the axis of rotation, so `theta` only spins the image.
 
+<RenderDemo>
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  up: 'y',
+  phi: 60,
+  theta: -45,
+});
+```
+
+</RenderDemo>
+
 ### The up axis is the frame of reference
 
 `up` does not rotate the model. It selects which world axis the angles are

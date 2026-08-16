@@ -18,6 +18,8 @@ space surrounds the subject.
 nanoraster frames the model automatically; you choose the direction it is seen
 from, not the distance. Both angles are finite degrees.
 
+<RenderDemo>
+
 ```typescript
 import { renderGlbToImage } from 'nanoraster';
 
@@ -27,6 +29,8 @@ const image = await renderGlbToImage(glb, {
   theta: -45,
 });
 ```
+
+</RenderDemo>
 
 | Angle   | Meaning                                     | Default |
 | ------- | ------------------------------------------- | ------: |
@@ -74,12 +78,17 @@ Orthographic also makes the scale annotation depth-invariant — see
 
 `margin` is the fraction of the fitted extent left empty around the subject.
 
+<RenderDemo>
+
 ```typescript
 const image = await renderGlbToImage(glb, {
   format: 'png',
   margin: 0.02,
+  projection: 'perspective',
 });
 ```
+
+</RenderDemo>
 
 | `margin` | Result                                            |
 | -------- | ------------------------------------------------- |
