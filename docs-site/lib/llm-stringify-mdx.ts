@@ -96,11 +96,15 @@ const formatMermaid = (node: MdxJsxElement): string | undefined => {
   return chart === undefined ? undefined : `\`\`\`mermaid\n${chart}\n\`\`\``;
 };
 
-/** Write a `<RenderDemo>` back out as the TypeScript example it wraps. */
+/** Write a `<RenderDemo>` back out as the example it wraps, fence and all. */
 const formatRenderDemo = (node: MdxJsxElement): string | undefined => {
-  const attribute = node.attributes.find(({ name }) => name === 'code');
-  const code = typeof attribute?.value === 'string' ? attribute.value : undefined;
-  return code === undefined ? undefined : `\`\`\`typescript\n${code}\n\`\`\``;
+  const read = (name: string): string | undefined => {
+    const attribute = node.attributes.find((candidate) => candidate.name === name);
+    return typeof attribute?.value === 'string' ? attribute.value : undefined;
+  };
+
+  const code = read('code');
+  return code === undefined ? undefined : `\`\`\`${read('lang') ?? 'typescript'}\n${code}\n\`\`\``;
 };
 
 /**

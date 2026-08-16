@@ -7,8 +7,10 @@ import {
   demoDefaults,
   formatValue,
   readDemoOptions,
+  type DemoControl,
   type DemoValue,
 } from '@/lib/demo-options';
+import { hexToLinear, linearToHex, patchMaterialFactors } from '@/lib/glb-material';
 import { hasWebGpu, loadDemoModel, loadWasmRenderer } from '@/lib/wasm-renderer';
 
 import styles from './render-demo.module.css';
@@ -31,6 +33,7 @@ export const RenderDemo = ({
   children,
 }: {
   readonly code: string;
+  readonly lang?: string;
   readonly children?: React.ReactNode;
 }): React.JSX.Element => {
   const controls = demoControls(code);
@@ -42,6 +45,8 @@ export const RenderDemo = ({
   const [message, setMessage] = useState('');
   const [src, setSrc] = useState('');
   const urlRef = useRef('');
+  const controlsRef = useRef<readonly DemoControl[]>(controls);
+  controlsRef.current = controls;
 
   const draw = useCallback(async (current: Record<string, DemoValue>): Promise<void> => {
     if (!hasWebGpu()) {
@@ -51,11 +56,29 @@ export const RenderDemo = ({
 
     setState('rendering');
     try {
-      const [renderer, glb] = await Promise.all([loadWasmRenderer(), loadDemoModel()]);
+      const [renderer, source] = await Promise.all([loadWasmRenderer(), loadDemoModel()]);
+
+      // Material factors live in the model, not the request, so they are
+      // patched into the GLB before it is handed to the renderer.
+      const material = Object.fromEntries(
+        controlsRef.current
+          .filter(({ scope }) => scope === 'material')
+          .map(({ key }) => [key, current[key]]),
+      );
+      const glb = Object.keys(material).length > 0
+        ? patchMaterialFactors(source, material)
+        : source;
+
+      const options = Object.fromEntries(
+        Object.entries(current).filter(
+          ([key]) => !controlsRef.current.some((c) => c.key === key && c.scope === 'material'),
+        ),
+      );
+
       const bytes = await renderer.render_glb_to_image(
         glb,
         JSON.stringify({
-          ...current,
+          ...options,
           background: [0.04, 0.06, 0.08, 1],
           format: 'png',
           ...RENDER_SIZE,
@@ -147,6 +170,16 @@ export const RenderDemo = ({
                     </option>
                   ))}
                 </select>
+              ) : control.kind === 'colour' ? (
+                <input
+                  onChange={(event) => {
+                    update(control.key, hexToLinear(event.currentTarget.value));
+                  }}
+                  type="color"
+                  value={linearToHex(
+                    Array.isArray(values[control.key]) ? (values[control.key] as number[]) : [1, 1, 1, 1],
+                  )}
+                />
               ) : (
                 <input
                   checked={values[control.key] === true}
