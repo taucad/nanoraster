@@ -4,10 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   demoControls,
-  demoDefaults,
   formatValue,
+  isMaterialKey,
   readDemoOptions,
-  type DemoControl,
   type DemoValue,
 } from '@/lib/demo-options';
 import { hexToLinear, linearToHex, patchMaterialFactors } from '@/lib/glb-material';
@@ -37,16 +36,11 @@ export const RenderDemo = ({
   readonly children?: React.ReactNode;
 }): React.JSX.Element => {
   const controls = demoControls(code);
-  const [values, setValues] = useState<Record<string, DemoValue>>(() => ({
-    ...demoDefaults,
-    ...readDemoOptions(code),
-  }));
+  const [values, setValues] = useState<Record<string, DemoValue>>(() => readDemoOptions(code));
   const [state, setState] = useState<State>('idle');
   const [message, setMessage] = useState('');
   const [src, setSrc] = useState('');
   const urlRef = useRef('');
-  const controlsRef = useRef<readonly DemoControl[]>(controls);
-  controlsRef.current = controls;
 
   const draw = useCallback(async (current: Record<string, DemoValue>): Promise<void> => {
     if (!hasWebGpu()) {
@@ -59,21 +53,12 @@ export const RenderDemo = ({
       const [renderer, source] = await Promise.all([loadWasmRenderer(), loadDemoModel()]);
 
       // Material factors live in the model, not the request, so they are
-      // patched into the GLB before it is handed to the renderer.
-      const material = Object.fromEntries(
-        controlsRef.current
-          .filter(({ scope }) => scope === 'material')
-          .map(({ key }) => [key, current[key]]),
-      );
-      const glb = Object.keys(material).length > 0
-        ? patchMaterialFactors(source, material)
-        : source;
-
-      const options = Object.fromEntries(
-        Object.entries(current).filter(
-          ([key]) => !controlsRef.current.some((c) => c.key === key && c.scope === 'material'),
-        ),
-      );
+      // patched into the GLB and kept out of the options entirely.
+      const entries = Object.entries(current);
+      const material = Object.fromEntries(entries.filter(([key]) => isMaterialKey(key)));
+      const options = Object.fromEntries(entries.filter(([key]) => !isMaterialKey(key)));
+      const glb =
+        Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
 
       const bytes = await renderer.render_glb_to_image(
         glb,

@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { demoControls, readDemoOptions } from './lib/demo-options';
+import { demoControls, isMaterialKey, readDemoOptions } from './lib/demo-options';
 import { llmStringifyMdx } from './lib/llm-stringify-mdx';
 
 const docsDir = resolve(import.meta.dirname, 'content/docs');
@@ -70,6 +70,34 @@ describe('interactive demo projections', () => {
         } else {
           expect(typeof value, `${path} ${control.key}`).toBe('boolean');
         }
+      }
+    }
+  });
+
+  it('keeps material factors out of the render request', () => {
+    // A material key reaching the options JSON is rejected by the renderer as
+    // an unknown field, which is how this broke the camera and framing demos.
+    for (const { path, code } of demos) {
+      const seeded = readDemoOptions(code);
+      const optionKeys = Object.keys(seeded).filter((key) => !isMaterialKey(key));
+
+      for (const key of optionKeys) {
+        expect(isMaterialKey(key), `${path} sends ${key} as an option`).toBe(false);
+      }
+
+      // Only the material page's example carries material factors at all.
+      const materialKeys = Object.keys(seeded).filter((key) => isMaterialKey(key));
+      if (materialKeys.length > 0) {
+        expect(path, 'material factors outside the material page').toContain('material-model');
+      }
+    }
+  });
+
+  it('seeds nothing the example does not set', () => {
+    for (const { path, code } of demos) {
+      const seeded = readDemoOptions(code);
+      for (const key of Object.keys(seeded)) {
+        expect(code, `${path} seeds ${key} without mentioning it`).toContain(key);
       }
     }
   });
