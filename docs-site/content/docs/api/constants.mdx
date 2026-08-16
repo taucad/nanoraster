@@ -1,0 +1,83 @@
+---
+title: Validation constants
+description: The exact runtime bounds and patterns every render request is validated against.
+---
+
+Every exported bound and pattern the validator applies. Ranges are inclusive,
+and the regular expressions are the exact runtime values — import them rather
+than restating them, so caller-side checks cannot drift from the package's.
+
+| Export                             | Runtime value                             | Unit or syntax             | Affected field              |
+| ---------------------------------- | ----------------------------------------- | -------------------------- | --------------------------- |
+| `renderImageDimensionRange`        | `readonly [16, 4096]`                     | pixels                     | `width`, `height`           |
+| `renderImageQualityRange`          | `readonly [0, 1]`                         | normalized encoder quality | `quality`                   |
+| `renderImageMarginRange`           | `readonly [0, 0.5]`                       | fraction of fitted extent  | `margin`                    |
+| `renderImageAnnotatedMinDimension` | `192`                                     | pixels                     | annotated `width`, `height` |
+| `renderImageLabelMaxLength`        | `64`                                      | Unicode code points        | `label`                     |
+| `renderImageLabelPattern`          | `/^[\u0020-\u007E\u00B5\u2014\u2212]+$/u` | supported characters       | `label`                     |
+| `renderImageViewIdPattern`         | `/^[\dA-Za-z][\w-]{0,63}$/u`              | identifier syntax          | `id`                        |
+| `renderImageBackgroundPattern`     | `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`   | hexadecimal color          | `background`                |
+
+#### Usage
+
+```typescript
+import { renderImageDimensionRange } from 'nanoraster';
+
+const [min, max] = renderImageDimensionRange;
+
+const clamp = (value: number): number => Math.min(Math.max(value, min), max);
+```
+
+## Dimensions and fit
+
+### `renderImageDimensionRange`
+
+Inclusive pixel bounds for both image dimensions: `readonly [16, 4096]`.
+
+### `renderImageMarginRange`
+
+Inclusive corner-fit margin bounds: `readonly [0, 0.5]`, as a fraction of the
+fitted extent.
+
+### `renderImageAnnotatedMinDimension`
+
+Minimum width and height when axes, a label, or a scale is enabled: `192`
+pixels. Below this the overlays cannot stay legible, so the request is rejected
+rather than rendered.
+
+## Encoding
+
+### `renderImageQualityRange`
+
+Inclusive encoder-quality bounds: `readonly [0, 1]`. Ignored by the lossless
+PNG encoder.
+
+### `renderImageBackgroundPattern`
+
+Hex clear-color syntax: `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`. Backgrounds may
+also be supplied as normalized straight-alpha RGBA, which this pattern does not
+cover.
+
+## Labels and identifiers
+
+### `renderImageLabelMaxLength`
+
+Maximum label length: `64` Unicode code points.
+
+### `renderImageLabelPattern`
+
+Supported label characters: `/^[\u0020-\u007E\u00B5\u2014\u2212]+$/u` — printable
+ASCII plus the micro sign, em dash, and minus sign.
+
+### `renderImageViewIdPattern`
+
+Stable view identifier syntax: `/^[\dA-Za-z][\w-]{0,63}$/u`. IDs become result
+filenames, which is why the first character is restricted.
+
+## Related
+
+- [Annotate renders](../guides/annotate-renders) — where the 192-pixel minimum
+  and the label rules apply.
+- [Reference: options](options) — the fields these constants constrain.
+- [Handle render failures](../guides/handle-render-failures) — what a violation
+  of any of these produces.

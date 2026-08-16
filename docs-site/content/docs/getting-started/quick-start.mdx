@@ -1,0 +1,69 @@
+---
+title: Quick start
+description: Render a GLB file to a PNG in under four minutes, and confirm the output is what you expected.
+---
+
+Render one GLB file to one PNG, and read back the bytes you own.
+
+## Prerequisites
+
+- nanoraster installed — see [Installation](installation).
+- Node.js 24 or newer.
+- A GLB file saved as `model.glb` in your working directory.
+
+## Install
+
+```bash tab="npm"
+npm install nanoraster
+```
+
+```bash tab="pnpm"
+pnpm add nanoraster
+```
+
+## Render your first image
+
+Save this as `render.mjs` and run it with `node render.mjs`.
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+import { readFile, writeFile } from 'node:fs/promises';
+
+const glb = Uint8Array.from(await readFile('model.glb'));
+
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  width: 512,
+  height: 512,
+});
+
+await writeFile(image.name, image.bytes);
+console.log(`wrote ${image.name} (${image.bytes.length} bytes, ${image.mimeType})`);
+```
+
+## Expected output
+
+```console
+wrote thumbnail.png (29965 bytes, image/png)
+```
+
+A file named `thumbnail.png` appears in your working directory: a 512×512 PNG
+of your model on a transparent background, viewed from the default camera at
+`phi` 60° and `theta` −45°.
+
+The result is a plain object with three fields — `name`, `bytes`, and
+`mimeType`. nanoraster never writes to disk itself, so the bytes are yours to
+save, upload, or hand to another process.
+
+Run it a second time. The bytes are identical, because the camera, the lighting
+and the encoder are all fixed for a given request.
+
+## What's next
+
+- [Render a view sheet](render-a-view-sheet) — a guided walkthrough building a
+  four-view contact sheet from one GLB.
+- [Frame the model](../guides/frame-the-model) — move the camera off the default
+  angle.
+- [Reference: operations](../api/operations) — the full signature of
+  `renderGlbToImage`, including every option it accepts.

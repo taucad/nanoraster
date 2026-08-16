@@ -2,6 +2,7 @@ import { defineConfig, defineDocs } from 'fumadocs-mdx/config';
 import { createGenerator, remarkAutoTypeTable } from 'fumadocs-typescript';
 
 import { llmStringifyMdx } from './lib/llm-stringify-mdx';
+import { remarkMermaid } from './lib/remark-mermaid';
 
 const generator = createGenerator({ tsconfigPath: './tsconfig.json' });
 
@@ -18,6 +19,6 @@ export const docs = defineDocs({
 
 export default defineConfig({
   mdxOptions: {
-    remarkPlugins: [[remarkAutoTypeTable, { generator }]],
+    remarkPlugins: [[remarkAutoTypeTable, { generator }], remarkMermaid],
   },
 });

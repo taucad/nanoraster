@@ -1,0 +1,109 @@
+---
+title: Frame the model
+description: Place the camera with polar angles, choose a projection and up axis, and control how tightly the subject fits.
+---
+
+Move the camera off the default three-quarter view and control how much empty
+space surrounds the subject.
+
+## Prerequisites
+
+- Completed the [Quick start](../getting-started/quick-start).
+- A GLB whose orientation you know — the up axis matters here.
+
+## Steps
+
+### 1. Place the camera with two angles
+
+nanoraster frames the model automatically; you choose the direction it is seen
+from, not the distance. Both angles are finite degrees.
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  phi: 60,
+  theta: -45,
+});
+```
+
+| Angle   | Meaning                                     | Default |
+| ------- | ------------------------------------------- | ------: |
+| `phi`   | Polar angle away from the up axis           |    `60` |
+| `theta` | Right-handed azimuth around the up axis     |   `-45` |
+
+`phi: 0` looks straight down the up axis; `phi: 90` is level with the model.
+
+### 2. Match the model's up axis
+
+glTF's convention is Y-up, which is the default. Models exported from CAD tools
+are frequently Z-up, and rendering them without saying so tips the subject onto
+its side.
+
+```typescript
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  up: 'z',
+  phi: 60,
+  theta: -45,
+});
+```
+
+Changing `up` re-interprets `phi` and `theta`, because both are defined relative
+to it. A view that looked correct at Y-up needs different angles at Z-up.
+
+### 3. Choose a projection
+
+```typescript
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  projection: 'orthographic',
+});
+```
+
+| Projection     | Use when                                                             |
+| -------------- | -------------------------------------------------------------------- |
+| `perspective`  | Ordinary thumbnails. Nearer features read as larger. The default.     |
+| `orthographic` | Canonical views where two parts of the model must be comparable at any depth. |
+
+Orthographic also makes the scale annotation depth-invariant — see
+[Annotate renders](annotate-renders).
+
+### 4. Tighten or loosen the fit
+
+`margin` is the fraction of the fitted extent left empty around the subject.
+
+```typescript
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  margin: 0.02,
+});
+```
+
+| `margin` | Result                                            |
+| -------- | ------------------------------------------------- |
+| `0`      | Subject touches the frame edge                    |
+| `0.1`    | Default — a comfortable border                    |
+| `0.5`    | Maximum — subject occupies the middle half        |
+
+Keep some margin when annotations are enabled: the axis indicator and scale bar
+are drawn inside the frame and can overlap a subject fitted to the edge.
+
+## Variations
+
+**Consistent framing across a set.** `margin` is a shared setting, so every view
+in a [batch call](render-multiple-views) fits the same way. That is what makes a
+contact sheet's images comparable.
+
+**Very wide or very tall outputs.** Fitting accounts for the aspect ratio you
+request, so a 1920×480 banner frames differently from a 512×512 square. Set
+`width` and `height` before tuning `margin`.
+
+## Related
+
+- [Camera model](../concepts/camera-model) — the coordinate convention and why
+  it is spherical.
+- [Reference: options](../api/options) — every field named here, with ranges.
+- [Render a view sheet](../getting-started/render-a-view-sheet) — these angles
+  applied to a four-view sheet.

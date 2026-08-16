@@ -1,0 +1,111 @@
+---
+title: Render in the browser
+description: Run nanoraster on browser WebGPU, bundle the WebAssembly artifact, and degrade gracefully where WebGPU is missing.
+---
+
+Render in a browser tab using WebGPU, with the same API and the same render core
+the Node.js build uses.
+
+## Prerequisites
+
+- nanoraster installed — see [Installation](../getting-started/installation).
+- A browser with WebGPU enabled.
+- A bundler that can emit a WebAssembly asset — Vite, webpack 5, and Rspack all
+  handle this without configuration.
+
+## Steps
+
+### 1. Check for a WebGPU adapter first
+
+nanoraster fails with a typed error when no adapter exists, but checking first
+lets you choose a fallback before doing any work.
+
+```typescript
+const supported = typeof navigator !== 'undefined' && 'gpu' in navigator;
+
+if (!supported) {
+  throw new Error('This browser has no WebGPU support.');
+}
+```
+
+Presence of `navigator.gpu` is necessary but not sufficient — a browser can
+expose the API and still fail to produce an adapter on a particular machine.
+Handle `adapter-unavailable` as well; see
+[Handle render failures](handle-render-failures).
+
+### 2. Render from bytes you already hold
+
+The browser API is identical to Node's. The only difference is where the GLB
+comes from — a fetch, a file input, or an in-memory buffer rather than the
+filesystem.
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+const response = await fetch('/model.glb');
+const glb = new Uint8Array(await response.arrayBuffer());
+
+const image = await renderGlbToImage(glb, {
+  format: 'webp',
+  width: 640,
+  height: 480,
+});
+```
+
+### 3. Show or download the result
+
+The result is raw bytes, so wrap it in a `Blob` to display it.
+
+```typescript
+const blob = new Blob([image.bytes], { type: image.mimeType });
+const url = URL.createObjectURL(blob);
+
+document.querySelector('img')?.setAttribute('src', url);
+```
+
+Revoke the object URL with `URL.revokeObjectURL(url)` once the image has loaded,
+or the blob stays resident for the life of the document.
+
+### 4. Keep the render off the main thread
+
+Rendering occupies the GPU queue and does non-trivial CPU work encoding the
+result. In a worker, neither blocks input handling.
+
+```typescript
+// render.worker.ts
+import { renderGlbToImage } from 'nanoraster';
+
+self.addEventListener('message', async ({ data }: MessageEvent<Uint8Array>) => {
+  const image = await renderGlbToImage(data, { format: 'webp' });
+  self.postMessage(image.bytes, [image.bytes.buffer]);
+});
+```
+
+Transferring `image.bytes.buffer` moves the memory instead of copying it. The
+worker cannot use it afterwards, which is what you want — the bytes belong to
+the caller now.
+
+## Variations
+
+**Bundling the wasm explicitly.** If your bundler does not pick the artifact up
+automatically, reference the published subpath:
+
+```typescript
+import wasmUrl from 'nanoraster/wasm?url';
+```
+
+**Cross-origin isolation.** The browser build does not require
+`SharedArrayBuffer`, so COOP/COEP headers are not needed.
+
+**Node and browser from one codebase.** The import specifier is the same in
+both; the package resolves the correct artifact per host. Nothing in your code
+needs to branch.
+
+## Related
+
+- [Rendering pipeline](../concepts/rendering-pipeline) — what the wasm and
+  native paths share.
+- [Handle render failures](handle-render-failures) — the GPU failure codes this
+  path can produce.
+- [Installation](../getting-started/installation) — the artifacts and how they
+  are delivered.
