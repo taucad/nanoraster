@@ -46,9 +46,12 @@ ${chart}
 \`\`\``;
 };
 var formatRenderDemo = (node) => {
-  const attribute = node.attributes.find(({ name }) => name === "code");
-  const code = typeof attribute?.value === "string" ? attribute.value : void 0;
-  return code === void 0 ? void 0 : `\`\`\`typescript
+  const read = (name) => {
+    const attribute = node.attributes.find((candidate) => candidate.name === name);
+    return typeof attribute?.value === "string" ? attribute.value : void 0;
+  };
+  const code = read("code");
+  return code === void 0 ? void 0 : `\`\`\`${read("lang") ?? "typescript"}
 ${code}
 \`\`\``;
 };
@@ -88,7 +91,10 @@ var inject = (node) => {
     const code = firstCodeChild(node);
     if (code?.value !== void 0) {
       node.attributes ??= [];
-      node.attributes.push({ type: "mdxJsxAttribute", name: "code", value: code.value });
+      node.attributes.push(
+        { type: "mdxJsxAttribute", name: "code", value: code.value },
+        { type: "mdxJsxAttribute", name: "lang", value: code.lang ?? "typescript" }
+      );
     }
   }
   for (const child of node.children ?? []) inject(child);

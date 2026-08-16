@@ -15,8 +15,8 @@ const pages = pagePaths.map((path) => ({
 
 /** Every fenced example wrapped by a `<RenderDemo>`, with its page. */
 const demos = pages.flatMap(({ path, source }) =>
-  [...source.matchAll(/<RenderDemo>\s*```typescript\n([\s\S]*?)```\s*<\/RenderDemo>/gu)].map(
-    (match) => ({ path, code: match[1] }),
+  [...source.matchAll(/<RenderDemo>\s*```(\w+)\n([\s\S]*?)```\s*<\/RenderDemo>/gu)].map(
+    (match) => ({ path, lang: match[1], code: match[2] }),
   ),
 );
 
@@ -26,15 +26,18 @@ describe('interactive demo projections', () => {
   });
 
   it('serialises every demo back to the example it wraps', () => {
-    for (const { code } of demos) {
+    for (const { code, lang } of demos) {
       const output = llmStringifyMdx({
         type: 'mdxJsxFlowElement',
         name: 'RenderDemo',
-        attributes: [{ type: 'mdxJsxAttribute', name: 'code', value: code }],
+        attributes: [
+          { type: 'mdxJsxAttribute', name: 'code', value: code },
+          { type: 'mdxJsxAttribute', name: 'lang', value: lang },
+        ],
       });
 
       // The agent projection must carry the example verbatim, not a summary.
-      expect(output).toBe(`\`\`\`typescript\n${code}\n\`\`\``);
+      expect(output).toBe(`\`\`\`${lang}\n${code}\n\`\`\``);
     }
   });
 
@@ -56,7 +59,9 @@ describe('interactive demo projections', () => {
 
       for (const control of demoControls(code)) {
         const value = options[control.key];
-        if (control.kind === 'range') {
+        if (control.kind === 'colour') {
+          expect(Array.isArray(value), `${path} ${control.key}`).toBe(true);
+        } else if (control.kind === 'range') {
           expect(typeof value, `${path} ${control.key}`).toBe('number');
           expect(value as number).toBeGreaterThanOrEqual(control.min);
           expect(value as number).toBeLessThanOrEqual(control.max);

@@ -25,7 +25,10 @@ const inject = (node: Node): void => {
     const code = firstCodeChild(node);
     if (code?.value !== undefined) {
       node.attributes ??= [];
-      node.attributes.push({ type: 'mdxJsxAttribute', name: 'code', value: code.value });
+      node.attributes.push(
+        { type: 'mdxJsxAttribute', name: 'code', value: code.value },
+        { type: 'mdxJsxAttribute', name: 'lang', value: code.lang ?? 'typescript' },
+      );
     }
   }
 
