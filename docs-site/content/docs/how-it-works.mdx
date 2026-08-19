@@ -35,8 +35,8 @@ failure here is classified `parse`.
 `phi`, `theta`, `up`, `projection` and `margin`, then move the geometry to the
 device once; see [Frame the model](guides/frame-the-model).
 
-**Rasterise** draws the model under lighting that is fixed in this release, then
-draws authored edge lines. Failures here are GPU-class.
+**Rasterise** draws the model under the studio preset or the rig you supply,
+tone maps with the ACES filmic curve, then draws authored edge lines. Failures here are GPU-class.
 
 **Encode** compresses the pixels that came back. A request it cannot
 represent, such as a transparent JPEG, fails as `encode`. Because the failure
@@ -58,15 +58,18 @@ structural difference between hosts is a bug, not a configuration difference.
 Renders are used as evidence: a CI artifact that proves a part changed, a
 screenshot an agent compares across a tool loop. Evidence that varies for
 reasons unrelated to the subject invites false conclusions, so nanoraster
-removes inputs rather than seeding them. Lighting, environment, tone map and
-gamma are fixed in this release; camera distance is derived from the model's
-bounds; angles, format, size, background and annotations are yours.
+removes inputs rather than seeding them. Lighting is the studio preset unless
+the request carries a [rig](guides/light-the-subject), and then the rig is held
+constant like any other input; tone map and gamma are fixed; camera distance is
+derived from the model's bounds; angles, format, size, background and
+annotations are yours.
 
 What is guaranteed:
 
 - Repeating a request on the same host produces identical bytes, in the same
   process or a different one.
-- Lighting is identical across every render.
+- Lighting is identical for every render that states the same `lighting`, or
+  none.
 - The camera fit is identical for identical bounds and angles.
 - Input failures reproduce exactly.
 
@@ -130,6 +133,6 @@ factors, so the render succeeds and looks flatter than the authoring tool
 showed. Metals read as grey at small sizes: with only an analytic environment to
 reflect, a fully metallic subject loses contrast as it shrinks; prefer a
 dielectric for thumbnails. Authored edge lines are drawn in their own pass,
-unaffected by the material factors. Because lighting is fixed in this release,
-a difference between two renders of the same model is a material difference
-and nothing else.
+unaffected by the material factors. With `lighting` held constant, a difference
+between two renders of the same model is a material difference and nothing
+else.

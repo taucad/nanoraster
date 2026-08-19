@@ -4,6 +4,7 @@
     "frame-the-model",
     "render-multiple-views",
     "format-and-annotate",
+    "light-the-subject",
     "render-in-the-browser",
     "handle-render-failures"
   ]
