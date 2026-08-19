@@ -34,7 +34,9 @@ for (let index = 0; index < iterations; index += 1) {
 durations.sort((left, right) => left - right);
 
 const report = {
-  name: 'gear-parse-raster-encode-512x384-v1',
+  // v2: R8/R9 retuned the studio preset (ACES tone map + diffuse environment
+  // irradiance), so every pixel — and therefore outputFnv — changed on purpose.
+  name: 'gear-parse-raster-encode-512x384-v2',
   adapter: native.describeAdapter(),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,

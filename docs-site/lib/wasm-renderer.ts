@@ -10,7 +10,7 @@ let renderer: Promise<WasmRenderer> | undefined;
 let model: Promise<Uint8Array<ArrayBuffer>> | undefined;
 
 /** The subject every documentation demo renders. */
-export const demoModelUrl = '/demo/gear-12-metal.glb';
+const demoModelUrl = '/demo/gear-12-metal.glb';
 
 /**
  * Load the browser binding once per document.
@@ -41,5 +41,4 @@ export const loadDemoModel = async (): Promise<Uint8Array<ArrayBuffer>> => {
 };
 
 /** True when the host exposes the WebGPU entry point the renderer needs. */
-export const hasWebGpu = (): boolean =>
-  typeof navigator !== 'undefined' && 'gpu' in navigator;
+export const hasWebGpu = (): boolean => typeof navigator !== 'undefined' && 'gpu' in navigator;

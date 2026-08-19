@@ -23,6 +23,77 @@ export type RenderUpAxis = 'x' | 'y' | 'z';
  */
 export type RenderProjection = 'perspective' | 'orthographic';
 
+/**
+ * One directional light.
+ *
+ * @public
+ */
+export type RenderLight = {
+  /**
+   * Direction from the surface toward the light — the vector dotted with the
+   * surface normal. Any finite non-zero vector is accepted and normalized by
+   * the renderer. View-space axes: `+x` right, `+y` up, `+z` toward the viewer.
+   */
+  readonly direction: readonly [number, number, number];
+  /** Linear RGB radiance, unitless, each channel within `renderImageLightColorRange`. */
+  readonly color: readonly [number, number, number];
+};
+
+/**
+ * Frame the light directions are authored in.
+ *
+ * @public
+ */
+export type RenderLightSpace = 'view' | 'world';
+
+/**
+ * Analytic environment supplying specular reflection and diffuse irradiance.
+ *
+ * @public
+ */
+export type RenderLightingEnvironment = 'studio' | 'none';
+
+/**
+ * Named lighting preset.
+ *
+ * @public
+ */
+export type RenderLightingPreset = 'studio';
+
+/**
+ * Explicit rig replacing the studio lights.
+ *
+ * @public
+ */
+export type RenderLightingRig = {
+  /**
+   * Direct lights replacing the studio ones, from none to
+   * `renderImageMaxLights`. An empty array renders from the environment alone.
+   */
+  readonly lights: readonly RenderLight[];
+  /** Flat ambient multiplier on the diffuse color, from 0 to 4. @default 0.02 */
+  readonly ambient?: number;
+  /** Analytic environment gating both its specular and its diffuse term. @default 'studio' */
+  readonly environment?: RenderLightingEnvironment;
+  /**
+   * Frame the directions are authored in. `'world'` fixes the lights to glTF
+   * coordinates whatever `up` is, so views of one subject stop being
+   * comparably lit.
+   *
+   * @default 'view'
+   */
+  readonly space?: RenderLightSpace;
+  /** Linear multiplier applied before tone mapping, from 0.01 to 16. @default 1 */
+  readonly exposure?: number;
+};
+
+/**
+ * Studio preset name or an explicit rig.
+ *
+ * @public
+ */
+export type RenderLighting = RenderLightingPreset | RenderLightingRig;
+
 type RenderImageSharedOptions = {
   /** Required output encoder. `jpg` is an alias for `jpeg`. */
   readonly format: RenderImageFormat;
@@ -52,6 +123,14 @@ type RenderImageSharedOptions = {
    * @default false
    */
   readonly includeScale?: boolean;
+  /**
+   * Studio preset by default; a supplied rig replaces the direct lights and
+   * inherits the other studio values. Determinism is unchanged: a fixed rig
+   * gives fixed pixels.
+   *
+   * @default 'studio'
+   */
+  readonly lighting?: RenderLighting;
 };
 
 type RenderLabelOptions =
@@ -140,6 +219,10 @@ export type RenderedImages<Views extends readonly RenderImageView[]> = {
 
 type NoExtraKeys<Value, Shape> = Value & Record<Exclude<keyof Value, keyof Shape>, never>;
 
+type StrictLighting<Lighting> = Lighting extends RenderLightingRig
+  ? NoExtraKeys<Lighting, RenderLightingRig>
+  : Lighting;
+
 type StrictViews<Views extends readonly RenderImageView[]> = Views['length'] extends 0
   ? never
   : {
@@ -158,6 +241,7 @@ export type StrictRenderImagesOptions<Options extends RenderImagesOptions> = NoE
   RenderImagesOptions
 > & {
   readonly views: StrictViews<Options['views']>;
+  readonly lighting?: StrictLighting<Options['lighting']>;
 };
 
 /**
@@ -168,7 +252,9 @@ export type StrictRenderImagesOptions<Options extends RenderImagesOptions> = NoE
  * @returns The same settings with literal types preserved
  */
 export const createRenderImageOptions = <const Options extends RenderImageOptions>(
-  options: NoExtraKeys<Options, RenderImageOptions>,
+  options: NoExtraKeys<Options, RenderImageOptions> & {
+    readonly lighting?: StrictLighting<Options['lighting']>;
+  },
 ): Options => options;
 
 /**
@@ -197,6 +283,7 @@ const singularKeys = new Set([
   'includeAxes',
   'includeLabel',
   'includeScale',
+  'lighting',
 ]);
 
 const pluralKeys = new Set([
@@ -211,10 +298,15 @@ const pluralKeys = new Set([
   'includeAxes',
   'includeLabel',
   'includeScale',
+  'lighting',
   'views',
 ]);
 
 const viewKeys = new Set(['id', 'label', 'phi', 'theta']);
+
+const lightingKeys = new Set(['lights', 'ambient', 'environment', 'space', 'exposure']);
+
+const lightKeys = new Set(['direction', 'color']);
 
 /** Inclusive pixel bounds for image width and height. @public */
 export const renderImageDimensionRange = [16, 4096] as const;
@@ -224,6 +316,18 @@ export const renderImageQualityRange = [0, 1] as const;
 
 /** Inclusive corner-fit margin bounds. @public */
 export const renderImageMarginRange = [0, 0.5] as const;
+
+/** Most directional lights one rig may carry. @public */
+export const renderImageMaxLights = 8;
+
+/** Inclusive per-channel bounds for light radiance. @public */
+export const renderImageLightColorRange = [0, 32] as const;
+
+/** Inclusive bounds for the flat ambient multiplier. @public */
+export const renderImageAmbientRange = [0, 4] as const;
+
+/** Inclusive bounds for the pre-tone-map exposure multiplier. @public */
+export const renderImageExposureRange = [0.01, 16] as const;
 
 /** Minimum dimension when an annotation is enabled. @public */
 export const renderImageAnnotatedMinDimension = 192;
@@ -243,6 +347,7 @@ export const renderImageBackgroundPattern = /^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/
 const viewIdDescription = '[A-Za-z0-9][A-Za-z0-9_-]{0,63}';
 const defaultWidth = 768;
 const defaultHeight = 432;
+const minimumLightDirectionLength = 1e-6;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -306,6 +411,70 @@ const assertRange = (
   if (value < minimum || value > maximum) {
     throw new TypeError(`${name} must be between ${minimum} and ${maximum}`);
   }
+};
+
+const assertOptionalEnum = (value: unknown, name: string, allowed: readonly string[]): void => {
+  if (value !== undefined && !allowed.some((option) => option === value)) {
+    throw new TypeError(`${name} must be ${allowed.join(' or ')}`);
+  }
+};
+
+const finiteTriple = (value: unknown, message: string): readonly number[] => {
+  if (!isUnknownArray(value) || value.length !== 3) {
+    throw new TypeError(message);
+  }
+  const numbers = value.filter(
+    (entry): entry is number => typeof entry === 'number' && Number.isFinite(entry),
+  );
+  if (numbers.length !== 3) {
+    throw new TypeError(message);
+  }
+  return numbers;
+};
+
+const validateLight = (light: unknown, name: string): void => {
+  if (!isRecord(light)) {
+    throw new TypeError(`${name} must be an object`);
+  }
+  assertKnownKeys(light, lightKeys, name);
+  const direction = finiteTriple(light['direction'], `${name}.direction must contain three finite numbers`);
+  if (Math.hypot(...direction) < minimumLightDirectionLength) {
+    throw new TypeError(`${name}.direction must not be zero length`);
+  }
+  const [minimum, maximum] = renderImageLightColorRange;
+  const colorMessage = `${name}.color must contain three channels between ${minimum} and ${maximum}`;
+  const color = finiteTriple(light['color'], colorMessage);
+  if (color.some((channel) => channel < minimum || channel > maximum)) {
+    throw new TypeError(colorMessage);
+  }
+};
+
+const validateLighting = (lighting: unknown): void => {
+  if (lighting === undefined || lighting === 'studio') {
+    return;
+  }
+  if (!isRecord(lighting)) {
+    throw new TypeError('lighting must be studio or a rig object');
+  }
+  assertKnownKeys(lighting, lightingKeys, 'lighting');
+  const { lights, ambient, environment, space, exposure } = lighting;
+  if (!isUnknownArray(lights)) {
+    throw new TypeError('lighting.lights must be an array');
+  }
+  if (lights.length > renderImageMaxLights) {
+    throw new TypeError(`lighting.lights must contain at most ${renderImageMaxLights} lights`);
+  }
+  for (const [index, light] of lights.entries()) {
+    validateLight(light, `lighting.lights[${index}]`);
+  }
+  if (ambient !== undefined) {
+    assertRange(ambient, 'lighting.ambient', renderImageAmbientRange);
+  }
+  if (exposure !== undefined) {
+    assertRange(exposure, 'lighting.exposure', renderImageExposureRange);
+  }
+  assertOptionalEnum(environment, 'lighting.environment', ['studio', 'none']);
+  assertOptionalEnum(space, 'lighting.space', ['view', 'world']);
 };
 
 const parseHexColor = (value: string): readonly [number, number, number, number] => {
@@ -379,6 +548,7 @@ const validateCommon = (options: Omit<RenderImageOptions, 'phi' | 'theta'>): voi
   assertOptionalBoolean(options.includeScale, 'includeScale');
   validateAnnotatedDimensions(options);
   validateBackground(options.background);
+  validateLighting(options.lighting);
 };
 
 const normalizedBackground = (
@@ -423,6 +593,7 @@ export const toImageRequestJson = (options: RenderImageOptions): string => {
     includeAxes: options.includeAxes,
     includeLabel: options.includeLabel,
     includeScale: options.includeScale,
+    lighting: options.lighting,
   });
 };
 
@@ -481,6 +652,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     includeAxes: options.includeAxes,
     includeLabel: options.includeLabel,
     includeScale: options.includeScale,
+    lighting: options.lighting,
     views: normalizedViews,
   });
 };

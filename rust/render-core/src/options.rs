@@ -1,13 +1,63 @@
 //! Strict JSON request contracts shared by the WASM and N-API bindings.
 
 use crate::encode::ImageFormat;
-use crate::{Projection, RenderError, RenderOptions, UpAxis};
-use serde::Deserialize;
+use crate::{
+    LightingSpace, MAX_LIGHTS, Projection, RenderError, RenderOptions, ResolvedLight,
+    ResolvedLighting, UpAxis,
+};
+use serde::{Deserialize, Deserializer, de};
 use std::collections::HashSet;
 
 pub(crate) const MIN_DIMENSION: u32 = 16;
 pub(crate) const MAX_DIMENSION: u32 = 4096;
 pub(crate) const ANNOTATED_MIN_DIMENSION: u32 = 192;
+const MAX_LIGHT_COLOR: f32 = 32.0;
+const MAX_AMBIENT: f32 = 4.0;
+const EXPOSURE_RANGE: std::ops::RangeInclusive<f32> = 0.01..=16.0;
+/// Shorter than this and a direction carries no usable heading.
+const MIN_DIRECTION_LENGTH: f32 = 1e-6;
+
+/// Wire shape for one directional light.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LightRequest {
+    direction: [f32; 3],
+    color: [f32; 3],
+}
+
+/// Wire shape for an explicit rig. `lights` replaces the studio lights
+/// entirely; everything else inherits the studio value when omitted.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LightingRigRequest {
+    lights: Vec<LightRequest>,
+    ambient: Option<f32>,
+    environment: Option<String>,
+    space: Option<String>,
+    exposure: Option<f32>,
+}
+
+/// `"studio"` or an explicit rig.
+#[derive(Debug)]
+pub enum LightingRequest {
+    Preset(String),
+    Rig(Box<LightingRigRequest>),
+}
+
+impl<'de> Deserialize<'de> for LightingRequest {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Untagged serde collapses every arm's failure into "did not match any
+        // variant", which hides a typo like `colour`. Branching on the JSON
+        // shape first keeps serde's own field-level message.
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if let serde_json::Value::String(name) = value {
+            return Ok(Self::Preset(name));
+        }
+        LightingRigRequest::deserialize(value)
+            .map(|rig| Self::Rig(Box::new(rig)))
+            .map_err(de::Error::custom)
+    }
+}
 
 /// Wire shape for one image.
 #[derive(Debug, Default, Deserialize)]
@@ -27,6 +77,7 @@ pub struct RenderRequest {
     pub include_axes: Option<bool>,
     pub include_label: Option<bool>,
     pub include_scale: Option<bool>,
+    pub lighting: Option<LightingRequest>,
 }
 
 /// Wire shape for one identified camera in a batch.
@@ -54,6 +105,7 @@ pub struct RenderImagesRequest {
     pub include_axes: Option<bool>,
     pub include_label: Option<bool>,
     pub include_scale: Option<bool>,
+    pub lighting: Option<LightingRequest>,
     pub views: Vec<RenderImageViewRequest>,
 }
 
@@ -78,6 +130,7 @@ struct CommonRequest<'a> {
     include_axes: Option<bool>,
     include_label: Option<bool>,
     include_scale: Option<bool>,
+    lighting: Option<&'a LightingRequest>,
 }
 
 impl RenderRequest {
@@ -112,6 +165,7 @@ impl RenderRequest {
             include_axes: self.include_axes,
             include_label: self.include_label,
             include_scale: self.include_scale,
+            lighting: self.lighting.as_ref(),
         }
     }
 }
@@ -181,6 +235,7 @@ impl RenderImagesRequest {
             include_axes: self.include_axes,
             include_label: self.include_label,
             include_scale: self.include_scale,
+            lighting: self.lighting.as_ref(),
         }
     }
 }
@@ -245,6 +300,8 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
         ));
     }
 
+    let lighting = resolve_lighting(request.lighting)?;
+
     let format_name = request.format.unwrap_or("png");
     let jpeg_quality = (quality * 100.0).round() as u8;
     let format = ImageFormat::from_name(format_name, jpeg_quality)
@@ -262,10 +319,101 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
             include_axes,
             include_label,
             include_scale,
+            lighting,
             ..defaults
         },
         format,
     ))
+}
+
+/// `'studio'`, omitted, and the studio values spelled out all resolve to the
+/// same rig. An explicit `lights` array replaces the studio lights entirely;
+/// every other field inherits the preset.
+fn resolve_lighting(request: Option<&LightingRequest>) -> Result<ResolvedLighting, RenderError> {
+    let studio = ResolvedLighting::studio();
+    let rig = match request {
+        None => return Ok(studio),
+        Some(LightingRequest::Preset(name)) if name == "studio" => return Ok(studio),
+        Some(LightingRequest::Preset(other)) => {
+            return Err(RenderError::Parse(format!("lighting {other:?} not studio")));
+        }
+        Some(LightingRequest::Rig(rig)) => rig,
+    };
+
+    if rig.lights.len() > MAX_LIGHTS {
+        return Err(RenderError::Parse(format!(
+            "lighting.lights: at most {MAX_LIGHTS} lights, received {}",
+            rig.lights.len()
+        )));
+    }
+    let mut lights = Vec::with_capacity(rig.lights.len());
+    for (index, light) in rig.lights.iter().enumerate() {
+        if light.direction.iter().any(|axis| !axis.is_finite()) {
+            return Err(RenderError::Parse(format!(
+                "lighting.lights[{index}].direction must be finite"
+            )));
+        }
+        let length_squared: f32 = light.direction.iter().map(|axis| axis * axis).sum();
+        if length_squared.sqrt() < MIN_DIRECTION_LENGTH {
+            return Err(RenderError::Parse(format!(
+                "lighting.lights[{index}].direction must be non-zero"
+            )));
+        }
+        if light
+            .color
+            .iter()
+            .any(|channel| !channel.is_finite() || !(0.0..=MAX_LIGHT_COLOR).contains(channel))
+        {
+            return Err(RenderError::Parse(format!(
+                "lighting.lights[{index}].color channels outside 0..={MAX_LIGHT_COLOR}"
+            )));
+        }
+        lights.push(ResolvedLight {
+            direction: light.direction,
+            color: light.color,
+        });
+    }
+
+    let ambient = rig.ambient.unwrap_or(studio.ambient);
+    if !ambient.is_finite() || !(0.0..=MAX_AMBIENT).contains(&ambient) {
+        return Err(RenderError::Parse(format!(
+            "lighting.ambient {ambient} outside 0..={MAX_AMBIENT}"
+        )));
+    }
+    let exposure = rig.exposure.unwrap_or(studio.exposure);
+    if !exposure.is_finite() || !EXPOSURE_RANGE.contains(&exposure) {
+        return Err(RenderError::Parse(format!(
+            "lighting.exposure {exposure} outside {}..={}",
+            EXPOSURE_RANGE.start(),
+            EXPOSURE_RANGE.end()
+        )));
+    }
+    let environment = match rig.environment.as_deref() {
+        None | Some("studio") => true,
+        Some("none") => false,
+        Some(other) => {
+            return Err(RenderError::Parse(format!(
+                "lighting.environment {other:?} not studio/none"
+            )));
+        }
+    };
+    let space = match rig.space.as_deref() {
+        None | Some("view") => LightingSpace::View,
+        Some("world") => LightingSpace::World,
+        Some(other) => {
+            return Err(RenderError::Parse(format!(
+                "lighting.space {other:?} not view/world"
+            )));
+        }
+    };
+
+    Ok(ResolvedLighting {
+        lights,
+        ambient,
+        environment,
+        space,
+        exposure,
+    })
 }
 
 fn validate_optional_label(label: Option<&str>, name: &str) -> Result<(), RenderError> {
@@ -401,6 +549,160 @@ mod tests {
             assert_eq!(options.height, 193);
             assert_eq!(options.projection, Projection::Orthographic);
             assert_eq!(format, ImageFormat::Jpeg { quality: 80 });
+        }
+    }
+
+    fn lighting_of(json: &str) -> Result<ResolvedLighting, RenderError> {
+        RenderRequest::from_json(json)
+            .and_then(|request| request.resolve())
+            .map(|(options, _)| options.lighting)
+    }
+
+    #[test]
+    fn every_spelling_of_the_studio_preset_resolves_identically() {
+        let studio = ResolvedLighting::studio();
+        let explicit = r#"{"lighting":{"lights":[
+            {"direction":[-0.45,0.61,0.63],"color":[2.09,2.09,2.09]},
+            {"direction":[0.45,-0.61,-0.63],"color":[1.45,1.42,1.38]},
+            {"direction":[0.03,0.74,0.67],"color":[0.68,0.66,0.62]}
+        ],"ambient":0.02,"environment":"studio","space":"view","exposure":1}}"#;
+        for json in ["{}", r#"{"lighting":"studio"}"#, explicit] {
+            assert_eq!(lighting_of(json).expect("resolve"), studio, "{json}");
+        }
+        // The plural request carries the same field.
+        let (options, _, _) = RenderImagesRequest::from_json(
+            r#"{"lighting":"studio","views":[{"id":"front","phi":90,"theta":0}]}"#,
+        )
+        .expect("parse")
+        .resolve()
+        .expect("resolve");
+        assert_eq!(options.lighting, studio);
+    }
+
+    #[test]
+    fn accepts_every_rig_field_and_bound() {
+        let rig = lighting_of(
+            r#"{"lighting":{"lights":[{"direction":[0,0,1],"color":[0,16,32]}],"ambient":4,"environment":"none","space":"world","exposure":16}}"#,
+        )
+        .expect("resolve");
+        assert_eq!(rig.lights.len(), 1);
+        assert_eq!(rig.lights[0].direction, [0.0, 0.0, 1.0]);
+        assert_eq!(rig.lights[0].color, [0.0, 16.0, 32.0]);
+        assert_eq!(rig.ambient, 4.0);
+        assert!(!rig.environment);
+        assert_eq!(rig.space, LightingSpace::World);
+        assert_eq!(rig.exposure, 16.0);
+
+        // An empty array is an environment-only render, not an error, and the
+        // unspecified fields still inherit the preset.
+        let bare = lighting_of(r#"{"lighting":{"lights":[]}}"#).expect("resolve");
+        assert!(bare.lights.is_empty());
+        assert_eq!(bare.ambient, ResolvedLighting::studio().ambient);
+        assert!(bare.environment);
+        assert_eq!(bare.space, LightingSpace::View);
+        assert_eq!(bare.exposure, 1.0);
+
+        // The cap itself is allowed; only exceeding it is not.
+        let light = r#"{"direction":[0,1,0],"color":[1,1,1]}"#;
+        let full = format!(
+            r#"{{"lighting":{{"lights":[{}]}}}}"#,
+            [light; MAX_LIGHTS].join(",")
+        );
+        assert_eq!(
+            lighting_of(&full).expect("resolve").lights.len(),
+            MAX_LIGHTS
+        );
+        assert_eq!(
+            lighting_of(&format!(
+                r#"{{"lighting":{{"lights":[{}]}}}}"#,
+                [light; MAX_LIGHTS + 1].join(",")
+            ))
+            .unwrap_err()
+            .to_string(),
+            "parse: lighting.lights: at most 8 lights, received 9"
+        );
+    }
+
+    #[test]
+    fn rejects_every_invalid_lighting_rule_by_name() {
+        let cases = [
+            (
+                r#"{"lighting":"neutral"}"#,
+                "parse: lighting \"neutral\" not studio",
+            ),
+            (
+                // 1e40 overflows f32 to infinity rather than failing to parse.
+                r#"{"lighting":{"lights":[{"direction":[1,0,0],"color":[1,1,1]},{"direction":[0,1e40,0],"color":[1,1,1]}]}}"#,
+                "parse: lighting.lights[1].direction must be finite",
+            ),
+            (
+                r#"{"lighting":{"lights":[{"direction":[0,0,0],"color":[1,1,1]}]}}"#,
+                "parse: lighting.lights[0].direction must be non-zero",
+            ),
+            (
+                r#"{"lighting":{"lights":[{"direction":[0,0,1],"color":[1,33,1]}]}}"#,
+                "parse: lighting.lights[0].color channels outside 0..=32",
+            ),
+            (
+                r#"{"lighting":{"lights":[{"direction":[0,0,1],"color":[-1,0,0]}]}}"#,
+                "parse: lighting.lights[0].color channels outside 0..=32",
+            ),
+            (
+                r#"{"lighting":{"lights":[],"ambient":4.5}}"#,
+                "parse: lighting.ambient 4.5 outside 0..=4",
+            ),
+            (
+                r#"{"lighting":{"lights":[],"exposure":0}}"#,
+                "parse: lighting.exposure 0 outside 0.01..=16",
+            ),
+            (
+                r#"{"lighting":{"lights":[],"exposure":16.5}}"#,
+                "parse: lighting.exposure 16.5 outside 0.01..=16",
+            ),
+            (
+                r#"{"lighting":{"lights":[],"environment":"hdr"}}"#,
+                "parse: lighting.environment \"hdr\" not studio/none",
+            ),
+            (
+                r#"{"lighting":{"lights":[],"space":"object"}}"#,
+                "parse: lighting.space \"object\" not view/world",
+            ),
+        ];
+        for (json, expected) in cases {
+            assert_eq!(
+                lighting_of(json).unwrap_err().to_string(),
+                expected,
+                "{json}"
+            );
+        }
+        // Non-finite values that arrive as JSON numbers rather than null.
+        for value in [f32::NAN, f32::INFINITY] {
+            for json in [
+                format!(r#"{{"lighting":{{"lights":[],"ambient":{value}}}}}"#),
+                format!(r#"{{"lighting":{{"lights":[],"exposure":{value}}}}}"#),
+            ] {
+                assert!(lighting_of(&json).is_err(), "{json}");
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_lighting_keys_name_the_offending_field() {
+        // Untagged serde would report "did not match any variant" here.
+        for (json, fragment) in [
+            (
+                r#"{"lighting":{"lights":[{"direction":[0,0,1],"colour":[1,1,1]}]}}"#,
+                "unknown field `colour`",
+            ),
+            (
+                r#"{"lighting":{"lights":[],"tone":"aces"}}"#,
+                "unknown field `tone`",
+            ),
+            (r#"{"lighting":42}"#, "invalid type"),
+        ] {
+            let error = RenderRequest::from_json(json).unwrap_err().to_string();
+            assert!(error.starts_with("parse: options: "), "{error}");
+            assert!(error.contains(fragment), "{error}");
         }
     }
 

@@ -109,8 +109,45 @@ createRenderImagesOptions({ format: 'png', includeAxis: true, views: [{ id: 'fro
 createRenderImageOptions({ includeAxes: true });
 void renderGlbToImages(glb, {
   format: 'png',
-  // @ts-expect-error unrelated top-level plural option
   lighting: 'studio',
+  views: [{ id: 'front', phi: 90, theta: 0 }],
+});
+const lit = createRenderImageOptions({
+  format: 'png',
+  lighting: {
+    lights: [{ direction: [-0.45, 0.61, 0.63], color: [2.09, 2.09, 2.09] }],
+    ambient: 0.02,
+    environment: 'studio',
+    space: 'world',
+    exposure: 1.5,
+  },
+});
+expectTypeOf(lit.lighting).toExtend<renderModule.RenderLighting | undefined>();
+createRenderImageOptions({
+  format: 'png',
+  // @ts-expect-error unknown preset name
+  lighting: 'sunset',
+});
+createRenderImageOptions({
+  format: 'png',
+  lighting: {
+    lights: [],
+    // @ts-expect-error misspelled rig property
+    ambien: 0.02,
+  },
+});
+createRenderImageOptions({
+  format: 'png',
+  // @ts-expect-error direction needs three components
+  lighting: { lights: [{ direction: [0, 1], color: [1, 1, 1] }] },
+});
+createRenderImagesOptions({
+  format: 'png',
+  lighting: {
+    lights: [],
+    // @ts-expect-error unknown environment name
+    environment: 'sunset',
+  },
   views: [{ id: 'front', phi: 90, theta: 0 }],
 });
 // @ts-expect-error width is shared, not per view

@@ -4,7 +4,9 @@
 //! native backends and browser WebGPU.
 
 use crate::glb::{MODE_TRIANGLES, Material, Scene};
-use crate::{DEFAULT_HEIGHT, Projection, RenderError, RenderOptions, UpAxis};
+use crate::{
+    DEFAULT_HEIGHT, LightingSpace, MAX_LIGHTS, Projection, RenderError, RenderOptions, UpAxis,
+};
 use glam::{Mat4, Vec3};
 use std::fmt::Display;
 use wgpu::util::DeviceExt;
@@ -349,6 +351,55 @@ fn fit_zoom(input: FitZoomInput) -> f32 {
     (zoom_vertical.min(zoom_horizontal) * padding).max(EPSILON)
 }
 
+// The one definition of the `Frame` uniform (see `shader.wgsl`): two mat4 and
+// a viewport vec4, then eight Lights at a 32-byte stride, then a 16-byte tail
+// of light_count/ambient/exposure/environment. 416 bytes.
+const FRAME_FLOATS: usize = 104;
+const FRAME_LIGHTS: usize = 36;
+const FRAME_LIGHT_STRIDE: usize = 8;
+const FRAME_TAIL: usize = 100;
+
+fn frame_uniform(
+    view_projection: Mat4,
+    view: Mat4,
+    options: &RenderOptions,
+) -> [f32; FRAME_FLOATS] {
+    let lighting = &options.lighting;
+    let mut data = [0f32; FRAME_FLOATS];
+    data[..16].copy_from_slice(&view_projection.to_cols_array());
+    data[16..32].copy_from_slice(&view.to_cols_array());
+    data[32..FRAME_LIGHTS].copy_from_slice(&[
+        options.width as f32,
+        options.height as f32,
+        line_width_px(options),
+        0.0,
+    ]);
+    for (index, light) in lighting.lights.iter().take(MAX_LIGHTS).enumerate() {
+        // World-space rigs are rotated into view space here, once per view,
+        // so the shader stays view-space and never learns the difference.
+        let direction = match lighting.space {
+            LightingSpace::View => Vec3::from(light.direction),
+            LightingSpace::World => view.transform_vector3(Vec3::from(light.direction)),
+        }
+        .normalize_or_zero();
+        let base = FRAME_LIGHTS + index * FRAME_LIGHT_STRIDE;
+        data[base..base + 3].copy_from_slice(&direction.to_array());
+        data[base + 4..base + 7].copy_from_slice(&light.color);
+    }
+    // The tail's two u32 fields ride in the same f32 array by bit pattern.
+    data[FRAME_TAIL] = f32::from_bits(lighting.lights.len().min(MAX_LIGHTS) as u32);
+    data[FRAME_TAIL + 1] = lighting.ambient;
+    data[FRAME_TAIL + 2] = lighting.exposure;
+    data[FRAME_TAIL + 3] = f32::from_bits(u32::from(lighting.environment));
+    data
+}
+
+/// line_width is specified at the default height and scales with output height
+/// so edge weight is resolution-independent (2x render = 2x pixels).
+fn line_width_px(options: &RenderOptions) -> f32 {
+    options.line_width * options.height as f32 / DEFAULT_HEIGHT as f32
+}
+
 /// sRGB EOTF: `RenderOptions::background` is authored in sRGB, but wgpu clear
 /// colors are linear (the sRGB target re-encodes on write).
 fn srgb_to_linear(channel: f32) -> f64 {
@@ -376,16 +427,10 @@ impl RenderSession {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        // line_width is specified at the default height and scales with output
-        // height so edge weight is resolution-independent (2x render = 2x pixels).
-        let line_width_px = options.line_width * options.height as f32 / DEFAULT_HEIGHT as f32;
-        let mut frame_data = [0f32; 36];
-        frame_data[32..].copy_from_slice(&[
-            options.width as f32,
-            options.height as f32,
-            line_width_px,
-            0.0,
-        ]);
+        let line_width_px = line_width_px(options);
+        // Matrices are overwritten by every `render_view` before a draw; the
+        // resolved rig is written now so the buffer is never uninitialised.
+        let frame_data = frame_uniform(Mat4::ZERO, Mat4::IDENTITY, options);
         let frame_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("frame"),
             contents: bytemuck::cast_slice(&frame_data),
@@ -396,7 +441,7 @@ impl RenderSession {
             label: Some("frame"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -756,16 +801,7 @@ impl RenderSession {
         options: &RenderOptions,
     ) -> Result<Rendered, RenderError> {
         let mvp = camera.projection * camera.view;
-        let line_width_px = options.line_width * options.height as f32 / DEFAULT_HEIGHT as f32;
-        let mut frame_data = [0f32; 36];
-        frame_data[..16].copy_from_slice(&mvp.to_cols_array());
-        frame_data[16..32].copy_from_slice(&camera.view.to_cols_array());
-        frame_data[32..].copy_from_slice(&[
-            options.width as f32,
-            options.height as f32,
-            line_width_px,
-            0.0,
-        ]);
+        let frame_data = frame_uniform(mvp, camera.view, options);
         self.queue
             .write_buffer(&self.frame_buffer, 0, bytemuck::cast_slice(&frame_data));
 
@@ -885,6 +921,48 @@ mod tests {
 
     fn assert_close(actual: Vec3, expected: Vec3) {
         assert!((actual - expected).length() < 1e-5);
+    }
+
+    #[test]
+    fn frame_uniform_packs_the_rig_at_the_offsets_wgsl_declares() {
+        use crate::{LightingSpace, ResolvedLight, ResolvedLighting};
+
+        // A 90-degree yaw: a world +x light must land on view-space -z.
+        let view = Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let options = RenderOptions {
+            lighting: ResolvedLighting {
+                lights: vec![ResolvedLight {
+                    direction: [3.0, 0.0, 0.0],
+                    color: [0.25, 0.5, 0.75],
+                }],
+                ambient: 0.5,
+                environment: false,
+                space: LightingSpace::World,
+                exposure: 2.0,
+            },
+            ..RenderOptions::default()
+        };
+        let data = frame_uniform(Mat4::IDENTITY, view, &options);
+        assert_close(
+            Vec3::from_slice(&data[FRAME_LIGHTS..FRAME_LIGHTS + 3]),
+            Vec3::NEG_Z,
+        );
+        assert_eq!(&data[FRAME_LIGHTS + 4..FRAME_LIGHTS + 7], [0.25, 0.5, 0.75]);
+        assert_eq!(data[FRAME_TAIL].to_bits(), 1);
+        assert_eq!(data[FRAME_TAIL + 1], 0.5);
+        assert_eq!(data[FRAME_TAIL + 2], 2.0);
+        assert_eq!(data[FRAME_TAIL + 3].to_bits(), 0);
+        // Unwritten slots stay zero, and the studio rig fills exactly three.
+        assert_eq!(data[FRAME_LIGHTS + FRAME_LIGHT_STRIDE], 0.0);
+
+        let studio = frame_uniform(Mat4::IDENTITY, view, &RenderOptions::default());
+        assert_eq!(studio[FRAME_TAIL].to_bits(), 3);
+        assert_eq!(studio[FRAME_TAIL + 3].to_bits(), 1);
+        // View space ignores the view matrix; the direction is only normalised.
+        assert_close(
+            Vec3::from_slice(&studio[FRAME_LIGHTS..FRAME_LIGHTS + 3]),
+            Vec3::new(-0.45, 0.61, 0.63).normalize(),
+        );
     }
 
     #[test]

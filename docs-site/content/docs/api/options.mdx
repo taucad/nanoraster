@@ -44,6 +44,84 @@ export type RenderProjection = 'perspective' | 'orthographic';
 | `perspective`  | Perspective camera; the default for ordinary thumbnails. |
 | `orthographic` | Depth-invariant projection for canonical views.          |
 
+## Lighting
+
+`lighting` is a shared field: one rig applies to a singular render and to every
+view of a batch. Omitting it, passing `'studio'`, and passing the studio values
+written out produce the same bytes.
+
+### `RenderLighting`
+
+```typescript
+export type RenderLighting = RenderLightingPreset | RenderLightingRig;
+```
+
+A preset name or an explicit rig. Defaults to `'studio'`.
+
+### `RenderLightingPreset`
+
+```typescript
+export type RenderLightingPreset = 'studio';
+```
+
+| Value      | Meaning                                                                         |
+| ---------- | ------------------------------------------------------------------------------- |
+| `'studio'` | Three view-space lights, ambient `0.02`, and the analytic environment. Default. |
+
+### `RenderLightingRig`
+
+```typescript
+export type RenderLightingRig = {
+  readonly lights: readonly RenderLight[];
+  readonly ambient?: number;
+  readonly environment?: RenderLightingEnvironment;
+  readonly space?: RenderLightSpace;
+  readonly exposure?: number;
+};
+```
+
+`lights` replaces the studio lights entirely; the remaining fields default to
+the studio values, so a partial rig is complete.
+
+<auto-type-table path="./props.ts" name="RenderLightingRig" caption="RenderLightingRig properties" />
+
+### `RenderLight`
+
+```typescript
+export type RenderLight = {
+  readonly direction: readonly [number, number, number];
+  readonly color: readonly [number, number, number];
+};
+```
+
+One directional light. `direction` points from the surface toward the light and
+is normalised by the renderer; view-space axes are `+x` right, `+y` up, and `+z`
+toward the viewer. `color` is linear radiance, unitless.
+
+<auto-type-table path="./props.ts" name="RenderLight" caption="RenderLight properties" />
+
+### `RenderLightSpace`
+
+```typescript
+export type RenderLightSpace = 'view' | 'world';
+```
+
+| Value     | Meaning                                                                                         |
+| --------- | ----------------------------------------------------------------------------------------------- |
+| `'view'`  | Camera-relative, so every view of a subject is lit identically. The default.                    |
+| `'world'` | glTF world coordinates whatever `up` is; the rig stays fixed to the model as the camera orbits. |
+
+### `RenderLightingEnvironment`
+
+```typescript
+export type RenderLightingEnvironment = 'studio' | 'none';
+```
+
+| Value      | Meaning                                                                             |
+| ---------- | ----------------------------------------------------------------------------------- |
+| `'studio'` | Analytic environment supplying specular reflection and diffuse irradiance. Default. |
+| `'none'`   | Neither term; only the supplied lights and ambient contribute.                      |
+
 ## Singular request
 
 ### `RenderImageOptions`
@@ -99,6 +177,8 @@ tuple that enforces that relationship without losing IDs or order.
 ## Related
 
 - [Frame the model](../guides/frame-the-model) — the camera fields in practice.
+- [Light the subject](../guides/light-the-subject) — the lighting fields in
+  practice.
 - [Annotate renders](../guides/annotate-renders) — the three annotation flags.
 - [Reference: constants](constants) — the exact bounds these fields are
   validated against.

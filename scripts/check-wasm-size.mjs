@@ -10,8 +10,17 @@ const sizes = {
     params: { [constants.BROTLI_PARAM_QUALITY]: 11 },
   }).byteLength,
 };
-// PBR build: 312,881 gzip-9 on macOS, 315,196 on Linux CI; raw 792,599, brotli-11 252,020.
-const ceilings = { raw: 800_000, gzip9: 316_000, brotli11: 255_000 };
+// Configurable-lighting build (R3/R4): raw 809,035, gzip-9 323,275, brotli-11
+// 258,177 on macOS, against 794,292 / 316,050 / 252,493 for the studio-only
+// build before it — +14,743 raw (+1.9%), +7,225 gzip-9 (+2.3%). That is the
+// `lighting` request struct's serde monomorphisation plus the serde_json
+// Value hop the custom Deserialize takes to keep field-level error messages;
+// the WGSL source ships verbatim, so the uniform rig itself is ~0.6 KB of it.
+// Ceilings are the measured figure plus ~1%. The gate runs on Linux CI, whose
+// figure has not been re-measured since the PBR build (315,196 gzip-9 there
+// against 312,881 on macOS) — gzip9 carries extra slack until a CI run
+// re-anchors it.
+const ceilings = { raw: 818_000, gzip9: 328_000, brotli11: 261_000 };
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {

@@ -33,6 +33,8 @@ const tableNames = [
   'RenderImageOptions',
   'RenderImagesOptions',
   'RenderImageView',
+  'RenderLightingRig',
+  'RenderLight',
 ] as const;
 const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
   RenderedImageFile: ['name', 'bytes', 'mimeType'],
@@ -49,6 +51,7 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'includeAxes',
     'includeLabel',
     'includeScale',
+    'lighting',
     'label',
     'phi',
     'theta',
@@ -65,9 +68,12 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'includeAxes',
     'includeLabel',
     'includeScale',
+    'lighting',
     'views',
   ],
   RenderImageView: ['id', 'label', 'phi', 'theta'],
+  RenderLightingRig: ['lights', 'ambient', 'environment', 'space', 'exposure'],
+  RenderLight: ['direction', 'color'],
 };
 const defaults = {
   width: '768',
@@ -80,6 +86,7 @@ const defaults = {
   includeAxes: 'false',
   includeLabel: 'false',
   includeScale: 'false',
+  lighting: "'studio'",
 } as const;
 
 const generateDoc = async (name: (typeof tableNames)[number]): Promise<GeneratedDoc> => {

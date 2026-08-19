@@ -1,0 +1,151 @@
+---
+title: Light the subject
+description: Keep the studio preset, replace it with your own directional rig, render from the environment alone, or fix a light to the model.
+---
+
+Every render is lit by the studio preset unless you say otherwise. This guide
+replaces that preset with a rig of your own, and shows what each choice costs.
+
+## Prerequisites
+
+- Completed the [Quick start](../getting-started/quick-start).
+- A GLB whose materials you know — a metal reacts to a rig very differently from
+  a rough dielectric, as [Material model](../concepts/material-model) explains.
+
+## Steps
+
+### 1. Keep the studio preset
+
+Omitting `lighting` and passing `'studio'` produce the same bytes. Spell it out
+when you want the preset pinned in the request rather than inherited from the
+default.
+
+<RenderDemo>
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  lighting: 'studio',
+});
+```
+
+</RenderDemo>
+
+The preset is three view-space directional lights, a flat ambient of `0.02`, and
+the analytic environment:
+
+| Light    | `direction`            | `color`              |
+| -------- | ---------------------- | -------------------- |
+| Key      | `[-0.45, 0.61, 0.63]`  | `[2.09, 2.09, 2.09]` |
+| Fill     | `[0.45, -0.61, -0.63]` | `[1.45, 1.42, 1.38]` |
+| Headlamp | `[0.03, 0.74, 0.67]`   | `[0.68, 0.66, 0.62]` |
+
+### 2. Replace the lights with your own
+
+A rig's `lights` array replaces the studio lights outright — it never adds to
+them. Everything you leave out (`ambient`, `environment`, `space`, `exposure`)
+keeps its studio value, so a partial rig is still a complete one.
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  lighting: {
+    lights: [
+      { direction: [-0.5, 0.6, 0.6], color: [3, 2.9, 2.7] },
+      { direction: [0.6, -0.2, 0.4], color: [0.7, 0.8, 1] },
+    ],
+  },
+});
+```
+
+`direction` points **from the surface toward the light** — the vector dotted
+with the surface normal. Any finite non-zero vector works; the renderer
+normalises it. Directions are view-space by default, with `+x` right, `+y` up
+and `+z` toward the viewer, so the rig travels with the camera and every view of
+a subject is lit the same way.
+
+`color` is linear RGB radiance: unitless multipliers, not lumens. A rig may
+carry up to `renderImageMaxLights` lights.
+
+### 3. Render from the environment alone
+
+An empty `lights` array is legal and leaves the analytic environment as the only
+source. Metals, which have no diffuse lobe, read well this way; dielectrics go
+soft and flat.
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  lighting: { lights: [] },
+});
+```
+
+The opposite switch is `environment: 'none'`, which removes both the specular
+reflection and the diffuse irradiance and leaves only the lights you supplied. A
+fully metallic subject renders nearly black under it.
+
+### 4. Fix a light to the model
+
+`space: 'world'` authors the directions in glTF world coordinates — whatever
+`up` you selected — instead of view space. The rig then stays attached to the
+model while the camera orbits it.
+
+```typescript
+import { renderGlbToImages } from 'nanoraster';
+
+const images = await renderGlbToImages(glb, {
+  format: 'png',
+  lighting: {
+    lights: [{ direction: [0, 1, 0.4], color: [3, 2.9, 2.7] }],
+    space: 'world',
+  },
+  views: [
+    { id: 'front', phi: 90, theta: 0 },
+    { id: 'back', phi: 90, theta: 180 },
+  ],
+});
+```
+
+This deliberately breaks the property that makes a view sheet comparable. With
+`space: 'view'`, `front` and `back` above differ only in the geometry they show.
+With `space: 'world'`, `front` is lit and `back` is in shadow, because the light
+never moved. Choose it when the light belongs to the subject — a turntable of a
+lamp — and avoid it for contact sheets.
+
+## Variations
+
+**Brighten a rig without retuning it.** `exposure` is a linear multiplier
+applied before the tone map, bounded by `renderImageExposureRange`. Scale the
+whole rig with it rather than editing every `color`.
+
+**Lift the shadow side.** `ambient` is a flat multiplier on the diffuse colour,
+bounded by `renderImageAmbientRange` and `0.02` in the studio preset. Raising it
+recovers detail in unlit faces at the cost of contrast.
+
+**Lighting is shared across a batch.** `renderGlbToImages` takes one rig for the
+whole call; there is no per-view slot. A model-fixed light is expressed with
+`space: 'world'`, as above.
+
+**Annotations ignore the rig.** The axis indicator, label, and scale bar are
+composited after shading, and authored edge lines are drawn unlit. No rig tints
+any of them.
+
+**Cost scales with light count.** Eight lights cost roughly eight times the
+direct-lighting work of one. At thumbnail sizes this is invisible; at 4096²
+it is not.
+
+## Related
+
+- [Determinism](../concepts/determinism) — why a supplied rig keeps the
+  same-request-same-pixels guarantee, and what it makes you responsible for.
+- [Material model](../concepts/material-model) — why metals depend on the
+  environment term.
+- [Reference: options](../api/options) — every rig field, with types.
+- [Reference: constants](../api/constants) — the exact bounds a rig is
+  validated against.

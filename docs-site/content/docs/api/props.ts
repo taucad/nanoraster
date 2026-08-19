@@ -10,4 +10,10 @@ export type {
   RenderImageFormat,
   RenderUpAxis,
   RenderProjection,
+  RenderLight,
+  RenderLightSpace,
+  RenderLighting,
+  RenderLightingEnvironment,
+  RenderLightingPreset,
+  RenderLightingRig,
 } from 'nanoraster';

@@ -1,6 +1,6 @@
 ---
 title: Determinism
-description: What "the same request produces the same pixels" guarantees, what it deliberately excludes, and why lighting is not an option.
+description: What "the same request produces the same pixels" guarantees, what it deliberately excludes, and why lighting is fixed by default.
 ---
 
 nanoraster's headline claim is that a render is reproducible. That claim is only
@@ -8,22 +8,25 @@ useful if its boundaries are stated, because "deterministic" is doing different
 work in "the encoder is deterministic" and "this image will be identical on your
 machine".
 
-The motivation is that renders are increasingly used as *evidence* — a CI
+The motivation is that renders are increasingly used as _evidence_ — a CI
 artifact that proves a part changed, a screenshot an agent compares across a
 tool loop. Evidence that varies for reasons unrelated to the subject is worse
 than no evidence, because it invites false conclusions.
 
 ## How it works
 
-Determinism comes from removing inputs, not from seeding them. Everything that
-could vary without the caller asking has been taken out of the request.
+Determinism comes from removing inputs, not from seeding them. Nothing varies
+unless the caller asked for it: values that would otherwise drift are either
+fixed outright or fixed at a default the request may override.
 
 ```mermaid
 flowchart TD
-  R[Render request] --> F[Fixed: lighting, environment,<br/>tone map, gamma]
+  R[Render request] --> F[Fixed: ACES tone map, gamma]
+  R --> S["Fixed by default: lighting rig,<br/>environment, exposure"]
   R --> D[Derived: camera distance<br/>from model bounds]
   R --> C["Caller-controlled: angles, format,<br/>size, background, annotations"]
   F --> P[Pixels]
+  S --> P
   D --> P
   C --> P
   P --> E[Encoder]
@@ -44,7 +47,7 @@ may rasterise differently at the margins.
 | ---------------------------------------------------- | ----- |
 | Same request, same host, repeated → identical bytes  | Yes   |
 | Same request, same host, different process           | Yes   |
-| Lighting identical across every render, always       | Yes   |
+| Lighting identical across every render that omits it | Yes   |
 | Camera fit identical for identical bounds and angles | Yes   |
 | Input failures reproduce exactly                     | Yes   |
 
@@ -52,17 +55,19 @@ may rasterise differently at the margins.
 
 | Property                                          | Holds | Why                                     |
 | ------------------------------------------------- | ----- | --------------------------------------- |
-| Identical bytes across different GPUs or drivers   | No    | Rasterisation differs at the margins    |
-| Identical bytes between the native and wasm paths  | No    | Same core, different device and adapter |
-| GPU failures reproduce                             | No    | Device loss is by definition transient  |
-| Byte stability across nanoraster versions          | No    | A render fix changes pixels             |
+| Identical bytes across different GPUs or drivers  | No    | Rasterisation differs at the margins    |
+| Identical bytes between the native and wasm paths | No    | Same core, different device and adapter |
+| GPU failures reproduce                            | No    | Device loss is by definition transient  |
+| Byte stability across nanoraster versions         | No    | A render fix changes pixels             |
 
 ## Key relationships
 
-**Fixed lighting.** Lighting is deliberately not an API option. Exposing it
-would make every render's appearance depend on a value callers would tune per
-model, and comparisons across a set would stop meaning anything. See
-[Material model](material-model).
+**Lighting fixed by default.** Determinism is a property of a fixed input, not
+of an absent option. Omit `lighting` and every render uses the same studio rig,
+so comparisons across a set keep meaning what they meant. Supply a rig and you
+inherit the obligation the package holds by default: keep it constant, and the
+pixels stay fixed. See [Material model](material-model) and
+[Light the subject](../guides/light-the-subject).
 
 **Derived camera distance.** Distance is solved from bounds rather than
 supplied, so two renders of the same model at the same angles frame identically
@@ -83,8 +88,9 @@ see [Handle render failures](../guides/handle-render-failures).
   the render rather than to the encoder.
 - **Treat a version bump as a baseline reset.** A rendering fix is a visible
   change by design.
-- **Fixed lighting is the reason material edits are legible.** With one variable
-  removed, a difference between two renders is the difference you made.
+- **Holding the lighting is what makes material edits legible.** With one
+  variable removed — by leaving `lighting` out, or by pinning a rig of your own
+  — a difference between two renders is the difference you made.
 
 ## Further reading
 

@@ -14,15 +14,16 @@ disagree about the same file. Factors have none of those degrees of freedom.
 ## How it works
 
 Every surface resolves to three inputs, and the shading model turns them into a
-colour with the fixed environment.
+colour with whatever rig is in force — the studio preset unless the request says
+otherwise.
 
 ```mermaid
 flowchart LR
   A[baseColorFactor<br/>linear RGBA] --> D[Metallic-roughness BRDF]
   B[metallicFactor<br/>0 to 1] --> D
   C[roughnessFactor<br/>0 to 1] --> D
-  E[Fixed view-space lights<br/>+ analytic environment] --> D
-  D --> F[Shaded pixel]
+  E["View-space lights + analytic<br/>environment (studio by default)"] --> D
+  D --> F[ACES tone map] --> G[Shaded pixel]
 ```
 
 `metallicFactor` selects between two behaviours rather than blending two looks.
@@ -32,6 +33,10 @@ environment, tinted by the base colour.
 
 `roughnessFactor` spreads the specular lobe. Low values give a tight highlight;
 high values smear it into a broad sheen.
+
+The shaded result is tone mapped with the ACES filmic curve and written to an
+sRGB target. The curve is fixed and is not an option; the rig feeding it is
+[configurable](../guides/light-the-subject).
 
 ### Imitating a matcap
 
@@ -61,16 +66,42 @@ This is an approximation, not pixel parity. A matcap maps view-space normals
 directly into an image; PBR derives the result from material, surface, camera,
 and lighting. The two agree in feel, not in pixels.
 
+### Lighting the same material
+
+The rig is a request option, so one material can be shown under several. The
+model below is metallic; switch `lighting` between the studio preset, a
+two-light rig, the environment with no direct lights at all, and a key fixed to
+the model in world space.
+
+<RenderDemo>
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  lighting: 'studio',
+});
+```
+
+</RenderDemo>
+
+A metal reflects the environment and nothing else, so the four looks differ far
+more here than they would on a rough dielectric. See
+[Light the subject](../guides/light-the-subject) for the rig fields themselves.
+
 ## Key relationships
 
-**Lighting is fixed.** The same view-space studio lights and analytic
-environment are used for every render, and they are not exposed as options. That
+**Lighting is fixed by default.** The same view-space studio lights and analytic
+environment are used for every render that leaves `lighting` out. Holding them
 is what makes a metallic change visible as a metallic change rather than as a
-lighting difference — see [Determinism](determinism).
+lighting difference — see [Determinism](determinism) and
+[Light the subject](../guides/light-the-subject).
 
 **Metals need an environment.** Because a metal has no diffuse lobe, it would
-render black under a point light alone. The analytic environment is what gives
-`metallicFactor: 1` a body colour at all.
+render black under direct lights alone. The analytic environment is what gives
+`metallicFactor: 1` a body colour at all, which is also why
+`environment: 'none'` turns a metal nearly black.
 
 **Edges are separate.** Authored edge lines are drawn in their own pass and are
 unaffected by the material factors — see
@@ -86,13 +117,15 @@ unaffected by the material factors — see
   dielectric for thumbnails.
 - **Colour is linear, not sRGB.** Passing an sRGB triple directly produces a
   washed-out surface. Convert first.
-- **Material changes are attributable.** With lighting fixed, a difference
-  between two renders of the same model is a material difference and nothing
-  else.
+- **Material changes are attributable while the rig is held.** Change one thing
+  at a time: with the lighting left at the default, or pinned to a rig of your
+  own, a difference between two renders of the same model is a material
+  difference and nothing else.
 
 ## Further reading
 
-- [Determinism](determinism) — why fixed lighting is a feature.
+- [Determinism](determinism) — why lighting is fixed by default.
+- [Light the subject](../guides/light-the-subject) — replacing the studio rig.
 - [Choose a format and quality](../guides/choose-format-and-quality) — how the
   encoder treats the shaded result.
 - [Rendering pipeline](rendering-pipeline) — where shading sits in the stages.

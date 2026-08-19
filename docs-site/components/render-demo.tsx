@@ -7,6 +7,7 @@ import {
   formatValue,
   isMaterialKey,
   readDemoOptions,
+  toRequestOptions,
   type DemoValue,
 } from '@/lib/demo-options';
 import { hexToLinear, linearToHex, patchMaterialFactors } from '@/lib/glb-material';
@@ -54,11 +55,9 @@ export const RenderDemo = ({
 
       // Material factors live in the model, not the request, so they are
       // patched into the GLB and kept out of the options entirely.
-      const entries = Object.entries(current);
-      const material = Object.fromEntries(entries.filter(([key]) => isMaterialKey(key)));
-      const options = Object.fromEntries(entries.filter(([key]) => !isMaterialKey(key)));
-      const glb =
-        Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
+      const material = Object.fromEntries(Object.entries(current).filter(([key]) => isMaterialKey(key)));
+      const options = toRequestOptions(current);
+      const glb = Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
 
       const bytes = await renderer.render_glb_to_image(
         glb,
@@ -110,8 +109,8 @@ export const RenderDemo = ({
         <div className={styles.stage}>
           {state === 'unsupported' ? (
             <p className={styles.notice}>
-              This browser has no WebGPU support, so the live render is unavailable. The example
-              above runs unchanged in Node.js.
+              This browser has no WebGPU support, so the live render is unavailable. The example above runs
+              unchanged in Node.js.
             </p>
           ) : state === 'failed' ? (
             <p className={styles.notice}>Render failed: {message}</p>

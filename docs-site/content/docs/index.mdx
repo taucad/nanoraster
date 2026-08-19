@@ -12,14 +12,14 @@ just as a picture.
 
 ## Start here
 
-| I want to…                            | Go to                                                              |
-| ------------------------------------- | ------------------------------------------------------------------ |
-| Install the package                   | [Installation](getting-started/installation)                       |
-| Render my first image                 | [Quick start](getting-started/quick-start)                         |
-| Learn the API properly                | [Render a view sheet](getting-started/render-a-view-sheet)         |
-| Solve a specific problem              | [Guides](guides/render-multiple-views)                             |
-| Understand how it works               | [Concepts](concepts/rendering-pipeline)                            |
-| Look up a type or function            | [Reference](api/operations)                                        |
+| I want to…                 | Go to                                                      |
+| -------------------------- | ---------------------------------------------------------- |
+| Install the package        | [Installation](getting-started/installation)               |
+| Render my first image      | [Quick start](getting-started/quick-start)                 |
+| Learn the API properly     | [Render a view sheet](getting-started/render-a-view-sheet) |
+| Solve a specific problem   | [Guides](guides/render-multiple-views)                     |
+| Understand how it works    | [Concepts](concepts/rendering-pipeline)                    |
+| Look up a type or function | [Reference](api/operations)                                |
 
 ## What it does
 
@@ -30,8 +30,10 @@ just as a picture.
   [Choose a format and quality](guides/choose-format-and-quality).
 - **Typed failures.** Every rejection is a `RenderError` carrying a stable
   machine-readable code. See [Handle render failures](guides/handle-render-failures).
-- **Fixed lighting.** Lighting is deliberately not an option, which is what keeps
-  repeated renders comparable. See [Determinism](concepts/determinism).
+- **Lighting fixed by default.** Every render uses one studio rig unless you
+  supply your own, which is what keeps repeated renders comparable. See
+  [Determinism](concepts/determinism) and
+  [Light the subject](guides/light-the-subject).
 
 ## What it does not do
 

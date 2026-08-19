@@ -7,16 +7,20 @@ Every exported bound and pattern the validator applies. Ranges are inclusive,
 and the regular expressions are the exact runtime values — import them rather
 than restating them, so caller-side checks cannot drift from the package's.
 
-| Export                             | Runtime value                             | Unit or syntax             | Affected field              |
-| ---------------------------------- | ----------------------------------------- | -------------------------- | --------------------------- |
-| `renderImageDimensionRange`        | `readonly [16, 4096]`                     | pixels                     | `width`, `height`           |
-| `renderImageQualityRange`          | `readonly [0, 1]`                         | normalized encoder quality | `quality`                   |
-| `renderImageMarginRange`           | `readonly [0, 0.5]`                       | fraction of fitted extent  | `margin`                    |
-| `renderImageAnnotatedMinDimension` | `192`                                     | pixels                     | annotated `width`, `height` |
-| `renderImageLabelMaxLength`        | `64`                                      | Unicode code points        | `label`                     |
-| `renderImageLabelPattern`          | `/^[\u0020-\u007E\u00B5\u2014\u2212]+$/u` | supported characters       | `label`                     |
-| `renderImageViewIdPattern`         | `/^[\dA-Za-z][\w-]{0,63}$/u`              | identifier syntax          | `id`                        |
-| `renderImageBackgroundPattern`     | `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`   | hexadecimal color          | `background`                |
+| Export                             | Runtime value                             | Unit or syntax              | Affected field              |
+| ---------------------------------- | ----------------------------------------- | --------------------------- | --------------------------- |
+| `renderImageDimensionRange`        | `readonly [16, 4096]`                     | pixels                      | `width`, `height`           |
+| `renderImageQualityRange`          | `readonly [0, 1]`                         | normalized encoder quality  | `quality`                   |
+| `renderImageMarginRange`           | `readonly [0, 0.5]`                       | fraction of fitted extent   | `margin`                    |
+| `renderImageMaxLights`             | `8`                                       | lights per rig              | `lighting.lights`           |
+| `renderImageLightColorRange`       | `readonly [0, 32]`                        | linear radiance per channel | `lighting.lights[].color`   |
+| `renderImageAmbientRange`          | `readonly [0, 4]`                         | diffuse multiplier          | `lighting.ambient`          |
+| `renderImageExposureRange`         | `readonly [0.01, 16]`                     | linear multiplier           | `lighting.exposure`         |
+| `renderImageAnnotatedMinDimension` | `192`                                     | pixels                      | annotated `width`, `height` |
+| `renderImageLabelMaxLength`        | `64`                                      | Unicode code points         | `label`                     |
+| `renderImageLabelPattern`          | `/^[\u0020-\u007E\u00B5\u2014\u2212]+$/u` | supported characters        | `label`                     |
+| `renderImageViewIdPattern`         | `/^[\dA-Za-z][\w-]{0,63}$/u`              | identifier syntax           | `id`                        |
+| `renderImageBackgroundPattern`     | `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`   | hexadecimal color           | `background`                |
 
 #### Usage
 
@@ -58,6 +62,29 @@ Hex clear-color syntax: `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`. Backgrounds may
 also be supplied as normalized straight-alpha RGBA, which this pattern does not
 cover.
 
+## Lighting
+
+### `renderImageMaxLights`
+
+Most directional lights one rig may carry: `8`. A rig with more is rejected; a
+rig with none renders from the environment alone.
+
+### `renderImageLightColorRange`
+
+Inclusive per-channel bounds for light radiance: `readonly [0, 32]`. The values
+are unitless linear multipliers; the bounds reject typos and non-finite numbers
+rather than modelling physics.
+
+### `renderImageAmbientRange`
+
+Inclusive bounds for the flat ambient multiplier on the diffuse colour:
+`readonly [0, 4]`. The studio preset uses `0.02`.
+
+### `renderImageExposureRange`
+
+Inclusive bounds for the exposure multiplier applied before the fixed ACES tone
+map: `readonly [0.01, 16]`. The studio preset uses `1`.
+
 ## Labels and identifiers
 
 ### `renderImageLabelMaxLength`
@@ -78,6 +105,8 @@ filenames, which is why the first character is restricted.
 
 - [Annotate renders](../guides/annotate-renders) — where the 192-pixel minimum
   and the label rules apply.
+- [Light the subject](../guides/light-the-subject) — the rig fields these
+  lighting bounds constrain.
 - [Reference: options](options) — the fields these constants constrain.
 - [Handle render failures](../guides/handle-render-failures) — what a violation
   of any of these produces.

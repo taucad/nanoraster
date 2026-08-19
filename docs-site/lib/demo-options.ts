@@ -2,7 +2,7 @@
  * Where a control's value goes. Render options travel in the request; material
  * factors are carried in the GLB and have to be patched into the model.
  */
-export type DemoScope = 'option' | 'material';
+type DemoScope = 'option' | 'material';
 
 export type DemoControl = { readonly key: string; readonly scope: DemoScope } & (
   | { readonly kind: 'range'; readonly min: number; readonly max: number; readonly step: number }
@@ -28,6 +28,12 @@ const catalogue: Record<string, DemoControl> = {
     key: 'projection',
     scope: 'option',
     choices: ['perspective', 'orthographic'],
+  },
+  lighting: {
+    kind: 'choice',
+    key: 'lighting',
+    scope: 'option',
+    choices: ['studio', 'two-light', 'environment-only', 'world-key'],
   },
   includeAxes: { kind: 'toggle', key: 'includeAxes', scope: 'option' },
   includeScale: { kind: 'toggle', key: 'includeScale', scope: 'option' },
@@ -98,6 +104,38 @@ export const demoControls = (code: string): readonly DemoControl[] => {
 /** True when a value belongs in the model rather than in the render request. */
 export const isMaterialKey = (key: string): boolean =>
   key in catalogue && catalogue[key].scope === 'material';
+
+/**
+ * The rig each `lighting` choice stands for. A control carries a scalar and a
+ * rig is an object, so the name is what the control holds and this is where it
+ * becomes the request's value. The names match the guide's examples.
+ */
+const lightingRigs: Record<string, unknown> = {
+  studio: 'studio',
+  'two-light': {
+    lights: [
+      { direction: [-0.5, 0.6, 0.6], color: [3, 2.9, 2.7] },
+      { direction: [0.6, -0.2, 0.4], color: [0.7, 0.8, 1] },
+    ],
+  },
+  'environment-only': { lights: [] },
+  'world-key': {
+    lights: [{ direction: [0, 1, 0.4], color: [3, 2.9, 2.7] }],
+    space: 'world',
+  },
+};
+
+/**
+ * Turn the control values into the render request. Values are literal except
+ * `lighting`, whose choice name expands into the rig it names; material factors
+ * are dropped, because they are patched into the model instead.
+ */
+export const toRequestOptions = (values: Record<string, DemoValue>): Record<string, unknown> =>
+  Object.fromEntries(
+    Object.entries(values)
+      .filter(([key]) => !isMaterialKey(key))
+      .map(([key, value]) => [key, key === 'lighting' ? lightingRigs[String(value)] : value]),
+  );
 
 /** Format a value the way it would appear in the example's source. */
 export const formatValue = (value: DemoValue): string => {

@@ -4,7 +4,7 @@ description: How GLB bytes become image bytes, and what the native and WebAssemb
 ---
 
 nanoraster exists because two very different hosts — a CI container and a
-browser tab — need to produce the *same* image from the same model. Meeting that
+browser tab — need to produce the _same_ image from the same model. Meeting that
 goal means the decisions that affect pixels live in one place, and only the
 plumbing differs per host.
 
@@ -35,8 +35,9 @@ that frames the model's bounds using your `phi`, `theta`, `up`, `projection`,
 and `margin`. Fitting is derived from the geometry, so you never specify a
 camera distance.
 
-**Rasterise** draws the model under fixed lighting, then draws authored edge
-lines. Failures here are GPU-class.
+**Rasterise** draws the model under the studio rig, or the one you passed as
+`lighting`, tone maps the result with the ACES filmic curve, then draws authored
+edge lines. Failures here are GPU-class.
 
 **Encode** reads the framebuffer back and compresses it. A request the encoder
 cannot represent — a transparent JPEG — fails as `encode`.
@@ -69,8 +70,11 @@ and the same codec implementations, so the stages above are identical. See
 back are owned by you. nanoraster never touches the filesystem; writing the
 result is your decision.
 
-**Fixed lighting.** Lighting is not a stage you configure. That is a deliberate
-constraint explained in [Determinism](determinism).
+**Lighting is a defaulted stage input.** The studio rig applies unless the
+request carries a `lighting` block; the ACES tone map and the sRGB transfer
+after it are fixed either way. Why the default exists is explained in
+[Determinism](determinism); how to replace it is
+[Light the subject](../guides/light-the-subject).
 
 ## Implications
 

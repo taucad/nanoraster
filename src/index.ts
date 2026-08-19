@@ -14,12 +14,16 @@ export { imageMimeTypes } from '#image-file.js';
 export type { RenderedImageFile } from '#image-file.js';
 export { createRenderImageOptions, createRenderImagesOptions } from '#options.js';
 export {
+  renderImageAmbientRange,
   renderImageAnnotatedMinDimension,
   renderImageBackgroundPattern,
   renderImageDimensionRange,
+  renderImageExposureRange,
   renderImageLabelMaxLength,
   renderImageLabelPattern,
+  renderImageLightColorRange,
   renderImageMarginRange,
+  renderImageMaxLights,
   renderImageQualityRange,
   renderImageViewIdPattern,
 } from '#options.js';
@@ -32,4 +36,10 @@ export type {
   RenderImageFormat,
   RenderUpAxis,
   RenderProjection,
+  RenderLight,
+  RenderLightSpace,
+  RenderLighting,
+  RenderLightingEnvironment,
+  RenderLightingPreset,
+  RenderLightingRig,
 } from '#options.js';

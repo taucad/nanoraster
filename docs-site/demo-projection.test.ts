@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { demoControls, isMaterialKey, readDemoOptions } from './lib/demo-options';
+import { demoControls, isMaterialKey, readDemoOptions, toRequestOptions } from './lib/demo-options';
 import { llmStringifyMdx } from './lib/llm-stringify-mdx';
 
 const docsDir = resolve(import.meta.dirname, 'content/docs');
@@ -15,9 +15,11 @@ const pages = pagePaths.map((path) => ({
 
 /** Every fenced example wrapped by a `<RenderDemo>`, with its page. */
 const demos = pages.flatMap(({ path, source }) =>
-  [...source.matchAll(/<RenderDemo>\s*```(\w+)\n([\s\S]*?)```\s*<\/RenderDemo>/gu)].map(
-    (match) => ({ path, lang: match[1], code: match[2] }),
-  ),
+  [...source.matchAll(/<RenderDemo>\s*```(\w+)\n([\s\S]*?)```\s*<\/RenderDemo>/gu)].map((match) => ({
+    path,
+    lang: match[1],
+    code: match[2],
+  })),
 );
 
 describe('interactive demo projections', () => {
@@ -91,6 +93,40 @@ describe('interactive demo projections', () => {
         expect(path, 'material factors outside the material page').toContain('material-model');
       }
     }
+  });
+
+  it('expands every lighting choice into a rig the renderer would accept', () => {
+    const control = demoControls("lighting: 'studio'").find(({ key }) => key === 'lighting');
+    expect(control?.kind).toBe('choice');
+    const choices = control?.kind === 'choice' ? control.choices : [];
+    expect(choices).toContain('studio');
+
+    for (const choice of choices) {
+      const { lighting } = toRequestOptions({ lighting: choice });
+      if (choice === 'studio') {
+        expect(lighting).toBe('studio');
+        continue;
+      }
+
+      // Mirrors renderImageMaxLights and renderImageLightColorRange, so a
+      // control can never produce a rig the validator rejects.
+      const rig = lighting as { lights: readonly { direction: number[]; color: number[] }[] };
+      expect(rig.lights.length, choice).toBeLessThanOrEqual(8);
+      for (const { direction, color } of rig.lights) {
+        expect(direction, choice).toHaveLength(3);
+        expect(Math.hypot(...direction), choice).toBeGreaterThan(0);
+        expect(color, choice).toHaveLength(3);
+        for (const channel of color) expect(channel).toBeGreaterThanOrEqual(0);
+        for (const channel of color) expect(channel).toBeLessThanOrEqual(32);
+      }
+    }
+  });
+
+  it('drops material factors from the request and passes everything else through', () => {
+    expect(toRequestOptions({ phi: 30, metallicFactor: 1, lighting: 'environment-only' })).toEqual({
+      phi: 30,
+      lighting: { lights: [] },
+    });
   });
 
   it('seeds nothing the example does not set', () => {
