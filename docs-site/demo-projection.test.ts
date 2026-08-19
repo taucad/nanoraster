@@ -5,7 +5,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   demoControls,
+  isLightingKey,
   isMaterialKey,
+  readDemoLights,
   readDemoOptions,
   readDemoViews,
   substituteDemoValues,
@@ -195,6 +197,42 @@ describe('interactive demo projections', () => {
     for (const { path, code } of demos.filter(({ code }) => !viewsLiteral.test(code))) {
       expect(readDemoViews(code), path).toEqual([]);
     }
+  });
+
+  it('reads the rig lights out of every example that declares a rig', () => {
+    // Rig values (ambient, exposure, environment, space) travel inside
+    // `lighting` with the lights the example declares, so an example that
+    // offers a rig control must also declare a `lights` literal to carry them.
+    const rigs = demos.filter(({ code }) =>
+      Object.keys(readDemoOptions(code)).some((key) => isLightingKey(key)),
+    );
+    expect(rigs.length, 'no wrapped example drives a rig').toBeGreaterThan(0);
+
+    for (const { path, code } of rigs) {
+      const lights = readDemoLights(code);
+      expect(lights, `${path} offers rig controls without a lights literal`).toBeDefined();
+      expect(path, 'rig controls outside the lighting guide').toContain('light-the-subject');
+      for (const light of lights ?? []) {
+        expect(
+          light.direction.some((part) => part !== 0),
+          `${path} zero-length direction`,
+        ).toBe(true);
+        expect(
+          light.color.every((part) => part >= 0 && part <= 32),
+          `${path} colour outside the range`,
+        ).toBe(true);
+      }
+    }
+
+    // An example without a rig reports no lights at all, and the demo tells
+    // "no rig" from "a rig with no lights" by this being undefined.
+    for (const { code } of demos.filter(({ code }) => !/\blighting\s*:\s*\{/u.test(code))) {
+      expect(readDemoLights(code)).toBeUndefined();
+    }
+    expect(readDemoLights('lighting: { lights: [], exposure: 1 }')).toEqual([]);
+    expect(readDemoLights('lights: [{ direction: [0, 1, 0.4], color: [3, 2.9, 2.7] }]')).toEqual([
+      { direction: [0, 1, 0.4], color: [3, 2.9, 2.7] },
+    ]);
   });
 
   it('leaves a batch demo with controls after the angles are dropped', () => {

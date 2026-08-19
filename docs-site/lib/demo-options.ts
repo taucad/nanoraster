@@ -1,8 +1,9 @@
 /**
  * Where a control's value goes. Render options travel in the request; material
- * factors are carried in the GLB and have to be patched into the model.
+ * factors are carried in the GLB and have to be patched into the model; rig
+ * values sit inside the request's `lighting` object.
  */
-type DemoScope = 'option' | 'material';
+type DemoScope = 'option' | 'material' | 'lighting';
 
 export type DemoControl = { readonly key: string; readonly scope: DemoScope } & (
   | { readonly kind: 'range'; readonly min: number; readonly max: number; readonly step: number }
@@ -49,6 +50,12 @@ const catalogue: Record<string, DemoControl> = {
   includeAxes: { kind: 'toggle', key: 'includeAxes', scope: 'option' },
   includeScale: { kind: 'toggle', key: 'includeScale', scope: 'option' },
   includeLabel: { kind: 'toggle', key: 'includeLabel', scope: 'option' },
+  // Rig values. Ranges stay inside renderImageAmbientRange / renderImageExposureRange
+  // but stop where the picture stops changing usefully.
+  ambient: { kind: 'range', key: 'ambient', scope: 'lighting', min: 0, max: 1, step: 0.01 },
+  exposure: { kind: 'range', key: 'exposure', scope: 'lighting', min: 0.1, max: 4, step: 0.05 },
+  environment: { kind: 'choice', key: 'environment', scope: 'lighting', choices: ['studio', 'none'] },
+  space: { kind: 'choice', key: 'space', scope: 'lighting', choices: ['view', 'world'] },
   baseColorFactor: { kind: 'colour', key: 'baseColorFactor', scope: 'material' },
   metallicFactor: {
     kind: 'range',
@@ -122,6 +129,10 @@ export const demoControls = (code: string): readonly DemoControl[] => {
 /** True when a value belongs in the model rather than in the render request. */
 export const isMaterialKey = (key: string): boolean =>
   key in catalogue && catalogue[key].scope === 'material';
+
+/** True when a value belongs inside the request's `lighting` rig. */
+export const isLightingKey = (key: string): boolean =>
+  key in catalogue && catalogue[key].scope === 'lighting';
 
 /**
  * Format a value the way it would appear in the example's source. Numbers are
@@ -210,5 +221,37 @@ export const readDemoViews = (code: string): readonly DemoView[] => {
       return [];
     }
     return [{ id, phi, theta, ...(label === undefined ? {} : { label }) }];
+  });
+};
+
+/** One directional light an example declares inside its `lights: [ … ]` literal. */
+export type DemoLight = {
+  readonly direction: readonly [number, number, number];
+  readonly color: readonly [number, number, number];
+};
+
+/** A `[x, y, z]` literal as three numbers, or nothing when it is not one. */
+const triple = (body: string, key: string): readonly [number, number, number] | undefined => {
+  const raw = new RegExp(`\\b${key}\\s*:\\s*\\[([^\\]]*)\\]`, 'u').exec(body)?.[1];
+  if (raw === undefined) return undefined;
+  const parts = raw.split(',').map((part) => Number(part.trim()));
+  return parts.length === 3 && parts.every((part) => Number.isFinite(part))
+    ? [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0]
+    : undefined;
+};
+
+/**
+ * Read the rig lights an example declares, in order. An example with no
+ * `lights` literal gives back nothing at all, so a caller can tell "no rig"
+ * from "a rig with no lights" (`lights: []`).
+ */
+export const readDemoLights = (code: string): readonly DemoLight[] | undefined => {
+  const literal = /\blights\s*:\s*\[((?:[^[\]]|\[[^\]]*\])*)\]/u.exec(code)?.[1];
+  if (literal === undefined) return undefined;
+
+  return [...literal.matchAll(/\{((?:[^{}]|\[[^\]]*\])*)\}/gu)].flatMap(([, body]) => {
+    const direction = triple(body, 'direction');
+    const color = triple(body, 'color');
+    return direction === undefined || color === undefined ? [] : [{ direction, color }];
   });
 };
