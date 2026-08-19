@@ -1,3 +1,16 @@
 @import 'tailwindcss';
 @import 'fumadocs-ui/css/preset.css';
 @import 'fumadocs-ui/css/neutral.css';
+
+/* Long declaration lines scroll under the code block's copy button; leave room at
+   the end of every line so the tail is readable once scrolled. */
+.shiki pre {
+  padding-inline-end: 3rem;
+}
+
+/* Type-table cells scroll horizontally by default, hiding the tail of long unions
+   (`background`). Let them wrap instead. */
+[id^='type-table-'] .fd-scroll-container {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

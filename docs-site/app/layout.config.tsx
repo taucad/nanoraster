@@ -30,8 +30,8 @@ export const baseOptions: BaseLayoutProps = {
  * duplicated navigation.
  */
 export const homeLinks: BaseLayoutProps['links'] = [
-  { text: 'Documentation', url: '/docs' },
-  { text: 'Quick start', url: '/docs/quick-start' },
+  { text: 'Quick start', url: '/docs' },
+  { text: 'Guides', url: '/docs/guides/frame-the-model' },
   { text: 'API', url: '/docs/api' },
 ];
 

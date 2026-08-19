@@ -1,0 +1,23 @@
+/*
+ * Diagram palette. Mermaid cannot resolve `var(...)` itself, so the component
+ * reads these off the wrapper with `getComputedStyle` and hands mermaid the
+ * concrete values. Same hues as the marketing page tokens in
+ * `app/(home)/page.module.css`, following the `.dark` class next-themes sets.
+ */
+.diagram {
+  --mm-ink: #17202a;
+  --mm-ink-muted: #53616d;
+  --mm-line: #c3cbd2;
+  --mm-accent: #0e7c98;
+  --mm-accent-wash: #e3f4f8;
+  --mm-offset: #eef1f4;
+}
+
+:global(.dark) .diagram {
+  --mm-ink: #e8edf2;
+  --mm-ink-muted: #94a3b1;
+  --mm-line: #2b3540;
+  --mm-accent: #6cdcf1;
+  --mm-accent-wash: #0f2b33;
+  --mm-offset: #141c24;
+}
