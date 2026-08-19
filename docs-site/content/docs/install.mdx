@@ -71,10 +71,12 @@ non-zero length and a MIME type print rather than an error.
 Browser builds need the WebAssembly binary reachable at runtime. It is published
 on a dedicated subpath so bundlers can emit it as an asset:
 
-```typescript
+```js
 import wasmUrl from 'nanoraster/wasm?url';
 ```
 
-Most bundlers resolve this without configuration.
+The `?url` import is tested with Vite, webpack 5 and Rspack; in TypeScript it
+needs the bundler's ambient types (Vite's `vite/client`) or a
+`declare module '*?url'` declaration.
 [Render in the browser](guides/render-in-the-browser) covers the rest,
 including the WebGPU adapter check.

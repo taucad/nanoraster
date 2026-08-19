@@ -28,8 +28,10 @@ flowchart TD
   CPU1 --> GPU --> CPU2
 ```
 
-**Parse** reads the GLB and rejects anything outside the supported profile. A
-failure here is classified `parse`.
+**Parse** reads the GLB and rejects malformed or structurally unsupported
+input; a failure here is classified `parse`. An out-of-profile *material* is
+not rejected — it degrades instead, as the [material model](#material-model)
+describes.
 
 **Fit and upload** compute a camera that frames the model's bounds from your
 `phi`, `theta`, `up`, `projection` and `margin`, then move the geometry to the
@@ -91,10 +93,11 @@ at the render rather than the encoder.
 ## Material model
 
 nanoraster renders factor-only glTF 2.0 metallic-roughness materials. A material
-is three numbers and a colour, not an image. That restriction lets a render be
-reproduced from the model file alone. A texture-backed material makes the
-output depend on decode behaviour, sampler state and mip selection, none of
-which the GLB pins down, so two hosts can disagree about the same file.
+is three numbers and a colour, not an image. That restriction is the renderer's
+supported profile, and it lets a render be reproduced from the model file
+alone: a texture-backed material would make the output depend on image
+decoding and mip generation, which the host supplies rather than the GLB, so
+two hosts could disagree about the same file.
 
 `metallicFactor` selects between two behaviours rather than blending two looks.
 At `0` the surface has a diffuse colour and a white specular highlight. At `1`
