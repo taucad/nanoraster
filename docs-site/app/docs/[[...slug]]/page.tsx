@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { DocsBody, DocsDescription, DocsPage, DocsTitle } from 'fumadocs-ui/page';
 import { MarkdownCopyButton } from 'fumadocs-ui/layouts/docs/page';
+import { buttonVariants } from 'fumadocs-ui/components/ui/button';
 
 import { getMDXComponents } from '@/mdx-components';
 import { getMarkdownPath } from '@/lib/get-llm-text';
@@ -20,10 +21,7 @@ const Page = async ({ params }: Props): Promise<React.JSX.Element> => {
       <DocsDescription>{page.data.description}</DocsDescription>
       <div className="flex items-center gap-2 border-b pb-6 pt-2">
         <MarkdownCopyButton markdownUrl={markdownPath} />
-        <a
-          href={markdownPath}
-          className="rounded-md border bg-fd-secondary px-3 py-1.5 text-sm font-medium no-underline hover:bg-fd-accent"
-        >
+        <a href={markdownPath} className={buttonVariants({ color: 'secondary', size: 'sm' })}>
           Open Markdown
         </a>
       </div>
