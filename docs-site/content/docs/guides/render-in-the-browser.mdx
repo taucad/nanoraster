@@ -3,22 +3,17 @@ title: Render in the browser
 description: Run nanoraster on browser WebGPU, bundle the WebAssembly artifact, and degrade gracefully where WebGPU is missing.
 ---
 
-Render in a browser tab using WebGPU, with the same API and the same render core
-the Node.js build uses.
+Render in a browser tab on WebGPU, using the API and render core that the
+Node.js build uses.
 
-## Prerequisites
-
-- nanoraster installed — see [Installation](../getting-started/installation).
-- A browser with WebGPU enabled.
-- A bundler that can emit a WebAssembly asset — Vite, webpack 5, and Rspack all
-  handle this without configuration.
-
-## Steps
+You need WebGPU enabled and a bundler that can emit a WebAssembly asset. Vite,
+webpack 5 and Rspack all do without configuration; [Install](../install)
+covers how the artifact is delivered.
 
 ### 1. Check for a WebGPU adapter first
 
-nanoraster fails with a typed error when no adapter exists, but checking first
-lets you choose a fallback before doing any work.
+Rendering fails with a typed error when no adapter exists; checking first lets
+you choose a fallback before doing any work.
 
 ```typescript
 const supported = typeof navigator !== 'undefined' && 'gpu' in navigator;
@@ -28,16 +23,14 @@ if (!supported) {
 }
 ```
 
-Presence of `navigator.gpu` is necessary but not sufficient — a browser can
-expose the API and still fail to produce an adapter on a particular machine.
-Handle `adapter-unavailable` as well; see
-[Handle render failures](handle-render-failures).
+`navigator.gpu` is necessary but not sufficient: a browser can expose the API
+and still fail to produce an adapter on a particular machine. Handle
+[`adapter-unavailable`](handle-render-failures) too.
 
 ### 2. Render from bytes you already hold
 
-The browser API is identical to Node's. The only difference is where the GLB
-comes from — a fetch, a file input, or an in-memory buffer rather than the
-filesystem.
+Only the source of the GLB differs: a fetch, a file input or an in-memory
+buffer instead of the filesystem.
 
 ```typescript
 import { renderGlbToImage } from 'nanoraster';
@@ -63,13 +56,13 @@ const url = URL.createObjectURL(blob);
 document.querySelector('img')?.setAttribute('src', url);
 ```
 
-Revoke the object URL with `URL.revokeObjectURL(url)` once the image has loaded,
-or the blob stays resident for the life of the document.
+Revoke it with `URL.revokeObjectURL(url)` once the image has loaded, or the blob
+stays resident for the life of the document.
 
 ### 4. Keep the render off the main thread
 
-Rendering occupies the GPU queue and does non-trivial CPU work encoding the
-result. In a worker, neither blocks input handling.
+Rendering occupies the GPU queue and spends CPU time encoding the result. In
+a worker, neither blocks input handling.
 
 ```typescript
 // render.worker.ts
@@ -81,31 +74,34 @@ self.addEventListener('message', async ({ data }: MessageEvent<Uint8Array>) => {
 });
 ```
 
-Transferring `image.bytes.buffer` moves the memory instead of copying it. The
-worker cannot use it afterwards, which is what you want — the bytes belong to
-the caller now.
+Transferring `image.bytes.buffer` moves the memory instead of copying it; the
+worker cannot use it afterwards, and does not need to.
 
 ## Variations
-
-**Bundling the wasm explicitly.** If your bundler does not pick the artifact up
-automatically, reference the published subpath:
-
-```typescript
-import wasmUrl from 'nanoraster/wasm?url';
-```
 
 **Cross-origin isolation.** The browser build does not require
 `SharedArrayBuffer`, so COOP/COEP headers are not needed.
 
 **Node and browser from one codebase.** The import specifier is the same in
-both; the package resolves the correct artifact per host. Nothing in your code
-needs to branch.
+both, and nothing in your code needs to branch.
 
-## Related
+**Capturing a live viewer's camera.** An orbiting viewer (three.js, Babylon,
+your own) knows its eye position relative to the target; nanoraster wants
+`phi` and `theta`. Convert the offset; for a Y-up scene:
 
-- [Rendering pipeline](../concepts/rendering-pipeline) — what the wasm and
-  native paths share.
-- [Handle render failures](handle-render-failures) — the GPU failure codes this
-  path can produce.
-- [Installation](../getting-started/installation) — the artifacts and how they
-  are delivered.
+```typescript
+const anglesFromOffset = ([x, y, z]: readonly [number, number, number]) => {
+  const distance = Math.hypot(x, y, z);
+  const degrees = 180 / Math.PI;
+  return {
+    phi: Math.acos(y / distance) * degrees,
+    theta: Math.atan2(-z, x) * degrees,
+  };
+};
+
+const image = await renderGlbToImage(glb, { format: 'webp', ...anglesFromOffset(eye) });
+```
+
+Distance is discarded on purpose: nanoraster
+[fits the model itself](frame-the-model), so the capture matches the viewer's
+direction, not its zoom.

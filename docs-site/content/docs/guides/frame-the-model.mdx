@@ -1,22 +1,15 @@
 ---
 title: Frame the model
-description: Place the camera with polar angles, choose a projection and up axis, and control how tightly the subject fits.
+description: Place the camera with two angles, match the model's up axis, choose a projection, and control how tightly the subject fits.
 ---
 
-Move the camera off the default three-quarter view and control how much empty
-space surrounds the subject.
-
-## Prerequisites
-
-- Completed the [Quick start](../getting-started/quick-start).
-- A GLB whose orientation you know — the up axis matters here.
-
-## Steps
+Most renderers ask for a camera position, a target and an up vector. nanoraster
+asks for two angles: the camera sits on a sphere centred on the model's bounds,
+and the radius is solved so the subject fills the frame.
 
 ### 1. Place the camera with two angles
 
-nanoraster frames the model automatically; you choose the direction it is seen
-from, not the distance. Both angles are finite degrees.
+You choose the direction the model is seen from, not the distance.
 
 <RenderDemo>
 
@@ -32,32 +25,43 @@ const image = await renderGlbToImage(glb, {
 
 </RenderDemo>
 
-| Angle   | Meaning                                     | Default |
-| ------- | ------------------------------------------- | ------: |
-| `phi`   | Polar angle away from the up axis           |    `60` |
-| `theta` | Right-handed azimuth around the up axis     |   `-45` |
+`phi` is the polar angle from the up axis (default `60`); `theta` is the
+right-handed azimuth around it (default `-45`). Because `phi` is measured from
+the up axis it behaves like colatitude, not latitude: `0` looks straight down
+the axis (top), `60` is the default three-quarter view, `90` is level with the
+model (elevation) and `180` looks straight up (bottom). At `phi: 0` only
+`theta` spins the image.
 
-`phi: 0` looks straight down the up axis; `phi: 90` is level with the model.
+Exact ranges for every field named here are in
+[`RenderImageOptions`](../api#renderimageoptions).
 
 ### 2. Match the model's up axis
 
-glTF's convention is Y-up, which is the default. Models exported from CAD tools
-are frequently Z-up, and rendering them without saying so tips the subject onto
-its side.
+`up` does not rotate the model. It selects the world axis the angles are
+measured against, so changing it reinterprets `phi` and `theta` rather than
+transforming geometry.
+
+<RenderDemo>
 
 ```typescript
 const image = await renderGlbToImage(glb, {
   format: 'png',
-  up: 'z',
+  up: 'x',
   phi: 60,
   theta: -45,
 });
 ```
 
-Changing `up` re-interprets `phi` and `theta`, because both are defined relative
-to it. A view that looked correct at Y-up needs different angles at Z-up.
+</RenderDemo>
+
+Y-up is the glTF convention and the default. CAD exports are often Z-up;
+render one without saying so and the subject tips onto its side. The demo
+gear's axis runs along X, so `up: 'x'` turns the same two angles into a view
+looking down onto its face.
 
 ### 3. Choose a projection
+
+<RenderDemo>
 
 ```typescript
 const image = await renderGlbToImage(glb, {
@@ -66,17 +70,16 @@ const image = await renderGlbToImage(glb, {
 });
 ```
 
-| Projection     | Use when                                                             |
-| -------------- | -------------------------------------------------------------------- |
-| `perspective`  | Ordinary thumbnails. Nearer features read as larger. The default.     |
-| `orthographic` | Canonical views where two parts of the model must be comparable at any depth. |
+</RenderDemo>
 
-Orthographic also makes the scale annotation depth-invariant — see
-[Annotate renders](annotate-renders).
+`perspective` is the default; nearer features look larger. Use `orthographic`
+for canonical views where two parts of the model must be comparable at any
+depth. It also makes the [scale annotation](format-and-annotate) depth-invariant.
 
 ### 4. Tighten or loosen the fit
 
-`margin` is the fraction of the fitted extent left empty around the subject.
+`margin` is the fraction of the fitted extent left empty around the subject; the
+camera radius is solved from the bounds and `margin` together.
 
 <RenderDemo>
 
@@ -84,35 +87,38 @@ Orthographic also makes the scale annotation depth-invariant — see
 const image = await renderGlbToImage(glb, {
   format: 'png',
   margin: 0.02,
-  projection: 'perspective',
 });
 ```
 
 </RenderDemo>
 
-| `margin` | Result                                            |
-| -------- | ------------------------------------------------- |
-| `0`      | Subject touches the frame edge                    |
-| `0.1`    | Default — a comfortable border                    |
-| `0.5`    | Maximum — subject occupies the middle half        |
-
-Keep some margin when annotations are enabled: the axis indicator and scale bar
-are drawn inside the frame and can overlap a subject fitted to the edge.
+| `margin` | Result                                    |
+| -------- | ----------------------------------------- |
+| `0`      | Subject touches the frame edge            |
+| `0.1`    | Default; a comfortable border             |
+| `0.5`    | Maximum; subject occupies the middle half |
 
 ## Variations
 
-**Consistent framing across a set.** `margin` is a shared setting, so every view
-in a [batch call](render-multiple-views) fits the same way. That is what makes a
-contact sheet's images comparable.
+**Consistent framing across a set.** In a
+[batch call](render-multiple-views), `phi` and `theta` are per view while `up`,
+`projection` and `margin` are shared, so every tile of a contact sheet is
+framed the same way.
 
 **Very wide or very tall outputs.** Fitting accounts for the aspect ratio you
-request, so a 1920×480 banner frames differently from a 512×512 square. Set
+request, so a 1920×480 banner frames differently from a 512×512 square; set
 `width` and `height` before tuning `margin`.
 
-## Related
+## Notes
 
-- [Camera model](../concepts/camera-model) — the coordinate convention and why
-  it is spherical.
-- [Reference: options](../api/options) — every field named here, with ranges.
-- [Render a view sheet](../getting-started/render-a-view-sheet) — these angles
-  applied to a four-view sheet.
+- **You cannot dolly the camera.** Removing distance from the API removes a
+  class of bad output: no camera inside the model, no subject reduced to a
+  speck. Adjust `margin` if the subject looks too small.
+- **Angles are not portable across up axes.** A view tuned at Y-up needs
+  different numbers at Z-up.
+- **The fit is deterministic.** Identical bounds and angles produce an
+  identical camera, a precondition for
+  [reproducible output](../how-it-works#determinism).
+- **Degenerate bounds still render.** A flat or single-point model has
+  degenerate bounds; the fit falls back rather than dividing by zero, though the
+  result is rarely useful.

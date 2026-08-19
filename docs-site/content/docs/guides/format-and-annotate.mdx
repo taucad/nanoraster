@@ -1,0 +1,129 @@
+---
+title: Format and annotate
+description: Choose the encoder, background, and quality, then add the axis indicator, label, and scale bar that let a render stand on its own.
+---
+
+Five choices decide what leaves the renderer, in order: format, background,
+quality, annotations, and the dimensions annotations require.
+
+### 1. Pick the format
+
+<RenderDemo>
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+const image = await renderGlbToImage(glb, {
+  format: 'webp',
+  background: '#101418',
+  quality: 0.8,
+});
+```
+
+</RenderDemo>
+
+| Format | Alpha | Lossy | Use for                                                  |
+| ------ | ----- | ----- | -------------------------------------------------------- |
+| `png`  | Yes   | No    | Exact pixels, diffing, transparent thumbnails            |
+| `webp` | Yes   | Yes   | Web delivery at a fraction of the PNG size               |
+| `jpeg` | No    | Yes   | Interop with tools that accept nothing else              |
+| `jpg`  | No    | Yes   | Alias for `jpeg`; the filename keeps the `jpg` extension |
+
+`mimeType` reflects the true type, so `jpg` and `jpeg` both report `image/jpeg`;
+the full [MIME map](../api#imagemimetypes) is in the reference.
+
+### 2. Decide on a background
+
+The default background is transparent, which only PNG and WebP can represent. A
+JPEG request must set an opaque background; omitting it fails with an
+[`encode` failure](handle-render-failures) rather than silently flattening onto
+an arbitrary colour.
+
+Backgrounds accept `#RRGGBB`, `#RRGGBBAA`, or normalised straight-alpha RGBA:
+
+```typescript
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  background: [0.05, 0.06, 0.08, 1],
+});
+```
+
+### 3. Tune quality for the lossy formats
+
+`quality` runs from `0` to `1` and defaults to `0.92`. It has no effect on
+lossless PNG. Every field's exact range lives on
+[`RenderImageOptions`](../api#renderimageoptions).
+
+### 4. Add an axis indicator, label and scale
+
+Drawing orientation, a label and a physical scale into the image keeps the
+render's context once it is separated from the request.
+
+<RenderDemo>
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  width: 512,
+  height: 512,
+  includeAxes: true,
+  includeScale: true,
+  includeLabel: false,
+  label: 'gear',
+});
+```
+
+</RenderDemo>
+
+The axis indicator is a camera-aware XYZ marker in the bottom-right, drawn with
+a front-on depth marker. It rotates with the camera, so it reports the view's
+orientation rather than a fixed key.
+
+The label is drawn top-left, screen-upright, and rendered verbatim. Enabling
+labels makes `label` mandatory on every view of a
+[batch call](render-multiple-views).
+
+The scale bar is drawn bottom-left in the model's own units. Under perspective
+it is only accurate at one depth, so its label names that plane with
+`@ center`; under [orthographic](frame-the-model) projection scale is
+depth-invariant and the qualifier is dropped.
+
+### 5. Meet the minimum dimensions
+
+Annotations need room to stay legible, so enabling any of them raises the
+minimum output size to **192 pixels** on both axes. A smaller request fails
+validation rather than producing an unreadable overlay.
+
+```typescript
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  width: 192,
+  height: 192,
+  includeAxes: true,
+});
+```
+
+Below that, drop the annotations.
+
+## Variations
+
+**Smallest useful thumbnail.** WebP at `quality: 0.75` with `width: 256` is
+typically an order of magnitude smaller than the equivalent PNG, at a size where
+the loss is invisible.
+
+**Byte-exact comparison.** Use PNG. Lossy encoders are
+[deterministic](../how-it-works#determinism) for a fixed request, but a format
+that discards information makes a poor diffing baseline.
+
+**Alpha over an unknown page background.** Use PNG or WebP and leave the
+background transparent, then let the page composite it.
+
+**All three annotations at once.** They occupy different corners (axes
+bottom-right, label top-left, scale bottom-left), so they combine without
+overlapping.
+
+**Annotations plus a tight fit.** Overlays are drawn inside the frame, so a
+`margin` near `0` can put the subject underneath them. Keep the default margin
+when annotating.

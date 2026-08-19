@@ -8,30 +8,21 @@
   <a href="https://tau.new"><img src="https://img.shields.io/badge/Tau-ecosystem-6d28d9" alt="Part of the Tau ecosystem"></a>
 </p>
 
-Tiny headless WebGPU GLTF renderer for deterministic PNG, WebP, and JPEG output.
+Tiny headless WebGPU glTF renderer for deterministic PNG, WebP, and JPEG output.
+Runs on a native binary in Node.js and on WebGPU in the browser, from one Rust
+render core.
 
-[![PBR helical gear rendered to WebP by nanoraster](https://nanoraster.xyz/demo/helical-gear-pbr.webp)](https://nanoraster.xyz/#live-demo)
+[![PBR spur gear rendered to WebP by nanoraster](https://nanoraster.xyz/demo/helical-gear-pbr.webp)](https://nanoraster.xyz/#live-demo)
 
-The [live camera demo](https://nanoraster.xyz/#live-demo) lets you orbit a GLB
-in Three.js, then passes that camera to nanoraster for a browser WebGPU capture.
-
-[![Three.js live camera and matching nanoraster WebP capture](https://nanoraster.xyz/demo/live-camera-capture.png)](https://nanoraster.xyz/#live-demo)
-
-| I want to…               | Start here                                                          |
-| ------------------------ | ------------------------------------------------------------------- |
-| Install the package      | [Install](#install)                                                 |
-| Run the smallest example | [Quick start](#quick-start)                                         |
-| Choose a supported host  | [Compatibility](#compatibility)                                     |
-| Contribute or release    | [CONTRIBUTING.md](CONTRIBUTING.md) / [MAINTAINER.md](MAINTAINER.md) |
+Try the [live demo](https://nanoraster.xyz/#live-demo), then read the
+[docs](https://nanoraster.xyz/docs): quick start, guides and the API reference,
+also served as Markdown for agents at
+[nanoraster.xyz/llms.txt](https://nanoraster.xyz/llms.txt).
 
 ## Install
 
 ```bash
 npm install nanoraster
-```
-
-```bash
-pnpm add nanoraster
 ```
 
 ## Quick start
@@ -50,6 +41,10 @@ const image = await renderGlbToImage(glb, {
 await writeFile(image.name, image.bytes);
 ```
 
+Same request, same pixels: the camera, lighting and encoder are fixed for a
+given request, so a render can serve as evidence. Continue with the
+[quick start](https://nanoraster.xyz/docs).
+
 ## Compatibility
 
 See [compatibility.md](compatibility.md). Every check mark in that table maps
@@ -66,12 +61,10 @@ breaking API change; each major line records those changes in
 Report vulnerabilities through GitHub private vulnerability reporting. Verify
 registry signatures with `npm audit signatures`.
 
-## Documentation
+## Links
 
-- [Documentation](https://nanoraster.xyz)
-- [Source](https://github.com/taucad/nanoraster)
-- [Changelog](CHANGELOG.md)
-- [Issues](https://github.com/taucad/nanoraster/issues)
+[Changelog](CHANGELOG.md) · [Issues](https://github.com/taucad/nanoraster/issues) ·
+[Contributing](CONTRIBUTING.md) · [Maintaining](MAINTAINER.md)
 
 ## License
 

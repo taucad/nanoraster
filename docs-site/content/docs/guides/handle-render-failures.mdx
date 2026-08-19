@@ -3,26 +3,14 @@ title: Handle render failures
 description: Classify a rejection, decide whether retrying can help, and keep the last good image when a GPU fault is transient.
 ---
 
-Turn a rejected render into a decision: fix the input, retry the call, or fall
-back.
-
-## Prerequisites
-
-- Completed the [Quick start](../getting-started/quick-start).
-
-## Steps
+Turn a rejected render into a decision: fix the input, retry, or fall back.
 
 ### 1. Normalise whatever was thrown
 
-`RenderError.from` returns an existing `RenderError` unchanged and classifies
-anything else. It never throws, so it is safe as the first line of a `catch`.
+`RenderError.from` never throws, so it is safe as the first line of a `catch`.
 
 ```typescript
 import { RenderError, renderGlbToImage } from 'nanoraster';
-
-import { readFile } from 'node:fs/promises';
-
-const glb = Uint8Array.from(await readFile('model.glb'));
 
 try {
   const image = await renderGlbToImage(glb, { format: 'png' });
@@ -36,7 +24,7 @@ try {
 ### 2. Split transient faults from input faults
 
 `isGpuFault` is true for the three codes that describe the device rather than
-the request. Those are the only ones where retrying the same input can succeed.
+the request: the only ones worth retrying.
 
 ```typescript
 try {
@@ -57,10 +45,7 @@ try {
 ```typescript
 import { RenderError, renderGlbToImage, type RenderedImageFile } from 'nanoraster';
 
-const renderWithRetry = async (
-  glb: Uint8Array<ArrayBuffer>,
-  attempts = 3,
-): Promise<RenderedImageFile> => {
+const renderWithRetry = async (glb: Uint8Array<ArrayBuffer>, attempts = 3): Promise<RenderedImageFile> => {
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await renderGlbToImage(glb, { format: 'png' });
@@ -72,13 +57,12 @@ const renderWithRetry = async (
 };
 ```
 
-Retrying a `parse` failure loops forever over the same bad input, which is why
-the guard checks the class before the attempt count.
+Retrying a `parse` failure loops forever, so the guard checks the class before
+the attempt count.
 
 ### 4. Keep the last good image
 
-In a pipeline that re-renders on every change, a transient GPU fault should not
-blank an image that was previously fine.
+A transient GPU fault should not blank the last good image.
 
 ```typescript
 let lastGood: RenderedImageFile | undefined;
@@ -88,27 +72,19 @@ try {
 } catch (error) {
   const failure = RenderError.from(error);
   if (!failure.isGpuFault) throw failure;
-  // lastGood still holds the previous successful render
+  // lastGood still holds the previous render
 }
 ```
 
 ## Variations
 
-**Distinguishing bad GLB from bad options.** Both surface as `parse`, because
-both are input-contract violations. The `message` names which.
+**Distinguishing bad GLB from bad options.** Both surface as `parse`, since
+both violate the input contract; `message` names which.
 
-**JPEG with a transparent background.** Fails as `encode`, not `parse` — the
-request is well-formed but the encoder cannot represent it. See
-[Choose a format and quality](choose-format-and-quality).
+**JPEG with a transparent background.** Fails as `encode`, not `parse`: the
+request is well-formed but the encoder cannot represent it; see
+[Format and annotate](format-and-annotate).
 
 **Unknown failures.** `unknown` means the thrown value carried no recognised
-tag. Preserve `message` and the original context; do not retry.
-
-## Related
-
-- [Reference: errors](../api/errors) — every code with its meaning and retry
-  guidance.
-- [Render in the browser](render-in-the-browser) — where GPU faults are most
-  likely.
-- [Determinism](../concepts/determinism) — why input failures repeat exactly and
-  GPU faults do not.
+tag; do not retry. Every code and its retry guidance is listed under
+[`RenderError`](../api#rendererror).
