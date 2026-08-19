@@ -35,6 +35,8 @@ const inject = (node: Node): void => {
   for (const child of node.children ?? []) inject(child);
 };
 
-export const remarkRenderDemo = () => (tree: Node): void => {
-  inject(tree);
-};
+export const remarkRenderDemo =
+  () =>
+  (tree: Node): void => {
+    inject(tree);
+  };

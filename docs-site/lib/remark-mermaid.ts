@@ -34,6 +34,8 @@ const convert = (node: Node): void => {
  * Walks the tree directly rather than depending on `unist-util-visit`, which
  * this project does not otherwise need.
  */
-export const remarkMermaid = () => (tree: Node): void => {
-  convert(tree);
-};
+export const remarkMermaid =
+  () =>
+  (tree: Node): void => {
+    convert(tree);
+  };
