@@ -669,11 +669,8 @@ mod tests {
             ),
         ];
         for (json, expected) in cases {
-            assert_eq!(
-                lighting_of(json).unwrap_err().to_string(),
-                expected,
-                "{json}"
-            );
+            let message = lighting_of(json).unwrap_err().to_string();
+            assert_eq!(message, expected, "{json}");
         }
         // Non-finite values that arrive as JSON numbers rather than null.
         for value in [f32::NAN, f32::INFINITY] {
