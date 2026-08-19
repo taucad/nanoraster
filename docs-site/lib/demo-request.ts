@@ -40,9 +40,7 @@ export const buildDemoRequest = (
   const material = Object.fromEntries(entries.filter(([key]) => isMaterialKey(key))) as MaterialFactors;
   const rig = Object.fromEntries(entries.filter(([key]) => isLightingKey(key)));
   const options = Object.fromEntries(
-    entries.filter(
-      ([key]) => !isMaterialKey(key) && !isLightingKey(key) && !(batch && angleKeys.has(key)),
-    ),
+    entries.filter(([key]) => !isMaterialKey(key) && !isLightingKey(key) && !(batch && angleKeys.has(key))),
   );
 
   // Labels are required on every view once they are switched on, so a view
