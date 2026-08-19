@@ -53,6 +53,7 @@ const image = await renderGlbToImage(glb, {
   format: 'png',
   lighting: {
     lights: [],
+    ambient: 0,
     environment: 'studio',
     exposure: 1.4,
   },
@@ -61,7 +62,8 @@ const image = await renderGlbToImage(glb, {
 
 </RenderDemo>
 
-An empty `lights` array leaves the analytic environment as the only source.
+An empty `lights` array with `ambient: 0` leaves the analytic environment as
+the only source (a rig inherits the studio ambient unless it says otherwise).
 Metals, which have no diffuse lobe, read well this way; dielectrics go soft and
 flat. `environment: 'none'` removes the specular reflection and the diffuse
 irradiance together and leaves only the lights you supplied — with none, the

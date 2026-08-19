@@ -50,8 +50,8 @@ pub enum LightingSpace {
 }
 
 /// One directional light. `direction` points *from the surface toward the
-/// light* — the vector the shader dots with the normal — and is normalised by
-/// the shader, so any finite non-zero vector is accepted.
+/// light* — the vector the shader dots with the normal. The CPU normalises it
+/// during the frame-uniform write, so any finite non-zero vector is accepted.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ResolvedLight {
     pub direction: [f32; 3],
