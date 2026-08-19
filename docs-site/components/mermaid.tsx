@@ -65,6 +65,7 @@ export const Mermaid = ({ chart }: { readonly chart: string }): React.JSX.Elemen
   const container = useRef<HTMLDivElement>(null);
   const isDark = useIsDark();
   const [svg, setSvg] = useState('');
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,13 +86,21 @@ export const Mermaid = ({ chart }: { readonly chart: string }): React.JSX.Elemen
       if (!cancelled) setSvg(rendered);
     };
 
-    void draw();
+    // A failed import or render falls back to the fence source rather than
+    // leaving a blank diagram behind an unhandled rejection.
+    draw().catch(() => {
+      if (!cancelled) setFailed(true);
+    });
     return () => {
       cancelled = true;
     };
     // `isDark` is a dependency only: it re-runs the draw so the CSS palette is
     // re-read after a theme switch. The values themselves come from the module.
   }, [chart, id, isDark]);
+
+  if (failed) {
+    return <pre className="my-6 overflow-x-auto text-sm">{chart}</pre>;
+  }
 
   return (
     <div
