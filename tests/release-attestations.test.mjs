@@ -58,7 +58,7 @@ const audit = {
     },
   ],
 };
-const options = { audit, manifest: { packages: [candidate] }, commit, runId: '123', runAttempt: '1' };
+const options = { audit, manifest: { packages: [candidate] }, commit, runId: '123' };
 
 describe('release attestation verification', () => {
   it('binds every candidate to the exact repository, workflow, run, commit, and digest', () => {
@@ -67,5 +67,19 @@ describe('release attestation verification', () => {
       () => verifyReleaseAttestations({ ...options, commit: 'b'.repeat(40) }),
       /wrong source commit/u,
     );
+    assert.throws(
+      () => verifyReleaseAttestations({ ...options, runId: '456' }),
+      /wrong workflow invocation/u,
+    );
+  });
+
+  it('accepts any attempt of the publishing run so a partial re-run still verifies', () => {
+    const laterAttempt = structuredClone(statement);
+    laterAttempt.predicate.runDetails.metadata.invocationId =
+      'https://github.com/taucad/nanoraster/actions/runs/123/attempts/3';
+    const payload = Buffer.from(JSON.stringify(laterAttempt)).toString('base64');
+    const reRun = structuredClone(audit);
+    reRun.verified[0].attestationBundles[0].bundle.dsseEnvelope.payload = payload;
+    assert.doesNotThrow(() => verifyReleaseAttestations({ ...options, audit: reRun }));
   });
 });

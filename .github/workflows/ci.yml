@@ -401,8 +401,7 @@ jobs:
             /tmp/npm-audit-signatures.json \
             candidate/manifest.json \
             '${{ github.sha }}' \
-            '${{ github.run_id }}' \
-            '${{ github.run_attempt }}'
+            '${{ github.run_id }}'
       - name: Record the verified release
         env:
           GH_TOKEN: ${{ github.token }}

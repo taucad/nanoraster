@@ -1,6 +1,6 @@
 {
-  "version": "0.2.0",
-  "measuredAt": "2026-08-19T10:15:42.506Z",
+  "version": "0.3.0",
+  "measuredAt": "2026-08-19T23:05:57.164Z",
   "wasm": {
     "raw": 809035,
     "gzip": 323273,
@@ -11,8 +11,8 @@
     "gzip": 379
   },
   "native": {
-    "darwin-arm64": 4428853,
-    "linux-x64-gnu": 5431638,
-    "win32-x64-msvc": 7020882
+    "darwin-arm64": 4445413,
+    "linux-x64-gnu": 5456214,
+    "win32-x64-msvc": 7046994
   }
 }
