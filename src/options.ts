@@ -1,31 +1,10 @@
 /** Consumer options and strict wire serialization for image rendering. */
 
-import type { RenderedImageFile } from '#image-file.js';
-
-/**
- * Output image formats. `jpg` aliases `jpeg`.
- *
- * @public
- */
-export type RenderImageFormat = 'png' | 'webp' | 'jpeg' | 'jpg';
-
-/**
- * World axis treated as up.
- *
- * @public
- */
-export type RenderUpAxis = 'x' | 'y' | 'z';
-
-/**
- * Camera projection used for the image.
- *
- * @public
- */
-export type RenderProjection = 'perspective' | 'orthographic';
+import type { ImageFormat, RenderedImageFile } from '#image-file.js';
 
 type RenderImageSharedOptions = {
   /** Required output encoder. `jpg` is an alias for `jpeg`. */
-  readonly format: RenderImageFormat;
+  readonly format: 'png' | 'webp' | 'jpeg' | 'jpg';
   /** Output width in pixels, inclusive range 16–4096. @default 768 */
   readonly width?: number;
   /** Output height in pixels, inclusive range 16–4096. @default 432 */
@@ -35,9 +14,9 @@ type RenderImageSharedOptions = {
   /** Empty fraction around the fitted subject, from 0 to 0.5. @default 0.1 */
   readonly margin?: number;
   /** World axis treated as up while placing and fitting the camera. @default 'y' */
-  readonly up?: RenderUpAxis;
+  readonly up?: 'x' | 'y' | 'z';
   /** Camera projection used for the image. @default 'perspective' */
-  readonly projection?: RenderProjection;
+  readonly projection?: 'perspective' | 'orthographic';
   /** Transparent by default; otherwise `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. @default transparent */
   readonly background?: readonly [number, number, number, number] | string;
   /** Include the bottom-right camera-aware XYZ indicator and front-on depth marker. @default false */
@@ -492,7 +471,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
  * @param format - Encoded image format
  * @returns The singular thumbnail filename
  */
-export const imageFileName = (format: RenderImageFormat): string => `thumbnail.${format}`;
+export const imageFileName = (format: ImageFormat): string => `thumbnail.${format}`;
 
 /**
  * Derive an identified-view output filename.
@@ -502,5 +481,4 @@ export const imageFileName = (format: RenderImageFormat): string => `thumbnail.$
  * @param format - Encoded image format
  * @returns The identified thumbnail filename
  */
-export const imageViewFileName = (id: string, format: RenderImageFormat): string =>
-  `thumbnail-${id}.${format}`;
+export const imageViewFileName = (id: string, format: ImageFormat): string => `thumbnail-${id}.${format}`;

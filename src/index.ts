@@ -29,7 +29,4 @@ export type {
   RenderImageView,
   RenderedImage,
   RenderedImages,
-  RenderImageFormat,
-  RenderUpAxis,
-  RenderProjection,
 } from '#options.js';
