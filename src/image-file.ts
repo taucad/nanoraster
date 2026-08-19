@@ -6,6 +6,9 @@ export const imageMimeTypes = {
   jpg: 'image/jpeg',
 } as const;
 
+/** Encoder format keys, including the `jpg` alias for `jpeg`. @internal */
+export type ImageFormat = keyof typeof imageMimeTypes;
+
 /** Named image bytes returned by nanoraster. @public */
 export type RenderedImageFile = {
   /** Canonical output filename: `thumbnail.<format>` or `thumbnail-<id>.<format>`. */
@@ -18,7 +21,7 @@ export type RenderedImageFile = {
 
 /** Create a rendered image file with its canonical MIME type. @internal */
 export const createRenderedImageFile = (
-  format: keyof typeof imageMimeTypes,
+  format: ImageFormat,
   name: string,
   bytes: Uint8Array<ArrayBuffer>,
 ): RenderedImageFile => ({ name, bytes, mimeType: imageMimeTypes[format] });
