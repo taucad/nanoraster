@@ -26,7 +26,7 @@ const expectedDigest = (integrity) => {
   return Buffer.from(integrity.slice('sha512-'.length), 'base64').toString('hex');
 };
 
-const verifyPackage = ({ audit, candidate, commit, runId, runAttempt }) => {
+const verifyPackage = ({ audit, candidate, commit, runId }) => {
   const entry = audit.verified?.find(
     ({ name, version }) => name === candidate.name && version === candidate.version,
   );
@@ -57,34 +57,34 @@ const verifyPackage = ({ audit, candidate, commit, runId, runAttempt }) => {
     statement.predicate?.runDetails?.builder?.id === BUILDER_ID,
     `${candidate.name} used the wrong builder`,
   );
+  // Any attempt of the publishing run is the same commit, workflow and builder,
+  // and a partial re-run of `registry-verify` carries a later attempt number than
+  // the one that minted the provenance — so bind to the run, not the attempt.
   assert(
-    statement.predicate?.runDetails?.metadata?.invocationId ===
-      `${REPOSITORY}/actions/runs/${runId}/attempts/${runAttempt}`,
+    new RegExp(`^${REPOSITORY}/actions/runs/${runId}/attempts/[1-9]\\d*$`, 'u').test(
+      statement.predicate?.runDetails?.metadata?.invocationId ?? '',
+    ),
     `${candidate.name} has the wrong workflow invocation`,
   );
 };
 
-export const verifyReleaseAttestations = ({ audit, manifest, commit, runId, runAttempt }) => {
+export const verifyReleaseAttestations = ({ audit, manifest, commit, runId }) => {
   assert((audit.invalid ?? []).length === 0, 'npm reported invalid signatures');
   assert((audit.missing ?? []).length === 0, 'npm reported missing signatures');
   for (const candidate of manifest.packages) {
-    verifyPackage({ audit, candidate, commit, runId, runAttempt });
+    verifyPackage({ audit, candidate, commit, runId });
   }
 };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const [auditPath, manifestPath, commit, runId, runAttempt] = process.argv.slice(2);
-    assert(
-      auditPath && manifestPath && commit && runId && runAttempt,
-      'expected audit, manifest, commit, run, attempt',
-    );
+    const [auditPath, manifestPath, commit, runId] = process.argv.slice(2);
+    assert(auditPath && manifestPath && commit && runId, 'expected audit, manifest, commit, run');
     verifyReleaseAttestations({
       audit: JSON.parse(readFileSync(auditPath, 'utf8')),
       manifest: JSON.parse(readFileSync(manifestPath, 'utf8')),
       commit,
       runId,
-      runAttempt,
     });
     process.stdout.write('release provenance matches taucad/nanoraster ci.yml\n');
   } catch (error) {
