@@ -55,7 +55,13 @@ function pageUrl(file) {
 function resolveInternal(pathname) {
   const rel = decodeURIComponent(pathname).replace(/^\/+/, '').replace(/\/+$/, '');
   const candidates = rel === '' ? ['index.html'] : [rel, `${rel}.html`, `${rel}/index.html`];
-  return candidates.map((c) => path.join(OUT, c)).find(isFile) ?? null;
+  // Decoded separators could climb out of out/ (`/%2F..%2Fpackage.json`) and
+  // accept a target the deployed site would 404.
+  return (
+    candidates
+      .map((c) => path.resolve(OUT, c))
+      .find((c) => c.startsWith(OUT + path.sep) && isFile(c)) ?? null
+  );
 }
 
 async function hasId(file, id) {
