@@ -5,14 +5,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   demoControls,
-  isLightingKey,
-  isMaterialKey,
   readDemoLights,
   readDemoOptions,
   readDemoViews,
   substituteDemoValues,
   type DemoValue,
 } from '@/lib/demo-options';
+import { angleKeys, buildDemoRequest } from '@/lib/demo-request';
 import { hexToLinear, linearToHex, patchMaterialFactors } from '@/lib/glb-material';
 import { hasWebGpu, loadDemoModel, loadWasmRenderer } from '@/lib/wasm-renderer';
 
@@ -26,12 +25,6 @@ const RENDER_SIZE = { height: 720, width: 960 };
  * border, radius, shadow and margin are turned off on its `<figure>`.
  */
 const codeblockProps = { className: 'my-0 rounded-none border-0 shadow-none' };
-
-/** Backgrounds travel to the renderer as an RGBA tuple, so `#RRGGBB[AA]` is expanded here. */
-const hexToRgba = (hex: string): readonly number[] => {
-  const channels = (hex.slice(1).match(/../gu) ?? []).map((pair) => Number.parseInt(pair, 16) / 255);
-  return [channels[0] ?? 0, channels[1] ?? 0, channels[2] ?? 0, channels[3] ?? 1];
-};
 
 const mimeTypes: Record<string, string> = {
   jpeg: 'image/jpeg',
@@ -51,12 +44,6 @@ type Evidence = { readonly mime: string; readonly ms: number; readonly sizes: re
 
 /** Panels past this many controls read better in two columns than in one tall list. */
 const twoColumnControls = 8;
-
-/**
- * Angles a batch request never carries: every view states its own pair, and
- * the renderer rejects the shared request outright if either key appears.
- */
-const angleKeys = new Set(['phi', 'theta']);
 
 /**
  * Render the page's own example in the browser, with controls bound to the
@@ -90,6 +77,10 @@ export const RenderDemo = ({
   const [srcs, setSrcs] = useState<readonly string[]>([]);
   const [evidence, setEvidence] = useState<Evidence | undefined>();
   const urlsRef = useRef<readonly string[]>([]);
+  // Renders are not cancellable, so overlapping ones race: only the latest
+  // ticket may revoke URLs and commit state, or an older render finishing
+  // last would display stale output over the newer one.
+  const generation = useRef(0);
 
   const draw = useCallback(
     async (current: Record<string, DemoValue>): Promise<void> => {
@@ -98,50 +89,14 @@ export const RenderDemo = ({
         return;
       }
 
+      const ticket = ++generation.current;
       setState('rendering');
       try {
         const [renderer, source] = await Promise.all([loadWasmRenderer(), loadDemoModel()]);
 
-        // Material factors live in the model, not the request, so they are
-        // patched into the GLB and kept out of the options entirely.
-        const entries = Object.entries(current);
-        const material = Object.fromEntries(entries.filter(([key]) => isMaterialKey(key)));
-        const rig = Object.fromEntries(entries.filter(([key]) => isLightingKey(key)));
-        const options = Object.fromEntries(
-          entries.filter(
-            ([key]) => !isMaterialKey(key) && !isLightingKey(key) && !(batch && angleKeys.has(key)),
-          ),
-        );
-        const glb = Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
-
-        // Labels are required on every view once they are switched on, so a
-        // view that declares none falls back to its own identifier.
-        const labelled = views.map((view) => {
-          const label = view.label ?? (current['includeLabel'] === true ? view.id : undefined);
-          return {
-            id: view.id,
-            phi: view.phi,
-            theta: view.theta,
-            ...(label === undefined ? {} : { label }),
-          };
-        });
-
-        // The demo's own background and format are only fallbacks: an example
-        // that states either one drives the render instead. The singular
-        // `label` belongs to a one-image request; a batch labels each view.
-        const request: Record<string, unknown> = {
-          background: [0.04, 0.06, 0.08, 1],
-          format: 'png',
-          ...options,
-          ...RENDER_SIZE,
-          ...(current['includeLabel'] === true && !batch ? { label: 'gear' } : {}),
-          ...(batch ? { views: labelled } : {}),
-          // Rig values travel inside `lighting`, alongside the lights the example declares.
-          ...(lights === undefined ? {} : { lighting: { lights, ...rig } }),
-        };
-        if (typeof request['background'] === 'string') {
-          request['background'] = hexToRgba(request['background']);
-        }
+        const { material, request } = buildDemoRequest(current, { lights, size: RENDER_SIZE, views });
+        const glb =
+          Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
 
         const json = JSON.stringify(request);
         const started = performance.now();
@@ -149,6 +104,7 @@ export const RenderDemo = ({
           ? await renderer.render_glb_to_images(glb, json)
           : [await renderer.render_glb_to_image(glb, json)];
         const ms = Math.round(performance.now() - started);
+        if (ticket !== generation.current) return;
 
         for (const url of urlsRef.current) URL.revokeObjectURL(url);
         const type = mimeTypes[String(request['format'])] ?? 'image/png';
@@ -157,6 +113,7 @@ export const RenderDemo = ({
         setEvidence({ mime: type, ms, sizes: bytes.map((part) => part.byteLength) });
         setState('idle');
       } catch (error) {
+        if (ticket !== generation.current) return;
         setMessage(error instanceof Error ? error.message : String(error));
         setState('failed');
       }
