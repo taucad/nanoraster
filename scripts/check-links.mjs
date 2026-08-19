@@ -58,9 +58,7 @@ function resolveInternal(pathname) {
   // Decoded separators could climb out of out/ (`/%2F..%2Fpackage.json`) and
   // accept a target the deployed site would 404.
   return (
-    candidates
-      .map((c) => path.resolve(OUT, c))
-      .find((c) => c.startsWith(OUT + path.sep) && isFile(c)) ?? null
+    candidates.map((c) => path.resolve(OUT, c)).find((c) => c.startsWith(OUT + path.sep) && isFile(c)) ?? null
   );
 }
 

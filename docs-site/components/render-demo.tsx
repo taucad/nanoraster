@@ -95,8 +95,7 @@ export const RenderDemo = ({
         const [renderer, source] = await Promise.all([loadWasmRenderer(), loadDemoModel()]);
 
         const { material, request } = buildDemoRequest(current, { lights, size: RENDER_SIZE, views });
-        const glb =
-          Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
+        const glb = Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
 
         const json = JSON.stringify(request);
         const started = performance.now();
