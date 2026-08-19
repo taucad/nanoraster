@@ -10,6 +10,7 @@ const sizes = {
     params: { [constants.BROTLI_PARAM_QUALITY]: 11 },
   }).byteLength,
 };
+// The docs homepage quotes these same bytes; docs-site/scripts/measure-sizes.mjs republishes them.
 // Configurable-lighting build (R3/R4): raw 809,035, gzip-9 323,275, brotli-11
 // 258,177 on macOS, against 794,292 / 316,050 / 252,493 for the studio-only
 // build before it — +14,743 raw (+1.9%), +7,225 gzip-9 (+2.3%). That is the

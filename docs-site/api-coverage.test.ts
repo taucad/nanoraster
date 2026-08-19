@@ -33,8 +33,6 @@ const tableNames = [
   'RenderImageOptions',
   'RenderImagesOptions',
   'RenderImageView',
-  'RenderLightingRig',
-  'RenderLight',
 ] as const;
 const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
   RenderedImageFile: ['name', 'bytes', 'mimeType'],
@@ -51,7 +49,6 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'includeAxes',
     'includeLabel',
     'includeScale',
-    'lighting',
     'label',
     'phi',
     'theta',
@@ -68,12 +65,9 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'includeAxes',
     'includeLabel',
     'includeScale',
-    'lighting',
     'views',
   ],
   RenderImageView: ['id', 'label', 'phi', 'theta'],
-  RenderLightingRig: ['lights', 'ambient', 'environment', 'space', 'exposure'],
-  RenderLight: ['direction', 'color'],
 };
 const defaults = {
   width: '768',
@@ -86,12 +80,11 @@ const defaults = {
   includeAxes: 'false',
   includeLabel: 'false',
   includeScale: 'false',
-  lighting: "'studio'",
 } as const;
 
 const generateDoc = async (name: (typeof tableNames)[number]): Promise<GeneratedDoc> => {
   const [document] = await generator.generateTypeTable(
-    { path: 'content/docs/api/props.ts', name },
+    { path: 'content/docs/props.ts', name },
     { basePath: import.meta.dirname },
   );
   return document;
@@ -178,21 +171,39 @@ describe('static agent documentation', () => {
     expect(files).toContain('llms.txt');
     expect(files).toContain('llms-full.txt');
     const slugs = [
-      'index',
-      'getting-started/quick-start',
+      'install',
+      'tutorial',
       'guides/render-multiple-views',
-      'concepts/rendering-pipeline',
-      'api/options',
-      'api/errors',
-      'api/operations',
+      'guides/frame-the-model',
+      'how-it-works',
+      'api',
     ];
-    for (const slug of slugs) {
-      expect(files).toContain(`docs/md/${slug}`);
-      const metadata = JSON.parse(
-        readFileSync(resolve(import.meta.dirname, `.next/server/app/docs/md/${slug}.meta`), 'utf8'),
-      ) as { readonly headers: { readonly 'content-type': string } };
-      expect(metadata.headers['content-type']).toBe('text/markdown; charset=utf-8');
+    expect(files).toContain('docs.mdx');
+    for (const slug of slugs) expect(files).toContain(`docs/${slug}.mdx`);
+    expect(files.some((file) => file.startsWith('llms.mdx'))).toBe(false);
+    expect(files.some((file) => file.startsWith('docs/md'))).toBe(false);
+
+    for (const path of ['docs.mdx', ...slugs.map((slug) => `docs/${slug}.mdx`)]) {
+      const projection = readFileSync(resolve(output, path), 'utf8');
+      expect(projection.startsWith('# ')).toBe(true);
+      expect(projection).toContain('Canonical page: https://www.nanoraster.xyz');
+      const relative = [...projection.matchAll(/\]\(([^)\s]*)\)/gu)].map((match) => match[1]);
+      expect(relative.filter((target) => !/^(?:https?:|#)/u.test(target))).toEqual([]);
     }
+
+    const vercel = JSON.parse(readFileSync(resolve(import.meta.dirname, 'vercel.json'), 'utf8')) as {
+      readonly headers: ReadonlyArray<{
+        readonly headers: ReadonlyArray<{ readonly key: string; readonly value: string }>;
+      }>;
+      readonly redirects: ReadonlyArray<{ readonly source: string; readonly destination: string }>;
+    };
+    expect(
+      vercel.headers.flatMap(({ headers }) => headers.map(({ key, value }) => `${key}: ${value}`)),
+    ).toContain('Content-Type: text/markdown; charset=utf-8');
+    expect(vercel.redirects.map(({ source: from, destination }) => [from, destination])).toEqual([
+      ['/docs/md/index', '/docs.mdx'],
+      ['/docs/md/:path*', '/docs/:path*.mdx'],
+    ]);
 
     const full = readFileSync(resolve(output, 'llms-full.txt'), 'utf8');
     for (const name of exported) expect(hasWholeToken(full, name)).toBe(true);
@@ -204,8 +215,11 @@ describe('static agent documentation', () => {
     expect(full).not.toContain('**`toString`**');
 
     const index = readFileSync(resolve(output, 'llms.txt'), 'utf8');
-    expect(index).toContain('[nanoraster Documentation](https://nanoraster.xyz/docs/md/index)');
-    expect(index).not.toContain('](https://nanoraster.xyz/docs)');
+    const links = [...index.matchAll(/\]\(([^)\s]*)\)/gu)].map((match) => match[1]);
+    expect(links.length).toBeGreaterThan(0);
+    expect(links.every((link) => link.startsWith('https://www.nanoraster.xyz/docs'))).toBe(true);
+    expect(links.every((link) => link.endsWith('.mdx'))).toBe(true);
+    expect(links).toContain('https://www.nanoraster.xyz/docs.mdx');
 
     for (const route of ['llms.txt', 'llms-full.txt']) {
       const metadata = JSON.parse(
@@ -214,10 +228,10 @@ describe('static agent documentation', () => {
       expect(metadata.headers['content-type']).toBe('text/markdown; charset=utf-8');
     }
 
-    const apiHtml = resolve(output, 'docs/api/operations.html');
+    const apiHtml = resolve(output, 'docs/api.html');
     expect(statSync(apiHtml).size).toBeLessThan(669_367);
 
-    const optionsHtml = readFileSync(resolve(output, 'docs/api/options.html'), 'utf8');
+    const optionsHtml = readFileSync(apiHtml, 'utf8');
     expect(optionsHtml).toContain('aria-label="RenderImageOptions properties"');
     expect(optionsHtml).toContain('aria-expanded="false"');
     expect(optionsHtml).toContain('Expand all');

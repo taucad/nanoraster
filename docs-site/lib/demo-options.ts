@@ -6,7 +6,12 @@ type DemoScope = 'option' | 'material';
 
 export type DemoControl = { readonly key: string; readonly scope: DemoScope } & (
   | { readonly kind: 'range'; readonly min: number; readonly max: number; readonly step: number }
-  | { readonly kind: 'choice'; readonly choices: readonly string[] }
+  | {
+      readonly kind: 'choice';
+      readonly choices: readonly string[];
+      /** Shown in place of the raw value, position for position, where a literal reads badly. */
+      readonly labels?: readonly string[];
+    }
   | { readonly kind: 'toggle' }
   | { readonly kind: 'colour' }
 );
@@ -29,11 +34,17 @@ const catalogue: Record<string, DemoControl> = {
     scope: 'option',
     choices: ['perspective', 'orthographic'],
   },
-  lighting: {
+  format: { kind: 'choice', key: 'format', scope: 'option', choices: ['png', 'webp', 'jpeg'] },
+  quality: { kind: 'range', key: 'quality', scope: 'option', min: 0, max: 1, step: 0.01 },
+  // Hex only: the wire schema takes an RGBA tuple, so the demo expands whichever
+  // of these is picked. `#00000000` is the package's transparent default, and a
+  // transparent render shows the stage checkerboard through it.
+  background: {
     kind: 'choice',
-    key: 'lighting',
+    key: 'background',
     scope: 'option',
-    choices: ['studio', 'two-light', 'environment-only', 'world-key'],
+    choices: ['#00000000', '#101418', '#ffffff', '#1d4ed8'],
+    labels: ['transparent', 'dark', 'white', 'blue'],
   },
   includeAxes: { kind: 'toggle', key: 'includeAxes', scope: 'option' },
   includeScale: { kind: 'toggle', key: 'includeScale', scope: 'option' },
@@ -93,11 +104,18 @@ export const readDemoOptions = (code: string): Record<string, DemoValue> => {
   return found;
 };
 
-/** The controls to render, in catalogue order, for the values an example sets. */
+/**
+ * The controls to render, in catalogue order, for the values an example sets.
+ *
+ * `format` is the one required key, so every example states it, yet switching
+ * it changes no pixel — the tile is decoded either way. It is offered only
+ * where the example also sets `quality`, which is where the badge under the
+ * image turns the pair into something a reader can see.
+ */
 export const demoControls = (code: string): readonly DemoControl[] => {
   const present = readDemoOptions(code);
   return Object.keys(catalogue)
-    .filter((key) => key in present)
+    .filter((key) => key in present && (key !== 'format' || 'quality' in present))
     .map((key) => catalogue[key]);
 };
 
@@ -106,39 +124,91 @@ export const isMaterialKey = (key: string): boolean =>
   key in catalogue && catalogue[key].scope === 'material';
 
 /**
- * The rig each `lighting` choice stands for. A control carries a scalar and a
- * rig is an object, so the name is what the control holds and this is where it
- * becomes the request's value. The names match the guide's examples.
+ * Format a value the way it would appear in the example's source. Numbers are
+ * printed as they are, so a value read out of an example and written back is
+ * the same literal the reader started from.
  */
-const lightingRigs: Record<string, unknown> = {
-  studio: 'studio',
-  'two-light': {
-    lights: [
-      { direction: [-0.5, 0.6, 0.6], color: [3, 2.9, 2.7] },
-      { direction: [0.6, -0.2, 0.4], color: [0.7, 0.8, 1] },
-    ],
-  },
-  'environment-only': { lights: [] },
-  'world-key': {
-    lights: [{ direction: [0, 1, 0.4], color: [3, 2.9, 2.7] }],
-    space: 'world',
-  },
+const formatValue = (value: DemoValue): string => {
+  if (Array.isArray(value)) return `[${value.map((part) => Number(part)).join(', ')}]`;
+  return typeof value === 'string' ? `'${value}'` : String(value);
 };
 
 /**
- * Turn the control values into the render request. Values are literal except
- * `lighting`, whose choice name expands into the rig it names; material factors
- * are dropped, because they are patched into the model instead.
+ * The span of a `views: [ … ]` literal. Angles declared there belong to one
+ * view rather than to the shared request, so substitution steps over them.
  */
-export const toRequestOptions = (values: Record<string, DemoValue>): Record<string, unknown> =>
-  Object.fromEntries(
-    Object.entries(values)
-      .filter(([key]) => !isMaterialKey(key))
-      .map(([key, value]) => [key, key === 'lighting' ? lightingRigs[String(value)] : value]),
-  );
+const viewsSpan = (code: string): { readonly start: number; readonly end: number } | undefined => {
+  const match = /\bviews\s*:\s*\[[^\]]*\]/u.exec(code);
+  return match === null ? undefined : { start: match.index, end: match.index + match[0].length };
+};
 
-/** Format a value the way it would appear in the example's source. */
-export const formatValue = (value: DemoValue): string => {
-  if (Array.isArray(value)) return `[${value.map((part) => Number(part).toFixed(3)).join(', ')}]`;
-  return typeof value === 'string' ? `'${value}'` : String(value);
+/**
+ * Rewrite an example so it states the values the controls hold, which makes
+ * the code the reader copies the code they tuned.
+ *
+ * Only the first occurrence of each key is replaced — the same one
+ * `readDemoOptions` reads — and a key the caller does not pass keeps whatever
+ * the example already says.
+ */
+export const substituteDemoValues = (code: string, values: Record<string, DemoValue>): string => {
+  let out = code;
+
+  for (const [key, value] of Object.entries(values)) {
+    if (!(key in catalogue)) continue;
+
+    const span = viewsSpan(out);
+    const pattern = new RegExp(`(["']?\\b${key}\\b["']?\\s*:\\s*)(\\[[^\\]]*\\]|[^,\\n}]+)`, 'gu');
+    let replaced = false;
+
+    out = out.replace(pattern, (whole: string, head: string, _raw: string, index: number) => {
+      if (replaced || (span !== undefined && index >= span.start && index < span.end)) return whole;
+      replaced = true;
+      return `${head}${formatValue(value)}`;
+    });
+  }
+
+  return out;
+};
+
+// -- views (appended by A2) --
+
+/** One identified camera an example declares inside its `views: [ … ]` literal. */
+export type DemoView = {
+  readonly id: string;
+  readonly label?: string;
+  readonly phi: number;
+  readonly theta: number;
+};
+
+/** The literal a view's property holds, quotes and all. */
+const viewField = (body: string, key: string): string | undefined =>
+  new RegExp(`\\b${key}\\s*:\\s*(["'][^"']*["']|-?[\\d.]+)`, 'u').exec(body)?.[1];
+
+/** The text inside a pair of quotes, or nothing when the literal is unquoted. */
+const unquote = (raw: string | undefined): string | undefined =>
+  raw === undefined ? undefined : /^["'](.*)["']$/u.exec(raw)?.[1];
+
+/**
+ * Read the views an example declares, in the order it declares them.
+ *
+ * The angles belong to one view rather than to the shared request, which is
+ * why substitution steps over this span and the demo offers no angle controls
+ * once a `views` literal is present. An example without one gives back an
+ * empty list, so a caller can tell a batch request from a singular one.
+ */
+export const readDemoViews = (code: string): readonly DemoView[] => {
+  const literal = /\bviews\s*:\s*\[([^\]]*)\]/u.exec(code)?.[1];
+  if (literal === undefined) return [];
+
+  return [...literal.matchAll(/\{([^{}]*)\}/gu)].flatMap(([, body]) => {
+    const id = unquote(viewField(body, 'id'));
+    const label = unquote(viewField(body, 'label'));
+    const phi = Number(viewField(body, 'phi'));
+    const theta = Number(viewField(body, 'theta'));
+
+    if (id === undefined || id === '' || !Number.isFinite(phi) || !Number.isFinite(theta)) {
+      return [];
+    }
+    return [{ id, phi, theta, ...(label === undefined ? {} : { label }) }];
+  });
 };

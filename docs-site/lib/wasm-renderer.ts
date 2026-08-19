@@ -4,6 +4,11 @@ type WasmRenderer = {
     glb: Uint8Array<ArrayBuffer>,
     optionsJson: string,
   ) => Promise<Uint8Array<ArrayBuffer>>;
+  /** Ordered identified views through one batch-scoped session; result order is view order. */
+  readonly render_glb_to_images: (
+    glb: Uint8Array<ArrayBuffer>,
+    optionsJson: string,
+  ) => Promise<Uint8Array<ArrayBuffer>[]>;
 };
 
 let renderer: Promise<WasmRenderer> | undefined;
@@ -12,12 +17,7 @@ let model: Promise<Uint8Array<ArrayBuffer>> | undefined;
 /** The subject every documentation demo renders. */
 const demoModelUrl = '/demo/gear-12-metal.glb';
 
-/**
- * Load the browser binding once per document.
- *
- * The landing page's render lab keeps its own copy of this loader; the two are
- * never on the same page, so the duplicated cache costs nothing.
- */
+/** Load the browser binding once per document. */
 export const loadWasmRenderer = async (): Promise<WasmRenderer> => {
   renderer ??= (async () => {
     const moduleUrl = new URL('/demo/render_wasm.js', window.location.href).href;

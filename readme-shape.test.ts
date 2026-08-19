@@ -11,7 +11,7 @@ const REQUIRED = [
   '## Compatibility',
   '## Versioning and stability',
   '## Security and provenance',
-  '## Documentation',
+  '## Links',
   '## License',
 ] as const;
 
@@ -20,11 +20,13 @@ describe('README shape', () => {
     expect(README.split('\n').length).toBeLessThanOrEqual(LINE_BUDGET);
   });
 
-  it('should route readers before the first section', () => {
-    const table = README.indexOf('| I want to…');
+  it('should route readers to the docs and live demo before the first section', () => {
+    const docs = README.indexOf('https://nanoraster.xyz/docs');
+    const demo = README.indexOf('https://nanoraster.xyz/#live-demo');
     const firstSection = README.search(/^## /mu);
-    expect(table).toBeGreaterThanOrEqual(0);
-    expect(table).toBeLessThan(firstSection);
+    expect(docs).toBeGreaterThanOrEqual(0);
+    expect(demo).toBeGreaterThanOrEqual(0);
+    expect(Math.max(docs, demo)).toBeLessThan(firstSection);
   });
 
   it.each(REQUIRED)('should contain %s', (section) => {

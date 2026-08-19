@@ -1,50 +1,65 @@
 ---
-title: nanoraster Documentation
-description: Deterministic GLB-to-image rendering for Node.js and WebGPU browsers, with typed options and failures.
+title: Quick start
+description: nanoraster renders GLB files to image bytes from one Rust core, as a native binary on Node.js 24 or newer and as WebAssembly in browsers with WebGPU.
 ---
 
-nanoraster turns a GLB file into image bytes you own. It runs headless in Node.js
-on a native binary, and in the browser on WebGPU, from one Rust render core.
+nanoraster turns a GLB file into image bytes you own. One request always
+produces the same pixels, so a render can serve as evidence.
 
-The same request produces the same pixels on the same host, which is what makes
-the output usable as evidence in a CAD pipeline or an agent loop rather than
-just as a picture.
+```bash tab="npm"
+npm install nanoraster
+```
 
-## Start here
+```bash tab="pnpm"
+pnpm add nanoraster
+```
 
-| I want to…                 | Go to                                                      |
-| -------------------------- | ---------------------------------------------------------- |
-| Install the package        | [Installation](getting-started/installation)               |
-| Render my first image      | [Quick start](getting-started/quick-start)                 |
-| Learn the API properly     | [Render a view sheet](getting-started/render-a-view-sheet) |
-| Solve a specific problem   | [Guides](guides/render-multiple-views)                     |
-| Understand how it works    | [Concepts](concepts/rendering-pipeline)                    |
-| Look up a type or function | [Reference](api/operations)                                |
+Save this as `render.mjs` and run it with `node render.mjs`. The camera angles
+are written out here so you can drag them, but `phi: 60` and `theta: -45` are
+the defaults. The live tile renders at 960×720, so its byte count differs.
 
-## What it does
+<RenderDemo>
 
-- **One call per image, or one call per set.** [`renderGlbToImage`](api/operations)
-  renders a single camera view; [`renderGlbToImages`](api/operations) parses and
-  uploads the GLB once, then renders an ordered tuple of identified views.
-- **Four output formats.** PNG, WebP, and JPEG, with `jpg` as an alias. See
-  [Choose a format and quality](guides/choose-format-and-quality).
-- **Typed failures.** Every rejection is a `RenderError` carrying a stable
-  machine-readable code. See [Handle render failures](guides/handle-render-failures).
-- **Lighting fixed by default.** Every render uses one studio rig unless you
-  supply your own, which is what keeps repeated renders comparable. See
-  [Determinism](concepts/determinism) and
-  [Light the subject](guides/light-the-subject).
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+import { readFile, writeFile } from 'node:fs/promises';
+
+const glb = Uint8Array.from(await readFile('model.glb'));
+
+const image = await renderGlbToImage(glb, {
+  format: 'png',
+  width: 512,
+  height: 512,
+  phi: 60,
+  theta: -45,
+});
+
+await writeFile(image.name, image.bytes);
+console.log(`wrote ${image.name} (${image.bytes.length} bytes, ${image.mimeType})`);
+```
+
+</RenderDemo>
+
+## Expected output
+
+```console
+wrote thumbnail.png (29965 bytes, image/png)
+```
+
+The result is a plain object with three fields: `name`, `bytes` and
+`mimeType`. nanoraster never writes to disk, so the bytes are yours to save,
+upload or hand to another process. Run the script again and the bytes are
+identical: camera, lighting and encoder are fixed for a given request.
+
+The same call produces PNG, WebP or JPEG (`jpg` is an alias); see
+[Format and annotate](/docs/guides/format-and-annotate). Every rejection is a
+`RenderError` with a stable machine-readable code, so you can classify failures
+without string matching; see
+[Handle render failures](/docs/guides/handle-render-failures).
 
 ## What it does not do
 
-- Texture-backed materials. The supported profile is factor-only glTF
-  metallic-roughness — see [Material model](concepts/material-model).
-- Animation, scene graphs beyond static geometry, or physically-measured
-  lighting.
-
-## Next steps
-
-- [Installation](getting-started/installation) — package managers, native
-  binaries, and the browser build.
-- [Rendering pipeline](concepts/rendering-pipeline) — what happens between GLB
-  bytes and image bytes.
+Texture-backed materials, animation, or scene graphs beyond static geometry.
+The supported profile is factor-only glTF metallic-roughness, and lighting is
+fixed in this release. See [How it works](/docs/how-it-works#material-model).

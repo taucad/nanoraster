@@ -33,13 +33,7 @@ export type {
   RenderImageView,
   RenderedImage,
   RenderedImages,
-  RenderImageFormat,
-  RenderUpAxis,
-  RenderProjection,
   RenderLight,
-  RenderLightSpace,
   RenderLighting,
-  RenderLightingEnvironment,
-  RenderLightingPreset,
   RenderLightingRig,
 } from '#options.js';

@@ -3,7 +3,15 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { demoControls, isMaterialKey, readDemoOptions, toRequestOptions } from './lib/demo-options';
+import {
+  demoControls,
+  isMaterialKey,
+  readDemoOptions,
+  readDemoViews,
+  substituteDemoValues,
+  type DemoControl,
+  type DemoValue,
+} from './lib/demo-options';
 import { llmStringifyMdx } from './lib/llm-stringify-mdx';
 
 const docsDir = resolve(import.meta.dirname, 'content/docs');
@@ -21,6 +29,22 @@ const demos = pages.flatMap(({ path, source }) =>
     code: match[2],
   })),
 );
+
+/** A value a control could actually produce, different from the seeded one. */
+const perturb = (control: DemoControl, current: DemoValue): DemoValue => {
+  if (control.kind === 'range') {
+    const next = Number(current) + control.step;
+    return next > control.max ? control.min : Number(next.toFixed(2));
+  }
+  if (control.kind === 'choice') {
+    return control.choices.find((choice) => choice !== current) ?? control.choices[0];
+  }
+  if (control.kind === 'colour') return [0.1, 0.2, 0.3, 1];
+  return current !== true;
+};
+
+/** A `views: [ … ]` literal, which substitution must leave alone. */
+const viewsLiteral = /\bviews\s*:\s*\[[^\]]*\]/u;
 
 describe('interactive demo projections', () => {
   it('wraps at least one example', () => {
@@ -53,6 +77,20 @@ describe('interactive demo projections', () => {
         expect(options[key], `${path} ${key}`).toBeDefined();
       }
     }
+  });
+
+  it('offers the format control only where the example sets a quality to go with it', () => {
+    // Switching format alone changes no pixel, so it is offered where the
+    // badge under the image makes the encoder's output visible.
+    for (const { path, code } of demos) {
+      const keys = demoControls(code).map((control) => control.key);
+      expect(keys.includes('format'), `${path} format control`).toBe('quality' in readDemoOptions(code));
+    }
+
+    expect(
+      demos.some(({ code }) => demoControls(code).some((control) => control.key === 'format')),
+      'no wrapped example keeps the format control',
+    ).toBe(true);
   });
 
   it('keeps every seeded value inside the control it drives', () => {
@@ -90,43 +128,9 @@ describe('interactive demo projections', () => {
       // Only the material page's example carries material factors at all.
       const materialKeys = Object.keys(seeded).filter((key) => isMaterialKey(key));
       if (materialKeys.length > 0) {
-        expect(path, 'material factors outside the material page').toContain('material-model');
+        expect(path, 'material factors outside the how-it-works page').toContain('how-it-works');
       }
     }
-  });
-
-  it('expands every lighting choice into a rig the renderer would accept', () => {
-    const control = demoControls("lighting: 'studio'").find(({ key }) => key === 'lighting');
-    expect(control?.kind).toBe('choice');
-    const choices = control?.kind === 'choice' ? control.choices : [];
-    expect(choices).toContain('studio');
-
-    for (const choice of choices) {
-      const { lighting } = toRequestOptions({ lighting: choice });
-      if (choice === 'studio') {
-        expect(lighting).toBe('studio');
-        continue;
-      }
-
-      // Mirrors renderImageMaxLights and renderImageLightColorRange, so a
-      // control can never produce a rig the validator rejects.
-      const rig = lighting as { lights: readonly { direction: number[]; color: number[] }[] };
-      expect(rig.lights.length, choice).toBeLessThanOrEqual(8);
-      for (const { direction, color } of rig.lights) {
-        expect(direction, choice).toHaveLength(3);
-        expect(Math.hypot(...direction), choice).toBeGreaterThan(0);
-        expect(color, choice).toHaveLength(3);
-        for (const channel of color) expect(channel).toBeGreaterThanOrEqual(0);
-        for (const channel of color) expect(channel).toBeLessThanOrEqual(32);
-      }
-    }
-  });
-
-  it('drops material factors from the request and passes everything else through', () => {
-    expect(toRequestOptions({ phi: 30, metallicFactor: 1, lighting: 'environment-only' })).toEqual({
-      phi: 30,
-      lighting: { lights: [] },
-    });
   });
 
   it('seeds nothing the example does not set', () => {
@@ -135,6 +139,70 @@ describe('interactive demo projections', () => {
       for (const key of Object.keys(seeded)) {
         expect(code, `${path} seeds ${key} without mentioning it`).toContain(key);
       }
+    }
+  });
+
+  it('leaves an example alone when the values already match it', () => {
+    for (const { path, code } of demos) {
+      expect(substituteDemoValues(code, readDemoOptions(code)), path).toBe(code);
+    }
+  });
+
+  it('reads back every value it writes into an example', () => {
+    for (const { path, code } of demos) {
+      const seeded = readDemoOptions(code);
+      const wanted = Object.fromEntries(
+        demoControls(code).map((control) => [control.key, perturb(control, seeded[control.key])]),
+      );
+      const rewritten = substituteDemoValues(code, wanted);
+
+      // Angles inside a `views: [ … ]` literal belong to one view, not to the
+      // shared request, so that span comes through byte-identical.
+      expect(viewsLiteral.exec(rewritten)?.[0], path).toBe(viewsLiteral.exec(code)?.[0]);
+
+      const applied = Object.fromEntries(
+        Object.entries(wanted).filter(
+          ([key, value]) => substituteDemoValues(code, { [key]: value }) !== code,
+        ),
+      );
+      expect(Object.keys(applied).length, `${path} rewrote nothing`).toBeGreaterThan(0);
+      expect(readDemoOptions(rewritten), path).toEqual({ ...seeded, ...applied });
+    }
+  });
+
+  it('reads every declared view out of the example that declares it', () => {
+    const sheets = demos.filter(({ code }) => viewsLiteral.test(code));
+    expect(sheets.length, 'no wrapped example declares views').toBeGreaterThan(0);
+
+    for (const { path, code } of sheets) {
+      const views = readDemoViews(code);
+      expect(views.length, `${path} parses no views`).toBeGreaterThan(0);
+
+      for (const view of views) {
+        expect(view.id, `${path} view id`).not.toBe('');
+        expect(Number.isFinite(view.phi), `${path} ${view.id} phi`).toBe(true);
+        expect(Number.isFinite(view.theta), `${path} ${view.id} theta`).toBe(true);
+      }
+
+      // Duplicate IDs are rejected by the renderer, so the example must not
+      // ship a request that cannot run.
+      const ids = views.map((view) => view.id);
+      expect(new Set(ids).size, `${path} repeats a view id`).toBe(ids.length);
+    }
+
+    // A singular example has no sheet to render, and the demo tells the two
+    // apart by this list being empty.
+    for (const { path, code } of demos.filter(({ code }) => !viewsLiteral.test(code))) {
+      expect(readDemoViews(code), path).toEqual([]);
+    }
+  });
+
+  it('leaves a batch demo with controls after the angles are dropped', () => {
+    // Angles belong to a view in a batch request, so the demo offers only the
+    // shared keys; an example that sets nothing else would show no controls.
+    for (const { path, code } of demos.filter(({ code }) => viewsLiteral.test(code))) {
+      const shared = demoControls(code).filter((control) => control.key !== 'phi' && control.key !== 'theta');
+      expect(shared.length, `${path} offers no shared controls`).toBeGreaterThan(0);
     }
   });
 

@@ -39,9 +39,7 @@ export const patchMaterialFactors = (
 
   const jsonStart = HEADER_BYTES + CHUNK_HEADER_BYTES;
   const rest = glb.subarray(jsonStart + jsonLength);
-  const gltf = JSON.parse(
-    new TextDecoder().decode(glb.subarray(jsonStart, jsonStart + jsonLength)),
-  ) as Gltf;
+  const gltf = JSON.parse(new TextDecoder().decode(glb.subarray(jsonStart, jsonStart + jsonLength))) as Gltf;
 
   for (const material of gltf.materials ?? []) {
     material.pbrMetallicRoughness = { ...material.pbrMetallicRoughness, ...factors };

@@ -1,0 +1,371 @@
+---
+title: API reference
+description: Every public export of nanoraster — the two render calls, the option helpers, the request and result types, the failure codes, and the validation constants.
+---
+
+Everything below is imported from `nanoraster`. GLB bytes you pass in are owned by
+the call; the bytes you get back are newly allocated and yours.
+
+## Every option and its default
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+const image = await renderGlbToImage(glb, {
+  format: 'png', // required
+  width: 768, // default
+  height: 432, // default
+  quality: 0.92, // default
+  margin: 0.1, // default
+  up: 'y', // default
+  projection: 'perspective', // default
+  background: undefined, // default (transparent)
+  includeAxes: false, // default
+  includeLabel: false, // default
+  includeScale: false, // default
+  label: undefined, // required only when includeLabel is true
+  phi: 60, // default
+  theta: -45, // default
+});
+```
+
+`renderGlbToImages` takes the same shared keys, minus `phi`, `theta` and `label`,
+plus `views: [{ id, label?, phi, theta }]`: one entry per image, in result order.
+
+## Render
+
+### `renderGlbToImage`
+
+Render one GLB camera view to one owned image file.
+
+```typescript
+export declare const renderGlbToImage: (
+  glb: Uint8Array<ArrayBuffer>,
+  options: RenderImageOptions,
+) => Promise<RenderedImageFile>;
+```
+
+- **Parameters:** owned GLB bytes and one validated render request.
+- **Returns:** a newly allocated `thumbnail.<format>` file.
+- **Throws:** `RenderError` for invalid requests, malformed GLB data, GPU faults,
+  or encoding failures.
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+const image = await renderGlbToImage(glb, { format: 'png', width: 512 });
+```
+
+### `renderGlbToImages`
+
+Parse and upload a GLB once, then render an ordered set of identified views.
+
+```typescript
+export declare const renderGlbToImages: <const Options extends RenderImagesOptions>(
+  glb: Uint8Array<ArrayBuffer>,
+  options: StrictRenderImagesOptions<Options>,
+) => Promise<RenderedImages<Options['views']>>;
+```
+
+`StrictRenderImagesOptions` is the package's internal exactness check: callers
+pass `RenderImagesOptions`, while TypeScript rejects extra keys, empty view
+tuples, and misplaced per-view settings.
+
+- **Parameters:** owned GLB bytes and shared settings with a non-empty view tuple.
+- **Returns:** a tuple with the input view IDs and order preserved.
+- **Throws:** as above, plus a mismatch between the views requested and the
+  images the renderer returned.
+
+```typescript
+import { renderGlbToImages } from 'nanoraster';
+
+const [iso, front] = await renderGlbToImages(glb, {
+  format: 'png',
+  views: [
+    { id: 'iso', phi: 60, theta: -45 },
+    { id: 'front', phi: 90, theta: 0 },
+  ],
+});
+```
+
+## Option helpers
+
+Both helpers return their argument unchanged and add no runtime work. They stop
+TypeScript widening literal values when options are assigned to a variable
+before the call.
+
+### `createRenderImageOptions`
+
+Preserve literal singular option values while rejecting misspelled keys.
+`NoExtraKeys` is an internal compile-time check.
+
+```typescript
+export declare const createRenderImageOptions: <const Options extends RenderImageOptions>(
+  options: NoExtraKeys<Options, RenderImageOptions>,
+) => Options;
+```
+
+```typescript
+import { createRenderImageOptions, renderGlbToImage } from 'nanoraster';
+
+const options = createRenderImageOptions({ format: 'webp', quality: 0.8 });
+const image = await renderGlbToImage(glb, options);
+```
+
+### `createRenderImagesOptions`
+
+Preserve literal view IDs and tuple order while rejecting misplaced or
+misspelled keys.
+
+```typescript
+export declare const createRenderImagesOptions: <const Options extends RenderImagesOptions>(
+  options: StrictRenderImagesOptions<Options>,
+) => Options;
+```
+
+```typescript
+import { createRenderImagesOptions, renderGlbToImages } from 'nanoraster';
+
+const options = createRenderImagesOptions({
+  format: 'png',
+  views: [{ id: 'iso', phi: 60, theta: -45 }],
+});
+
+const [iso] = await renderGlbToImages(glb, options);
+```
+
+## Options
+
+[Frame the model](guides/frame-the-model) shows these fields in use.
+
+### `RenderImageOptions`
+
+```typescript
+export type RenderImageOptions = RenderImageSharedOptions &
+  RenderLabelOptions & {
+    readonly phi?: number;
+    readonly theta?: number;
+  };
+```
+
+`RenderImageSharedOptions` and `RenderLabelOptions` are internal composition
+types; the table below is the complete consumer-visible shape.
+
+<auto-type-table path="./props.ts" name="RenderImageOptions" caption="RenderImageOptions properties" />
+
+### `RenderImageView`
+
+```typescript
+export type RenderImageView<Id extends string = string> = {
+  readonly id: Id;
+  readonly label?: string;
+  readonly phi: number;
+  readonly theta: number;
+};
+```
+
+IDs must be unique within a request.
+
+<auto-type-table path="./props.ts" name="RenderImageView" caption="RenderImageView properties" />
+
+### `RenderImagesOptions`
+
+```typescript
+export type RenderImagesOptions<Views extends readonly RenderImageView[] = readonly RenderImageView[]> =
+  RenderImageSharedOptions &
+    (
+      | { readonly includeLabel: true; readonly views: LabeledViews<Views> }
+      | { readonly includeLabel?: false; readonly views: Views }
+    );
+```
+
+`views` must be a non-empty ordered tuple with unique IDs. When `includeLabel`
+is `true`, every view must carry a label. `LabeledViews` is the internal mapped
+tuple that enforces that relationship without losing IDs or order.
+
+<auto-type-table path="./props.ts" name="RenderImagesOptions" caption="RenderImagesOptions properties" />
+
+## Results
+
+### `RenderedImageFile`
+
+Returned directly by [`renderGlbToImage`](#renderglbtoimage).
+
+<auto-type-table path="./props.ts" name="RenderedImageFile" caption="RenderedImageFile properties" />
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+import { writeFile } from 'node:fs/promises';
+
+const image = await renderGlbToImage(glb, { format: 'png' });
+await writeFile(image.name, image.bytes);
+```
+
+### `RenderedImage`
+
+One identified entry in a batch result; the `id` is the literal you supplied on
+the matching view.
+
+<auto-type-table path="./props.ts" name="RenderedImage" caption="RenderedImage properties" />
+
+### `RenderedImages`
+
+The tuple returned by [`renderGlbToImages`](#renderglbtoimages).
+
+```typescript
+export type RenderedImages<Views extends readonly RenderImageView[]> = {
+  readonly [Index in keyof Views]: Views[Index] extends RenderImageView<infer Id> ? RenderedImage<Id> : never;
+};
+```
+
+This mapped tuple preserves each input view's literal ID, position, and tuple
+length. It does not expose `Array` prototype members as result fields.
+
+```typescript
+import { renderGlbToImages } from 'nanoraster';
+
+const [iso, top] = await renderGlbToImages(glb, {
+  format: 'png',
+  views: [
+    { id: 'iso', phi: 60, theta: -45 },
+    { id: 'top', phi: 0, theta: 0 },
+  ],
+});
+
+console.log(iso.id, iso.file.name); // 'iso' 'thumbnail-iso.png'
+console.log(top.id, top.file.name); // 'top' 'thumbnail-top.png'
+```
+
+### `imageMimeTypes`
+
+The readonly runtime map of every accepted output format to its emitted MIME
+type.
+
+```typescript
+export declare const imageMimeTypes: {
+  readonly png: 'image/png';
+  readonly webp: 'image/webp';
+  readonly jpeg: 'image/jpeg';
+  readonly jpg: 'image/jpeg';
+};
+```
+
+## Errors
+
+Rendering rejects with `RenderError`. Parse and encode failures are
+deterministic for the same request; GPU faults may succeed after the host or
+device recovers, which
+[Handle render failures](guides/handle-render-failures) turns into a retry
+policy.
+
+### `RenderFailureCode`
+
+```typescript
+export type RenderFailureCode =
+  | 'adapter-unavailable'
+  | 'device-lost'
+  | 'gpu'
+  | 'parse'
+  | 'encode'
+  | 'unknown';
+```
+
+| Value                 | Meaning                                                     | Retry guidance                                              |
+| --------------------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
+| `adapter-unavailable` | No compatible GPU adapter was available.                    | Keep the last image and retry after host recovery.          |
+| `device-lost`         | The GPU device was lost during rendering.                   | Keep the last image and retry with a new device.            |
+| `gpu`                 | Another adapter, driver, or render-pass failure occurred.   | Treat as transient unless host diagnostics prove otherwise. |
+| `parse`               | GLB bytes or request options violated the input contract.   | Fix the input before retrying.                              |
+| `encode`              | The selected encoder could not produce the requested image. | Fix the format or background before retrying.               |
+| `unknown`             | The thrown value had no recognised failure tag.             | Inspect `message` and preserve the original context.        |
+
+### `RenderError`
+
+`RenderError` extends the native `Error` class and adds this public surface:
+
+```typescript
+export declare class RenderError extends Error {
+  readonly code: RenderFailureCode;
+  constructor(code: RenderFailureCode, message: string);
+  static from(error: unknown): RenderError;
+  get isGpuFault(): boolean;
+}
+```
+
+- `constructor(code, message)` creates an explicitly classified error.
+- `RenderError.from(error)` returns an existing `RenderError` unchanged or
+  classifies any other thrown value; it never throws.
+- `code` is the stable machine-readable classification.
+- `isGpuFault` is `true` for `adapter-unavailable`, `device-lost`, and `gpu`.
+
+```typescript
+import { RenderError, renderGlbToImage } from 'nanoraster';
+
+try {
+  await renderGlbToImage(glb, { format: 'png' });
+} catch (error) {
+  const failure = RenderError.from(error);
+  if (!failure.isGpuFault) throw failure;
+}
+```
+
+## Constants
+
+Every exported bound and pattern the validator applies. Ranges are inclusive and
+the regular expressions are the exact runtime values. Import them rather than
+restating them, so caller-side checks cannot drift.
+
+| Export                             | Runtime value                             | Unit or syntax             | Affected field              |
+| ---------------------------------- | ----------------------------------------- | -------------------------- | --------------------------- |
+| `renderImageDimensionRange`        | `readonly [16, 4096]`                     | pixels                     | `width`, `height`           |
+| `renderImageQualityRange`          | `readonly [0, 1]`                         | normalised encoder quality | `quality`                   |
+| `renderImageMarginRange`           | `readonly [0, 0.5]`                       | fraction of fitted extent  | `margin`                    |
+| `renderImageAnnotatedMinDimension` | `192`                                     | pixels                     | annotated `width`, `height` |
+| `renderImageLabelMaxLength`        | `64`                                      | Unicode code points        | `label`                     |
+| `renderImageLabelPattern`          | `/^[\u0020-\u007E\u00B5\u2014\u2212]+$/u` | supported characters       | `label`                     |
+| `renderImageViewIdPattern`         | `/^[\dA-Za-z][\w-]{0,63}$/u`              | identifier syntax          | `id`                        |
+| `renderImageBackgroundPattern`     | `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`   | hexadecimal colour         | `background`                |
+
+```typescript
+import { renderImageDimensionRange } from 'nanoraster';
+
+const [min, max] = renderImageDimensionRange;
+
+const clamp = (value: number): number => Math.min(Math.max(value, min), max);
+```
+
+### `renderImageDimensionRange`
+
+Inclusive pixel bounds for both image dimensions.
+
+### `renderImageMarginRange`
+
+Inclusive corner-fit margin bounds.
+
+### `renderImageAnnotatedMinDimension`
+
+Minimum width and height when any annotation is enabled.
+
+### `renderImageQualityRange`
+
+Inclusive encoder-quality bounds; ignored by the lossless PNG encoder.
+
+### `renderImageBackgroundPattern`
+
+Hex clear-colour syntax. Backgrounds may also be supplied as normalised
+straight-alpha RGBA, which this pattern does not cover.
+
+### `renderImageLabelMaxLength`
+
+Maximum label length in Unicode code points.
+
+### `renderImageLabelPattern`
+
+Supported label characters: printable ASCII plus the micro sign, em dash, and
+minus sign.
+
+### `renderImageViewIdPattern`
+
+Stable view identifier syntax. IDs become result filenames, which is why the
+first character is restricted.
