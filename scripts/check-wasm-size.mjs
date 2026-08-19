@@ -10,6 +10,7 @@ const sizes = {
     params: { [constants.BROTLI_PARAM_QUALITY]: 11 },
   }).byteLength,
 };
+// The docs homepage quotes these same bytes; docs-site/scripts/measure-sizes.mjs republishes them.
 // PBR build: 312,881 gzip-9 on macOS, 315,196 on Linux CI; raw 792,599, brotli-11 252,020.
 const ceilings = { raw: 800_000, gzip9: 316_000, brotli11: 255_000 };
 

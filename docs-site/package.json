@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "if [ ! -f ../dist/index.d.mts ]; then pnpm --dir .. exec tsdown; fi && next build && VERIFY_STATIC_OUTPUT=true vitest run api-coverage.test.ts",
+    "build": "if [ ! -f ../dist/index.d.mts ]; then pnpm --dir .. exec tsdown; fi && node scripts/measure-sizes.mjs && next build && node scripts/emit-mdx-aliases.mjs && VERIFY_STATIC_OUTPUT=true vitest run api-coverage.test.ts sizes.test.ts",
     "dev": "next dev",
+    "predev": "node scripts/measure-sizes.mjs",
     "generate:source": "fumadocs-mdx",
     "lint": "eslint .",
     "test": "vitest run",
@@ -20,15 +21,13 @@
     "nanoraster": "workspace:*",
     "next": "16.3.0",
     "react": "19.2.7",
-    "react-dom": "19.2.7",
-    "three": "0.185.1"
+    "react-dom": "19.2.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "24.13.3",
     "@types/react": "19.0.12",
     "@types/react-dom": "19.0.4",
-    "@types/three": "0.185.4",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
