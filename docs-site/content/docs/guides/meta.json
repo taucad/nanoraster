@@ -1,10 +1,9 @@
 {
   "title": "Guides",
   "pages": [
-    "render-multiple-views",
     "frame-the-model",
-    "choose-format-and-quality",
-    "annotate-renders",
+    "render-multiple-views",
+    "format-and-annotate",
     "render-in-the-browser",
     "handle-render-failures"
   ]

@@ -2,13 +2,12 @@
   "title": "nanoraster",
   "pages": [
     "index",
-    "---Getting Started---",
-    "...getting-started",
+    "install",
+    "tutorial",
     "---Guides---",
     "...guides",
-    "---Concepts---",
-    "...concepts",
     "---Reference---",
-    "...api"
+    "how-it-works",
+    "api"
   ]
 }

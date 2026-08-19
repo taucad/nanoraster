@@ -1,0 +1,149 @@
+---
+title: Render a view sheet
+description: Build a four-view contact sheet from one GLB, learning batch rendering, camera angles, and labels along the way.
+---
+
+Build a labelled four-view contact sheet (front, right, top and iso) from one
+GLB in a single render call.
+
+## Step 1: Render a single view from a chosen angle
+
+Start with one view so the camera controls are visible on their own.
+[Frame the model](guides/frame-the-model) explains the two angles, `phi` and
+`theta`.
+
+<RenderDemo>
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+import { readFile, writeFile } from 'node:fs/promises';
+
+const glb = Uint8Array.from(await readFile('model.glb'));
+
+const front = await renderGlbToImage(glb, {
+  format: 'png',
+  width: 512,
+  height: 512,
+  phi: 90,
+  theta: 0,
+});
+
+await writeFile('front.png', front.bytes);
+```
+
+</RenderDemo>
+
+**Verify**: `front.png` shows the gear face-on, teeth all round the rim.
+
+## Step 2: Switch to the batch call
+
+Rendering each view with its own call parses and uploads the GLB every time.
+`renderGlbToImages` does that once and renders every view in the list — start
+with two, then add the rest in step 3. A sheet wants a tighter fit than a
+single hero image, so `margin` drops to `0.05`.
+
+<RenderDemo>
+
+```typescript
+import { renderGlbToImages } from 'nanoraster';
+
+import { readFile, writeFile } from 'node:fs/promises';
+
+const glb = Uint8Array.from(await readFile('model.glb'));
+
+const sheet = await renderGlbToImages(glb, {
+  format: 'png',
+  width: 512,
+  height: 512,
+  margin: 0.05,
+  views: [
+    { id: 'front', phi: 90, theta: 0 },
+    { id: 'right', phi: 90, theta: 90 },
+  ],
+});
+
+for (const { id, file } of sheet) {
+  await writeFile(file.name, file.bytes);
+  console.log(id, file.name);
+}
+```
+
+</RenderDemo>
+
+**Verify**: two files appear, and the console prints the IDs in the order you
+declared them:
+
+```console
+front thumbnail-front.png
+right thumbnail-right.png
+```
+
+The result filename carries the view `id`, not a counter.
+
+## Step 3: Add the top and iso views
+
+The top view looks down the up axis; the iso view is the default three-quarter
+angle. `includeAxes` draws a camera-aware marker in each image, which is what
+orients the top view once it is on its own.
+
+<RenderDemo>
+
+```typescript
+const sheet = await renderGlbToImages(glb, {
+  format: 'png',
+  width: 512,
+  height: 512,
+  margin: 0.05,
+  includeAxes: true,
+  views: [
+    { id: 'front', phi: 90, theta: 0 },
+    { id: 'right', phi: 90, theta: 90 },
+    { id: 'top', phi: 0, theta: 0 },
+    { id: 'iso', phi: 60, theta: -45 },
+  ],
+});
+```
+
+</RenderDemo>
+
+**Verify**: four files. `thumbnail-top.png` looks down at the model, and `iso.png` uses
+[the quick start's angles](/docs), because those are the defaults.
+
+## Step 4: Label each view
+
+Labels are drawn into the image, screen-upright, so a sheet stays readable
+once the images are separated from their filenames. Turning them on makes
+`label` required on every view; TypeScript rejects the call if one is missing.
+`includeScale` adds the bottom-left bar, so the finished sheet carries its own
+units too.
+
+<RenderDemo>
+
+```typescript
+const sheet = await renderGlbToImages(glb, {
+  format: 'png',
+  width: 512,
+  height: 512,
+  margin: 0.05,
+  includeAxes: true,
+  includeScale: true,
+  includeLabel: true,
+  views: [
+    { id: 'front', phi: 90, theta: 0, label: 'Front' },
+    { id: 'right', phi: 90, theta: 90, label: 'Right' },
+    { id: 'top', phi: 0, theta: 0, label: 'Top' },
+    { id: 'iso', phi: 60, theta: -45, label: 'Iso' },
+  ],
+});
+```
+
+</RenderDemo>
+
+**Verify**: each image carries its name in the top-left corner.
+
+## Step 5: Keep it reproducible
+
+Run the script twice and compare the files: the sheet regenerates
+byte-for-byte on the same host. [How it works](how-it-works#determinism) sets out what is
+and is not guaranteed across hosts.

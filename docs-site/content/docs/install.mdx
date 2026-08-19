@@ -1,0 +1,80 @@
+---
+title: Install nanoraster
+description: Add the package, understand the native and wasm artifacts, and confirm your host is supported.
+---
+
+nanoraster is one JavaScript package that loads a different render artifact
+per host: Node.js 24 or newer, or a browser with WebGPU enabled.
+
+```bash tab="npm"
+npm install nanoraster
+```
+
+```bash tab="pnpm"
+pnpm add nanoraster
+```
+
+```bash tab="yarn"
+yarn add nanoraster
+```
+
+## What gets installed
+
+The package selects its render artifact at runtime; nothing needs configuring.
+
+| Host    | Artifact loaded                | Delivered by                    |
+| ------- | ------------------------------ | ------------------------------- |
+| Node.js | Native N-API binary            | Platform `optionalDependencies` |
+| Browser | WebAssembly module plus WebGPU | The `nanoraster/wasm` subpath   |
+
+Three platform packages are declared as optional dependencies, and your package
+manager installs only the one matching your machine:
+
+| Package                     | Platform                |
+| --------------------------- | ----------------------- |
+| `nanoraster-darwin-arm64`   | macOS on Apple Silicon  |
+| `nanoraster-linux-x64-gnu`  | Linux on x64 with glibc |
+| `nanoraster-win32-x64-msvc` | Windows on x64          |
+
+Because they are optional, an install on an unlisted platform succeeds and
+then fails at render time. Check your host against
+the [compatibility matrix](https://github.com/taucad/nanoraster/blob/main/compatibility.md)
+before deploying.
+
+## Verify the install
+
+Any static glTF 2.0 binary works as `model.glb`; the examples in these docs use
+a 12-tooth spur gear.
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+import { readFile } from 'node:fs/promises';
+
+const glb = Uint8Array.from(await readFile('model.glb'));
+const image = await renderGlbToImage(glb, { format: 'png' });
+
+console.log(image.name, image.bytes.length, image.mimeType);
+```
+
+### Expected output
+
+```console
+thumbnail.png 29965 image/png
+```
+
+The exact byte count depends on your model; what matters is that a name, a
+non-zero length and a MIME type print rather than an error.
+
+## Bundling for the browser
+
+Browser builds need the WebAssembly binary reachable at runtime. It is published
+on a dedicated subpath so bundlers can emit it as an asset:
+
+```typescript
+import wasmUrl from 'nanoraster/wasm?url';
+```
+
+Most bundlers resolve this without configuration.
+[Render in the browser](guides/render-in-the-browser) covers the rest,
+including the WebGPU adapter check.
