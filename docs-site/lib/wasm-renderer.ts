@@ -19,6 +19,8 @@ const demoModelUrl = '/demo/gear-12-metal.glb';
 
 /** Load the browser binding once per document. */
 export const loadWasmRenderer = async (): Promise<WasmRenderer> => {
+  // A failure must not stick in the cache, or every later render would fail
+  // until a reload; clearing it lets the next control change retry the load.
   renderer ??= (async () => {
     const moduleUrl = new URL('/demo/render_wasm.js', window.location.href).href;
     const module = (await import(/* webpackIgnore: true */ moduleUrl)) as unknown as WasmRenderer;
@@ -26,7 +28,10 @@ export const loadWasmRenderer = async (): Promise<WasmRenderer> => {
       module_or_path: new URL('/demo/render_wasm_bg.wasm', window.location.href),
     });
     return module;
-  })();
+  })().catch((error: unknown) => {
+    renderer = undefined;
+    throw error;
+  });
   return renderer;
 };
 
@@ -36,7 +41,10 @@ export const loadDemoModel = async (): Promise<Uint8Array<ArrayBuffer>> => {
     const response = await fetch(demoModelUrl);
     if (!response.ok) throw new Error(`Could not load ${demoModelUrl}`);
     return new Uint8Array(await response.arrayBuffer());
-  })();
+  })().catch((error: unknown) => {
+    model = undefined;
+    throw error;
+  });
   return model;
 };
 

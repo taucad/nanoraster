@@ -14,6 +14,7 @@ import {
   type DemoControl,
   type DemoValue,
 } from './lib/demo-options';
+import { angleKeys, buildDemoRequest } from './lib/demo-request';
 import { llmStringifyMdx } from './lib/llm-stringify-mdx';
 
 const docsDir = resolve(import.meta.dirname, 'content/docs');
@@ -119,17 +120,38 @@ describe('interactive demo projections', () => {
   it('keeps material factors out of the render request', () => {
     // A material key reaching the options JSON is rejected by the renderer as
     // an unknown field, which is how this broke the camera and framing demos.
+    // The request under test is the one the demo actually sends: the same
+    // projection `render-demo.tsx` calls, fed each example's seeded values.
     for (const { path, code } of demos) {
       const seeded = readDemoOptions(code);
-      const optionKeys = Object.keys(seeded).filter((key) => !isMaterialKey(key));
+      const views = readDemoViews(code);
+      const { material, request } = buildDemoRequest(seeded, {
+        lights: readDemoLights(code),
+        size: { height: 720, width: 960 },
+        views,
+      });
 
-      for (const key of optionKeys) {
+      for (const key of Object.keys(request)) {
         expect(isMaterialKey(key), `${path} sends ${key} as an option`).toBe(false);
+        expect(isLightingKey(key), `${path} sends ${key} outside the rig`).toBe(false);
+        if (views.length > 0) {
+          expect(angleKeys.has(key), `${path} sends ${key} on a batch request`).toBe(false);
+        }
+      }
+
+      // The factors are routed to the GLB patch rather than dropped.
+      for (const key of Object.keys(seeded).filter((seededKey) => isMaterialKey(seededKey))) {
+        expect(material[key as keyof typeof material], `${path} drops ${key}`).toBe(seeded[key]);
+      }
+
+      // Rig values ride inside `lighting` with the example's lights.
+      const lighting = request['lighting'] as Record<string, unknown> | undefined;
+      for (const key of Object.keys(seeded).filter((seededKey) => isLightingKey(seededKey))) {
+        expect(lighting?.[key], `${path} drops ${key} from the rig`).toBe(seeded[key]);
       }
 
       // Only the material page's example carries material factors at all.
-      const materialKeys = Object.keys(seeded).filter((key) => isMaterialKey(key));
-      if (materialKeys.length > 0) {
+      if (Object.keys(material).length > 0) {
         expect(path, 'material factors outside the how-it-works page').toContain('how-it-works');
       }
     }
