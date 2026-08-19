@@ -14,7 +14,10 @@ use glb::parse_glb;
 
 pub use bench::{bench_encodes, bench_multi_view, codec_conformance};
 pub use encode::{ImageFormat, encode, encode_jpeg, encode_png, encode_webp};
-pub use options::{RenderImagesRequest, RenderRequest, RenderView};
+pub use options::{
+    LightRequest, LightingRequest, LightingRigRequest, RenderImagesRequest, RenderRequest,
+    RenderView,
+};
 pub use render::Rendered;
 
 /// World axis the camera treats as "up" when placing the spherical eye and
@@ -33,6 +36,80 @@ pub enum Projection {
     #[default]
     Perspective,
     Orthographic,
+}
+
+/// Frame a rig's light directions are authored in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LightingSpace {
+    /// Camera-relative, so every view of a batch is lit identically.
+    #[default]
+    View,
+    /// glTF world coordinates (regardless of `up`), rotated into view space
+    /// per view — the light stays fixed to the model while views orbit it.
+    World,
+}
+
+/// One directional light. `direction` points *from the surface toward the
+/// light* — the vector the shader dots with the normal. The CPU normalises it
+/// during the frame-uniform write, so any finite non-zero vector is accepted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResolvedLight {
+    pub direction: [f32; 3],
+    pub color: [f32; 3],
+}
+
+/// A validated lighting rig, uploaded verbatim into the `Frame` uniform.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedLighting {
+    /// At most [`MAX_LIGHTS`]; empty renders from the environment alone.
+    pub lights: Vec<ResolvedLight>,
+    /// Flat multiplier on the diffuse colour.
+    pub ambient: f32,
+    /// Whether the analytic environment contributes (specular *and* diffuse).
+    pub environment: bool,
+    pub space: LightingSpace,
+    /// Linear multiplier applied before the ACES tone map.
+    pub exposure: f32,
+}
+
+/// Uniform-array capacity for [`ResolvedLighting::lights`].
+pub const MAX_LIGHTS: usize = 8;
+
+impl ResolvedLighting {
+    /// The studio preset — the one definition of the built-in rig. `fs_mesh`
+    /// carries no lighting literals of its own; it reads these through the
+    /// uniform. Directions are the Tau viewer's `performance` lights
+    /// projected into view space: key upper-left-front, fill opposite it,
+    /// headlamp above the camera.
+    #[must_use]
+    pub fn studio() -> Self {
+        Self {
+            lights: vec![
+                ResolvedLight {
+                    direction: [-0.45, 0.61, 0.63],
+                    color: [2.09, 2.09, 2.09],
+                },
+                ResolvedLight {
+                    direction: [0.45, -0.61, -0.63],
+                    color: [1.45, 1.42, 1.38],
+                },
+                ResolvedLight {
+                    direction: [0.03, 0.74, 0.67],
+                    color: [0.68, 0.66, 0.62],
+                },
+            ],
+            ambient: 0.02,
+            environment: true,
+            space: LightingSpace::View,
+            exposure: 1.0,
+        }
+    }
+}
+
+impl Default for ResolvedLighting {
+    fn default() -> Self {
+        Self::studio()
+    }
 }
 
 /// Rendering options. Camera angles use a right-handed spherical basis.
@@ -66,6 +143,9 @@ pub struct RenderOptions {
     /// the subject-center plane with `@ center`; orthographic scale is
     /// depth-invariant.
     pub include_scale: bool,
+    /// Direct lights, ambient, environment and exposure. Defaults to
+    /// [`ResolvedLighting::studio`].
+    pub lighting: ResolvedLighting,
 }
 
 pub(crate) const DEFAULT_HEIGHT: u32 = 432;
@@ -86,6 +166,7 @@ impl Default for RenderOptions {
             include_axes: false,
             include_label: false,
             include_scale: false,
+            lighting: ResolvedLighting::studio(),
         }
     }
 }
@@ -397,6 +478,14 @@ mod tests {
         assert!(!options.include_axes);
         assert!(!options.include_label);
         assert!(!options.include_scale);
+        assert_eq!(options.lighting, ResolvedLighting::studio());
+        assert_eq!(ResolvedLighting::default(), ResolvedLighting::studio());
+        assert_eq!(options.lighting.lights.len(), 3);
+        assert_eq!(options.lighting.ambient, 0.02);
+        assert_eq!(options.lighting.exposure, 1.0);
+        assert!(options.lighting.environment);
+        assert_eq!(options.lighting.space, LightingSpace::View);
+        assert_eq!(LightingSpace::default(), LightingSpace::View);
         assert_eq!(UpAxis::default(), UpAxis::Y);
         assert_eq!(Projection::default(), Projection::Perspective);
     }

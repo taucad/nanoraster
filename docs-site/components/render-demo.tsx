@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   demoControls,
+  isLightingKey,
   isMaterialKey,
+  readDemoLights,
   readDemoOptions,
   readDemoViews,
   substituteDemoValues,
@@ -79,6 +81,7 @@ export const RenderDemo = ({
   readonly children?: React.ReactNode;
 }): React.JSX.Element => {
   const views = useMemo(() => readDemoViews(code), [code]);
+  const lights = useMemo(() => readDemoLights(code), [code]);
   const batch = views.length > 0;
   const controls = demoControls(code).filter((control) => !batch || !angleKeys.has(control.key));
   const [values, setValues] = useState<Record<string, DemoValue>>(() => readDemoOptions(code));
@@ -103,8 +106,11 @@ export const RenderDemo = ({
         // patched into the GLB and kept out of the options entirely.
         const entries = Object.entries(current);
         const material = Object.fromEntries(entries.filter(([key]) => isMaterialKey(key)));
+        const rig = Object.fromEntries(entries.filter(([key]) => isLightingKey(key)));
         const options = Object.fromEntries(
-          entries.filter(([key]) => !isMaterialKey(key) && !(batch && angleKeys.has(key))),
+          entries.filter(
+            ([key]) => !isMaterialKey(key) && !isLightingKey(key) && !(batch && angleKeys.has(key)),
+          ),
         );
         const glb = Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
 
@@ -130,6 +136,8 @@ export const RenderDemo = ({
           ...RENDER_SIZE,
           ...(current['includeLabel'] === true && !batch ? { label: 'gear' } : {}),
           ...(batch ? { views: labelled } : {}),
+          // Rig values travel inside `lighting`, alongside the lights the example declares.
+          ...(lights === undefined ? {} : { lighting: { lights, ...rig } }),
         };
         if (typeof request['background'] === 'string') {
           request['background'] = hexToRgba(request['background']);
@@ -153,7 +161,7 @@ export const RenderDemo = ({
         setState('failed');
       }
     },
-    [batch, views],
+    [batch, lights, views],
   );
 
   // Only the first paint is automatic; later renders follow a control change.

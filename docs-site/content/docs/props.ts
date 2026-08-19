@@ -5,6 +5,9 @@ export type {
   RenderImageOptions,
   RenderImagesOptions,
   RenderImageView,
+  RenderLight,
+  RenderLighting,
+  RenderLightingRig,
   RenderedImage,
   RenderedImages,
 } from 'nanoraster';

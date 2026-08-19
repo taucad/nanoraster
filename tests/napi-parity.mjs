@@ -268,6 +268,98 @@ const isometricPerspective = native.renderGlbToImage(
   }),
 );
 
+// Lighting equivalence (R1). Cross-host goldens are impossible by the
+// package's own determinism claims, so the oracle is that the three spellings
+// of the studio preset — omitted, named, and written out — are the same bytes.
+const studioLights = [
+  { direction: [-0.45, 0.61, 0.63], color: [2.09, 2.09, 2.09] },
+  { direction: [0.45, -0.61, -0.63], color: [1.45, 1.42, 1.38] },
+  { direction: [0.03, 0.74, 0.67], color: [0.68, 0.66, 0.62] },
+];
+const studioSpelledOut = {
+  lights: studioLights,
+  ambient: 0.02,
+  environment: 'studio',
+  space: 'view',
+  exposure: 1,
+};
+const lightingBase = { width: 256, height: 256, format: 'png', phi: 60, theta: -45 };
+const lightingViews = [
+  { id: 'isometric', phi: 60, theta: -45 },
+  { id: 'back', phi: 90, theta: 90 },
+];
+const renderLit = (lighting) =>
+  native.renderGlbToImage(glb, JSON.stringify({ ...lightingBase, ...lighting }));
+const renderLitBatch = (lighting) =>
+  native.renderGlbToImages(
+    glb,
+    JSON.stringify({ ...lightingBase, phi: undefined, theta: undefined, ...lighting, views: lightingViews }),
+  );
+
+const studioSpellings = [
+  { name: 'preset name', lighting: 'studio' },
+  { name: 'spelled-out values', lighting: studioSpelledOut },
+];
+const studioOmitted = renderLit({});
+const studioBatchOmitted = renderLitBatch({});
+for (const { name, lighting } of studioSpellings) {
+  if (!renderLit({ lighting }).equals(studioOmitted)) {
+    throw new Error(`lighting ${name} differs from the omitted default`);
+  }
+  const batch = renderLitBatch({ lighting });
+  if (
+    batch.length !== lightingViews.length ||
+    batch.some((image, index) => !image.equals(studioBatchOmitted[index]))
+  ) {
+    throw new Error(`batch lighting ${name} differs from the omitted default`);
+  }
+}
+
+const customRig = renderLit({
+  lighting: { lights: [{ direction: [0, 1, 0.4], color: [3, 2.4, 1.6] }], environment: 'none' },
+});
+const environmentOnly = renderLit({ lighting: { lights: [] } });
+const brighter = renderLit({ lighting: { lights: studioLights, exposure: 2 } });
+if (customRig.equals(studioOmitted)) throw new Error('a custom rig must not match the studio preset');
+if (environmentOnly.equals(studioOmitted)) throw new Error('an empty rig must not match the studio preset');
+if (brighter.equals(studioOmitted)) throw new Error('exposure 2 must not match exposure 1');
+
+// World space pins the rig to the model, so an orbiting view sees it move.
+const worldLight = { lights: [{ direction: [0.4, 0.8, 0.45], color: [3, 3, 3] }] };
+const worldBack = renderLit({ phi: 90, theta: 90, lighting: { ...worldLight, space: 'world' } });
+const viewBack = renderLit({ phi: 90, theta: 90, lighting: { ...worldLight, space: 'view' } });
+if (worldBack.equals(viewBack)) {
+  throw new Error('space "world" must differ from space "view" on a non-front view');
+}
+
+for (const { name, lighting, prefix } of [
+  {
+    name: 'nine lights',
+    lighting: { lights: Array.from({ length: 9 }, () => studioLights[0]) },
+    prefix: 'parse: lighting.lights: at most 8 lights, received 9',
+  },
+  {
+    name: 'zero direction',
+    lighting: { lights: [{ direction: [0, 0, 0], color: [1, 1, 1] }] },
+    prefix: 'parse: lighting.lights[0].direction must be non-zero',
+  },
+  {
+    name: 'unknown key',
+    lighting: { lights: [{ direction: [0, 0, 1], colour: [1, 1, 1] }] },
+    prefix: 'parse: options: unknown field `colour`',
+  },
+]) {
+  let rejection = '';
+  try {
+    renderLit({ lighting });
+  } catch (error) {
+    rejection = String(error instanceof Error ? error.message : error);
+  }
+  if (!rejection.startsWith(prefix)) {
+    throw new Error(`expected ${name} to be rejected with ${prefix}, got: ${rejection || 'no error'}`);
+  }
+}
+
 let validationError = '';
 try {
   native.renderGlbToImages(Buffer.from([0]), JSON.stringify({ views: [], unexpected: true }));
@@ -314,4 +406,5 @@ console.log(`webp ${webp.length}B, jpeg ${jpeg.length}B, transparent-jpeg reject
 console.log(`batch ${batch.length} views matches singular bytes`);
 console.log('rough dielectric and polished metal repeat deterministically and remain distinguishable');
 console.log(`${parityCases} singular/batch parity cases plus reordered/repeated batches passed`);
+console.log('lighting: omitted = "studio" = spelled-out studio; custom/empty/exposure/world rigs all differ');
 console.log('PASS → tests/out/napi.{png,webp,jpg} + napi-{axes,annotations,interleaved}.png + visual sizes');
