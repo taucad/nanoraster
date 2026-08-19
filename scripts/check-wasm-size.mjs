@@ -17,11 +17,17 @@ const sizes = {
 // `lighting` request struct's serde monomorphisation plus the serde_json
 // Value hop the custom Deserialize takes to keep field-level error messages;
 // the WGSL source ships verbatim, so the uniform rig itself is ~0.6 KB of it.
+// Lossy-WebP build: raw 849,626, gzip-9 339,013, brotli-11 270,244 on macOS,
+// against 809,035 / 323,275 / 258,177 for the configurable-lighting build —
+// +40,591 raw (+5.0%), +15,738 gzip-9 (+4.9%). That is the vendored
+// image-webp main VP8 lossy encoder (linked even for lossless requests: the
+// runtime `use_lossy` branch keeps it reachable) plus its lossless-encoder
+// refactors.
 // Ceilings are the measured figure plus ~1%. The gate runs on Linux CI, whose
 // figure has not been re-measured since the PBR build (315,196 gzip-9 there
 // against 312,881 on macOS) — gzip9 carries extra slack until a CI run
 // re-anchors it.
-const ceilings = { raw: 818_000, gzip9: 328_000, brotli11: 261_000 };
+const ceilings = { raw: 858_000, gzip9: 343_000, brotli11: 273_000 };
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {

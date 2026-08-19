@@ -726,7 +726,7 @@ mod tests {
         let images = pollster::block_on(render_glb_to_images(
             FIXTURE,
             &options,
-            ImageFormat::WebP,
+            ImageFormat::WebP { quality: 100 },
             &views,
         ))
         .expect("batch render");

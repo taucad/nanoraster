@@ -15,7 +15,7 @@ const image = await renderGlbToImage(glb, {
   format: 'png', // required
   width: 768, // default
   height: 432, // default
-  quality: 0.92, // default
+  quality: 0.92, // default for jpeg; webp defaults to 1 (lossless)
   margin: 0.1, // default
   up: 'y', // default
   projection: 'perspective', // default
@@ -381,7 +381,9 @@ Minimum width and height when any annotation is enabled.
 
 ### `renderImageQualityRange`
 
-Inclusive encoder-quality bounds; ignored by the lossless PNG encoder.
+Inclusive encoder-quality bounds. JPEG treats the value as compression level
+(default `0.92`). WebP treats `1` — its default — as lossless and anything
+lower as lossy, matching Chrome's canvas `toBlob` semantics. PNG ignores it.
 
 ### `renderImageBackgroundPattern`
 

@@ -9,7 +9,7 @@ use std::ops::Range;
 use crate::extended::{self, get_alpha_predictor, read_alpha_chunk, WebPExtendedInfo};
 
 use super::lossless::LosslessDecoder;
-use super::vp8::Vp8Decoder;
+use super::lossy::Vp8Decoder;
 
 quick_error! {
     /// Errors that can occur when attempting to decode a WebP image
@@ -418,8 +418,8 @@ impl<R: BufRead + Seek> WebPDecoder<R> {
                     return Err(DecodingError::VersionNumberInvalid(version as u8));
                 }
 
-                self.width = (1 + header) & 0x3FFF;
-                self.height = (1 + (header >> 14)) & 0x3FFF;
+                self.width = (header & 0x3FFF) + 1;
+                self.height = ((header >> 14) & 0x3FFF) + 1;
                 self.chunks
                     .insert(WebPRiffChunk::VP8L, start..start + chunk_size);
                 self.kind = ImageKind::Lossless;
@@ -785,12 +785,6 @@ impl<R: BufRead + Seek> WebPDecoder<R> {
         let use_alpha_blending = frame_info & 0b00000010 == 0;
         let dispose = frame_info & 0b00000001 != 0;
 
-        let clear_color = if self.animation.dispose_next_frame {
-            info.background_color
-        } else {
-            None
-        };
-
         // Read normal bitstream now
         let (chunk, chunk_size, chunk_size_rounded) = read_chunk_header(&mut self.r)?;
         if chunk_size_rounded + 24 > anmf_size {
@@ -862,6 +856,16 @@ impl<R: BufRead + Seek> WebPDecoder<R> {
                 (rgba_frame, true)
             }
             _ => return Err(DecodingError::ChunkHeaderInvalid(chunk.to_fourcc())),
+        };
+
+        let clear_color = if self.animation.dispose_next_frame {
+            match (info.background_color, frame_has_alpha) {
+                (color @ Some(_), _) => color,
+                (_, true) => Some([0, 0, 0, 0]),
+                _ => None,
+            }
+        } else {
+            None
         };
 
         // fill starting canvas with clear color

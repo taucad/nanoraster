@@ -24,7 +24,7 @@ fn codec_fingerprints(rendered: &Rendered) -> Result<serde_json::Value, RenderEr
     });
     for (name, format) in [
         ("png", ImageFormat::Png),
-        ("webp", ImageFormat::WebP),
+        ("webp", ImageFormat::WebP { quality: 100 }),
         ("jpeg", ImageFormat::Jpeg { quality: 85 }),
     ] {
         let bytes = encode(rendered, format)?;
@@ -164,15 +164,22 @@ pub async fn bench_multi_view(
             view_options.theta_deg = view.theta_deg;
             view_options.label.clone_from(&view.label);
             let started = now();
-            let bytes = render_glb_to_image(glb, &view_options, ImageFormat::WebP).await?;
+            let bytes =
+                render_glb_to_image(glb, &view_options, ImageFormat::WebP { quality: 100 }).await?;
             singular_ms.push(now() - started);
             singular.push(bytes);
         }
         let singular_wall_ms = now() - singular_started;
 
         let batch_started = now();
-        let (batch, profile) =
-            render_glb_to_images_profiled(glb, &options, ImageFormat::WebP, &views, now).await?;
+        let (batch, profile) = render_glb_to_images_profiled(
+            glb,
+            &options,
+            ImageFormat::WebP { quality: 100 },
+            &views,
+            now,
+        )
+        .await?;
         let batch_wall_ms = now() - batch_started;
         ensure_batch_matches(&batch, &singular)?;
         let fingerprints: Vec<String> = batch
@@ -219,7 +226,7 @@ pub fn bench_encodes(
     });
     for (name, format) in [
         ("png", ImageFormat::Png),
-        ("webp", ImageFormat::WebP),
+        ("webp", ImageFormat::WebP { quality: 100 }),
         ("jpeg", ImageFormat::Jpeg { quality: 85 }),
     ] {
         let start = now();
@@ -267,7 +274,9 @@ mod tests {
         for name in ["png", "webp", "jpeg"] {
             assert!(report[name]["ms"].as_f64().expect("ms") > 0.0);
             assert!(report[name]["bytes"].as_u64().expect("bytes") > 0);
-            let format = ImageFormat::from_name(name, 85).expect("format");
+            // Mirror the bench's own quality per codec: webp runs lossless.
+            let quality = if name == "webp" { 100 } else { 85 };
+            let format = ImageFormat::from_name(name, quality).expect("format");
             let expected = format!(
                 "{:016x}",
                 fnv64(&encode(&rendered, format).expect("encode"))

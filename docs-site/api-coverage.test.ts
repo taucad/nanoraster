@@ -78,7 +78,7 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
 const defaults = {
   width: '768',
   height: '432',
-  quality: '0.92',
+  quality: '0.92 (jpeg), 1 (webp)',
   margin: '0.1',
   up: "'y'",
   projection: "'perspective'",
@@ -160,7 +160,7 @@ describe('API documentation coverage', () => {
     const output = (await Promise.all(tableNames.map(generateDoc))).map(stringifyDoc).join('\n\n');
     expect(output).toContain('`Uint8Array<ArrayBuffer>`');
     expect(output).toContain('`string | readonly [number, number, number, number] | undefined`');
-    expect(output).toContain('default `0.92`');
+    expect(output).toContain('default `0.92 (jpeg), 1 (webp)`');
     expect(output).not.toContain('<TypeTable');
     expect(output).not.toContain('<br>');
     expect(output).not.toContain('\\|');

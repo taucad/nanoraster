@@ -1,0 +1,72 @@
+---
+title: Render for LLMs
+description: Size, encode, and annotate renders for multimodal models — pixel-based billing, lossless input, and the annotations that carry spatial context.
+---
+
+A render sent to a multimodal model faces different constraints than one sent
+to a person: the model is billed by the pixel, reads compression artifacts as
+if they were geometry, and cannot infer orientation or physical size from
+shading alone.
+
+### 1. Bytes are free, pixels are billed
+
+The major vision APIs convert an image to tokens from its pixel dimensions
+alone; the encoded file size never enters the bill. A 5 KB lossy WebP and a
+30 KB lossless WebP of the same 768×432 render cost identical tokens on every
+provider below.
+
+| Provider  | Image tokens                                    | Reference                                                                              |
+| --------- | ----------------------------------------------- | -------------------------------------------------------------------------------------- |
+| OpenAI    | ⌈width/32⌉ × ⌈height/32⌉ patches                | [Images and vision](https://developers.openai.com/api/docs/guides/images-vision)        |
+| Anthropic | ⌈width/28⌉ × ⌈height/28⌉ visual tokens          | [Vision](https://platform.claude.com/docs/en/build-with-claude/vision)                  |
+| Gemini    | fixed per-image budget, set by media resolution | [Image understanding](https://ai.google.dev/gemini-api/docs/image-understanding)        |
+
+The default 768×432 render costs 336 patches on OpenAI and 448 visual tokens
+on Anthropic. Width and height are the only cost lever the renderer controls:
+halving both roughly quarters the bill, and shrinking the file changes
+nothing.
+
+### 2. Send lossless input
+
+Since bytes are free, compression can only lose information the model might
+need. WebP's default `quality` of `1` encodes lossless, so an explicit
+`format: 'webp'` with no `quality` sends the model exactly the rendered
+pixels. Anthropic's vision guidance warns that lossy artifacts can degrade
+model performance while saving nothing on tokens. Reach for
+[lossy WebP](format-and-annotate) — `quality` below `1` — only when upload
+latency matters more than fidelity.
+
+### 3. Annotate for spatial reasoning
+
+A model reading a render has no camera, no ruler, and no filename. The three
+annotations exist to put that context into the pixels themselves:
+
+- `includeAxes` draws a camera-aware XYZ indicator, so the model knows which
+  way the part is oriented.
+- `includeScale` draws physical size in model units; without it a gearbox
+  and a wristwatch gear read identically.
+- `includeLabel` names the subject or view, so a multi-image prompt stays
+  attributable.
+
+<RenderDemo>
+
+```typescript
+import { renderGlbToImage } from 'nanoraster';
+
+const image = await renderGlbToImage(glb, {
+  format: 'webp',
+  background: '#101418',
+  includeAxes: true,
+  includeScale: true,
+  includeLabel: true,
+  label: 'gear',
+});
+```
+
+</RenderDemo>
+
+Annotated output needs at least 192 pixels on both axes; the mechanics of
+each overlay live in [Format and annotate](format-and-annotate). For the
+strongest spatial evidence, send several labelled orthogonal views from one
+[batch call](render-multiple-views) — the shared label and axes let the model
+reconcile the views into one part.

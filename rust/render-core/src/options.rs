@@ -268,7 +268,14 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
             "margin {margin} outside 0..=0.5"
         )));
     }
-    let quality = request.quality.unwrap_or(0.92);
+    // WebP defaults to 1 (lossless, matching earlier lossless-only releases);
+    // JPEG keeps 0.92. PNG ignores quality entirely.
+    let default_quality = if request.format == Some("webp") {
+        1.0
+    } else {
+        0.92
+    };
+    let quality = request.quality.unwrap_or(default_quality);
     if !quality.is_finite() || !(0.0..=1.0).contains(&quality) {
         return Err(RenderError::Parse(format!(
             "quality {quality} outside 0..=1"
@@ -303,8 +310,8 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
     let lighting = resolve_lighting(request.lighting)?;
 
     let format_name = request.format.unwrap_or("png");
-    let jpeg_quality = (quality * 100.0).round() as u8;
-    let format = ImageFormat::from_name(format_name, jpeg_quality)
+    let encoder_quality = (quality * 100.0).round() as u8;
+    let format = ImageFormat::from_name(format_name, encoder_quality)
         .map_err(|_| RenderError::Parse(format!("format {format_name:?} not png/webp/jpeg/jpg")))?;
 
     Ok((
@@ -488,7 +495,7 @@ mod tests {
         assert!(options.include_label);
         assert!(options.include_scale);
         assert_eq!(views[0].label.as_deref(), Some("Front"));
-        assert_eq!(format, ImageFormat::WebP);
+        assert_eq!(format, ImageFormat::WebP { quality: 100 });
         assert_eq!(views[0].id, "front");
         assert_eq!(views[1].id, "top");
     }

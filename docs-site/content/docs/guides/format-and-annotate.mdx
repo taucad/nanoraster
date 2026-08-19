@@ -22,12 +22,12 @@ const image = await renderGlbToImage(glb, {
 
 </RenderDemo>
 
-| Format | Alpha | Lossy | Use for                                                  |
-| ------ | ----- | ----- | -------------------------------------------------------- |
-| `png`  | Yes   | No    | Exact pixels, diffing, transparent thumbnails            |
-| `webp` | Yes   | Yes   | Web delivery at a fraction of the PNG size               |
-| `jpeg` | No    | Yes   | Interop with tools that accept nothing else              |
-| `jpg`  | No    | Yes   | Alias for `jpeg`; the filename keeps the `jpg` extension |
+| Format | Alpha | Lossy                          | Use for                                                  |
+| ------ | ----- | ------------------------------ | -------------------------------------------------------- |
+| `png`  | Yes   | No                             | Exact pixels, diffing, transparent thumbnails            |
+| `webp` | Yes   | Only when `quality` is below 1 | Web delivery; lossless by default, much smaller lossy    |
+| `jpeg` | No    | Yes                            | Interop with tools that accept nothing else              |
+| `jpg`  | No    | Yes                            | Alias for `jpeg`; the filename keeps the `jpg` extension |
 
 `mimeType` reflects the true type, so `jpg` and `jpeg` both report `image/jpeg`;
 the full [MIME map](../api#imagemimetypes) is in the reference.
@@ -48,10 +48,23 @@ const image = await renderGlbToImage(glb, {
 });
 ```
 
-### 3. Tune quality for the lossy formats
+### 3. Tune quality per format
 
-`quality` runs from `0` to `1` and defaults to `0.92`. It has no effect on
-lossless PNG. Every field's exact range lives on
+`quality` runs from `0` to `1` and means something different per format:
+
+- **JPEG** is always lossy; `quality` sets the compression level and defaults
+  to `0.92`.
+- **WebP** defaults to `1`, which encodes lossless — the same output as
+  omitting `quality`. Any value below `1` switches to lossy encoding, which
+  keeps the alpha channel and cuts roughly 40 percent of the bytes at `0.9`.
+  This
+  follows the semantics of Chrome's canvas `toBlob('image/webp', quality)`:
+  lossless is the `1` endpoint, not a very high quality. The switch happens
+  because lossy WebP is a different codec (VP8, with chroma subsampling) than
+  lossless WebP (VP8L), so no lossy quality reaches exact pixels.
+- **PNG** is always lossless and ignores `quality`.
+
+Every field's exact range lives on
 [`RenderImageOptions`](../api#renderimageoptions).
 
 ### 4. Add an axis indicator, label and scale
@@ -109,9 +122,10 @@ Below that, drop the annotations.
 
 ## Variations
 
-**Smallest useful thumbnail.** WebP at `quality: 0.75` with `width: 256` is
-typically an order of magnitude smaller than the equivalent PNG, at a size where
-the loss is invisible.
+**Smallest useful thumbnail.** WebP at `quality: 0.9` with `width: 256` is
+roughly 40 percent smaller than the lossless default and half the size of the
+equivalent PNG, while keeping transparency. Below `0.9` the encoder starts
+banding smooth gradients.
 
 **Byte-exact comparison.** Use PNG. Lossy encoders are
 [deterministic](../how-it-works#determinism) for a fixed request, but a format
