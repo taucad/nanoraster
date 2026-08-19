@@ -93,6 +93,8 @@ jobs:
         with:
           node-version: '26'
       - run: pnpm nx run nanoraster:docs-prose
+      # Needs the exported site, which the docs-prose target has just built.
+      - run: pnpm run docs:links
 
   node:
     needs: preflight
