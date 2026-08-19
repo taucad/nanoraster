@@ -43,7 +43,7 @@ await writeFile(image.name, image.bytes);
 
 Same request, same pixels: the camera, lighting and encoder are fixed for a
 given request, so a render can serve as evidence. Continue with the
-[quick start](https://nanoraster.xyz/docs).
+[tutorial and guides](https://nanoraster.xyz/docs).
 
 ## Compatibility
 

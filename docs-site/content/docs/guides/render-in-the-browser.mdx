@@ -69,13 +69,21 @@ a worker, neither blocks input handling.
 import { renderGlbToImage } from 'nanoraster';
 
 self.addEventListener('message', async ({ data }: MessageEvent<Uint8Array>) => {
-  const image = await renderGlbToImage(data, { format: 'webp' });
-  self.postMessage(image.bytes, [image.bytes.buffer]);
+  try {
+    const image = await renderGlbToImage(data, { format: 'webp' });
+    self.postMessage(image.bytes, [image.bytes.buffer]);
+  } catch (error) {
+    self.postMessage({ error: error instanceof Error ? error.message : String(error) });
+  }
 });
 ```
 
 Transferring `image.bytes.buffer` moves the memory instead of copying it; the
-worker cannot use it afterwards, and does not need to.
+worker cannot use it afterwards, and does not need to. The catch matters: a
+rejection inside the listener would otherwise vanish as an unhandled rejection
+and the caller would wait forever, so a failure is posted back as its own
+message shape — bytes mean success, `{ error }` means the render failed.
+[Handle render failures](handle-render-failures) covers classifying the error.
 
 ## Variations
 

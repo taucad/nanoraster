@@ -116,8 +116,9 @@ request, so a 1920×480 banner frames differently from a 512×512 square; set
   speck. Adjust `margin` if the subject looks too small.
 - **Angles are not portable across up axes.** A view tuned at Y-up needs
   different numbers at Z-up.
-- **The fit is deterministic.** Identical bounds and angles produce an
-  identical camera, a precondition for
+- **The fit is deterministic.** With identical bounds, angles and fitting
+  options — `margin`, `width` and `height` all feed the fit — the renderer
+  produces an identical camera, a precondition for
   [reproducible output](../how-it-works#determinism).
 - **Degenerate bounds still render.** A flat or single-point model has
   degenerate bounds; the fit falls back rather than dividing by zero, though the
