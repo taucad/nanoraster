@@ -404,14 +404,12 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
     let mut u_bytes = vec![0u8; chroma_size];
     let mut v_bytes = vec![0u8; chroma_size];
 
-    // Sample with clamped coordinates so odd trailing rows and columns are
+    // sample with clamped coordinates so that a trailing odd row or column is
     // converted rather than left zero, and the macroblock padding replicates
-    // the image edge the way libwebp's RGBA import does. `chunks_exact`-based
-    // 2x2 iteration silently dropped the final odd row and column.
+    // the edge pixel the way libwebp's importer does
     let sample = |x: usize, y: usize| -> &[u8] {
-        let sx = x.min(width - 1);
-        let sy = y.min(height - 1);
-        &image_data[BPP * (sy * width + sx)..BPP * (sy * width + sx) + BPP]
+        let offset = BPP * (y.min(height - 1) * width + x.min(width - 1));
+        &image_data[offset..offset + BPP]
     };
 
     for luma_y in 0..16 * mb_height {
@@ -419,11 +417,14 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
             y_bytes[luma_y * luma_width + luma_x] = rgb_to_y(sample(luma_x, luma_y));
         }
     }
+
+    // average the 2x2 luma pixels for each chroma pixel when downscaling
     for chroma_y in 0..8 * mb_height {
         for chroma_x in 0..chroma_width {
             let (x, y) = (2 * chroma_x, 2 * chroma_y);
             let (rgb1, rgb2) = (sample(x, y), sample(x + 1, y));
             let (rgb3, rgb4) = (sample(x, y + 1), sample(x + 1, y + 1));
+
             u_bytes[chroma_y * chroma_width + chroma_x] = rgb_to_u_avg(rgb1, rgb2, rgb3, rgb4);
             v_bytes[chroma_y * chroma_width + chroma_x] = rgb_to_v_avg(rgb1, rgb2, rgb3, rgb4);
         }
@@ -448,12 +449,11 @@ pub(crate) fn convert_image_y<const BPP: usize>(
     let u_bytes = vec![127u8; chroma_size];
     let v_bytes = vec![127u8; chroma_size];
 
-    for (image_row, y_row) in image_data
-        .chunks_exact(BPP * width)
-        .zip(y_bytes.chunks_exact_mut(luma_width))
-    {
-        for (image_value, y_pixel) in image_row.chunks_exact(BPP).zip(y_row.iter_mut()) {
-            *y_pixel = image_value[0];
+    // as above, clamp so that the macroblock padding replicates the edge pixel
+    for luma_y in 0..16 * mb_height {
+        for luma_x in 0..luma_width {
+            y_bytes[luma_y * luma_width + luma_x] =
+                image_data[BPP * (luma_y.min(height - 1) * width + luma_x.min(width - 1))];
         }
     }
 

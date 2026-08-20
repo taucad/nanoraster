@@ -10,8 +10,9 @@ pub(crate) struct ArithmeticEncoder {
     bit_num: i32,
 }
 
-/// `Default` matches `new()` so `std::mem::take` yields a usable encoder
-/// (the derived default's `range: 0` state underflows `write_bool`).
+/// `Default` matches `new` so that the encoder left behind by
+/// `std::mem::take` is usable (the derived default's `range: 0` state
+/// underflows `write_bool`).
 impl Default for ArithmeticEncoder {
     fn default() -> Self {
         Self::new()
@@ -31,17 +32,15 @@ impl ArithmeticEncoder {
     // we need to go back and add one to existing values
     fn add_one_to_output(&mut self) {
         // RFC 6386's reference carry (`while (*--q == 255) *q = 0; ++*q;`)
-        // zeroes trailing 0xff bytes and keeps them; dropping them would
-        // shift every later byte and corrupt the partition.
-        let mut carried = 0;
-        while let Some(value) = self.writer.pop() {
-            if value < 255 {
-                self.writer.push(value + 1);
+        // zeroes trailing 0xff bytes and keeps them; removing them would shift
+        // every later byte and corrupt the partition.
+        for value in self.writer.iter_mut().rev() {
+            if *value < 255 {
+                *value += 1;
                 break;
             }
-            carried += 1;
+            *value = 0;
         }
-        self.writer.resize(self.writer.len() + carried, 0);
     }
 
     // writes a flag
@@ -185,6 +184,18 @@ mod tests {
         let mut new_buf = vec![[0u8; 4]; (buffer.len() + 3) / 4];
         new_buf.as_mut_slice().as_flattened_mut()[..buffer.len()].copy_from_slice(buffer);
         new_buf
+    }
+
+    #[test]
+    fn default_encoder_encodes_like_a_new_one() {
+        let mut default_encoder = ArithmeticEncoder::default();
+        default_encoder.write_flag(true);
+        let mut new_encoder = ArithmeticEncoder::new();
+        new_encoder.write_flag(true);
+        assert_eq!(
+            default_encoder.flush_and_get_buffer(),
+            new_encoder.flush_and_get_buffer()
+        );
     }
 
     #[test]

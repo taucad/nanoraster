@@ -121,12 +121,12 @@ Below that, drop the annotations.
 
 ## Variations
 
-**Smallest useful thumbnail.** For smoothly shaded models, WebP at
-`quality: 0.9` with `width: 256` is roughly 40 percent smaller than the
-lossless default and half the size of the equivalent PNG, while keeping
-transparency. Flat-colour models with edge lines often compress smaller
-lossless than lossy, so measure both on your own output before committing.
-Below `0.9` the encoder starts banding smooth gradients.
+**Smallest useful thumbnail.** WebP at `quality: 0.9` with `width: 256` is
+around 60 percent smaller than the lossless default and a third the size of
+the equivalent PNG, while keeping transparency — shaded and flat-colour
+models alike. The one exception is tiny images whose lossless encoding is
+already under a kilobyte: the lossy container has a fixed floor, so measure
+both when every byte matters.
 
 **Byte-exact comparison.** Use PNG. Lossy encoders are
 [deterministic](../how-it-works#determinism) for a fixed request, but a format

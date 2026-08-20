@@ -10,29 +10,32 @@ decoding.
 
 ## Current Status
 
-- **Decoder:** Supports all WebP format features including both lossless and
+* **Decoder:** Supports all WebP format features including both lossless and
   lossy compression, alpha channel, and animation. Both the "simple" and
   "extended" formats are handled, and it exposes methods to extract ICC, EXIF,
   and XMP chunks. Decoding speed is generally in the range of **70-100%** of the
   speed of libwebp.
 
-- **Encoder:** This crate only supports lossless encoding. The encoder
-  implementation is relatively basic which makes it very fast, but it doesn't
-  get as good compression ratios as libwebp can. Nonetheless, it often produces
-  smaller files than PNG, even when compared against the slowest/highest
-  compression options of PNG encoders.
+* **Encoder:** Supports lossless encoding, and lossy encoding of still images
+  through `EncoderParams::use_lossy`. The lossless encoder implementation is
+  relatively basic which makes it very fast, but it doesn't get as good
+  compression ratios as libwebp can. Nonetheless, it often produces smaller
+  files than PNG, even when compared against the slowest/highest compression
+  options of PNG encoders. The lossy encoder is more basic still: it predicts
+  every macroblock from the DC value alone, so the files it writes are
+  considerably larger than libwebp's at the same quality.
 
 ## Future possibilities
 
-- We continue to be interested in **optimizations** and **bug fixes** and hope
+* We continue to be interested in **optimizations** and **bug fixes** and hope
   the bring the decoder closer to parity with libwebp.
 
-- Another potential area is **animation encoding**. Much of the groundwork is in
+* Another potential area is **animation encoding**. Much of the groundwork is in
   place for this, but it will require some additional work to implement.
 
-- We would like to add **lossy encoding** support, but this is a non-trivial
-  task and would require a lot of work. If you are interested in helping with
-  this, please get in touch!
+* The **lossy encoder** needs intra mode selection, skip flags, and a better
+  quality-to-quantizer mapping before its compression ratio is competitive. If
+  you are interested in helping with this, please get in touch!
 
 ## Unsafe code
 
