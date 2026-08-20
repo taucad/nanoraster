@@ -1,0 +1,158 @@
+# Maintains the standing release pull request (head `release/next`, base `main`).
+#
+# On every push to `main` with pending Version Plans:
+#   1. Regenerate the release commit with `release:prepare --from-plans` — the
+#      plans dictate the version, and the same validations gate it as a manual
+#      `release:prepare -- <version>` run.
+#   2. Delete every consumed plan file explicitly: nx has left consumed plans
+#      on disk before (v0.3.0), and a survivor would re-trigger this workflow
+#      for a version that just shipped.
+#   3. Force-push `release/next` and upsert one pull request titled with the
+#      exact release subject, so a squash merge lands a commit `ci.yml`'s
+#      release policy accepts (the subject regex tolerates the ` (#N)` suffix).
+#
+# With no pending plans (a release just merged, or plans were reverted), close
+# the pull request and delete the branch instead.
+#
+# Merging the pull request is the entire release act: the push to `main`
+# carries the release subject, and `ci.yml` owns publication, provenance,
+# registry verification, tags, and GitHub Releases — nothing here touches npm.
+#
+# Modelled on tau's `prepare-prod-release.yml`: a minted `tau-release-bot`
+# installation token, because pushes made with the default GITHUB_TOKEN
+# trigger no CI (the required `ci-gate` check would never report) and the org
+# does not allow Actions to create pull requests.
+name: Release PR
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-pr
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Mint tau-release-bot token
+        id: bot
+        uses: actions/create-github-app-token@064492a9a1762067169d50c792a7dc02bc3d1254 # v2.0.0
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: main
+          persist-credentials: true
+          token: ${{ steps.bot.outputs.token }}
+
+      - name: Check pending Version Plans
+        id: plans
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+        run: |
+          set -euo pipefail
+          if compgen -G '.nx/version-plans/*.md' > /dev/null; then
+            echo "pending=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "pending=false" >> "$GITHUB_OUTPUT"
+          pr_number=$(gh pr list --base main --head release/next --state open --json number --jq '.[0].number // empty')
+          if [ -n "$pr_number" ]; then
+            gh pr close "$pr_number" --comment "No Version Plans are pending on \`main\`, so there is nothing to release." --delete-branch
+          else
+            git push origin --delete release/next 2>/dev/null || true
+          fi
+
+      - name: Setup repository
+        if: steps.plans.outputs.pending == 'true'
+        uses: ./.github/actions/setup
+        with:
+          node-version: '26'
+
+      - name: Generate the release commit
+        id: generate
+        if: steps.plans.outputs.pending == 'true'
+        run: |
+          set -euo pipefail
+          previous_version=$(node -p "require('./package.json').version")
+          {
+            echo 'plans<<PLANSEOF'
+            grep -H '^nanoraster:' .nx/version-plans/*.md | sed 's/^/- /'
+            echo 'PLANSEOF'
+          } >> "$GITHUB_OUTPUT"
+
+          pnpm release:prepare -- --from-plans
+
+          # nx has left consumed plan files on disk before; every plan affects
+          # the fixed group, so every plan is consumed by every release.
+          git rm --quiet --force '.nx/version-plans/*.md'
+
+          git add --all
+          staged=$(git diff --cached --name-only)
+          allowed='^(CHANGELOG\.md|package\.json|pnpm-lock\.yaml|npm/(darwin-arm64|linux-x64-gnu|win32-x64-msvc)/package\.json|\.nx/version-plans/.+\.md)$'
+          unexpected=$(grep -Ev "$allowed" <<< "$staged" || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::release generation changed unexpected files: $unexpected"
+            exit 1
+          fi
+
+          version=$(node -p "require('./package.json').version")
+          git config user.name "tau-release-bot[bot]"
+          git config user.email "tau-release-bot[bot]@users.noreply.github.com"
+          git commit --quiet -m "chore(release): nanoraster v$version"
+          git push --force origin HEAD:refs/heads/release/next
+
+          {
+            echo "version=$version"
+            echo "previous_version=$previous_version"
+            echo 'commit_log<<LOGEOF'
+            git log "v$previous_version..main" --pretty='- %h %s' | head -100
+            echo 'LOGEOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upsert the release pull request
+        if: steps.plans.outputs.pending == 'true'
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          TITLE: 'chore(release): nanoraster v${{ steps.generate.outputs.version }}'
+          VERSION: ${{ steps.generate.outputs.version }}
+          PREVIOUS_VERSION: ${{ steps.generate.outputs.previous_version }}
+          PLANS: ${{ steps.generate.outputs.plans }}
+          COMMIT_LOG: ${{ steps.generate.outputs.commit_log }}
+        run: |
+          set -euo pipefail
+          body=$(cat <<BODYEOF
+          Releases nanoraster **v${VERSION}** (from v${PREVIOUS_VERSION}). The fixed group ships all
+          four packages at this version; the consumed Version Plans dictate the bump:
+
+          ${PLANS}
+
+          Commits since v${PREVIOUS_VERSION}:
+
+          ${COMMIT_LOG}
+
+          ---
+
+          - This pull request is **bot-managed**: it is regenerated on every push to \`main\`
+            and closes itself when no Version Plans are pending. Do not push to
+            \`release/next\` or enable auto-merge.
+          - **Merging this pull request publishes to npm.** Prefer a squash merge with the
+            title unchanged; the release policy validates the commit either way.
+          BODYEOF
+          )
+          pr_number=$(gh pr list --base main --head release/next --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr_number" ]; then
+            gh pr create --base main --head release/next --title "$TITLE" --body "$body"
+          else
+            gh pr edit "$pr_number" --title "$TITLE" --body "$body"
+          fi
