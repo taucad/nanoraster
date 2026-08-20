@@ -2,18 +2,33 @@
 //! 4x MSAA into an sRGB resolve texture, `copy_texture_to_buffer` readback
 //! with 256-byte row alignment. No canvas anywhere — the same code runs on
 //! native backends and browser WebGPU.
+//!
+//! State crosses the boundary as handles; work crosses as plans. [`Renderer`]
+//! owns everything whose lifetime is "the process/worker" (device, queue,
+//! shader, layouts, pipeline and target caches); [`Scene`] owns one GLB's
+//! parsed geometry plus its GPU buffers; [`Renderer::execute_plan`] is the one
+//! render loop every public entry point funnels through.
 
-use crate::glb::{MODE_TRIANGLES, Material, Scene};
+use crate::encode::{ImageFormat, encode};
+use crate::glb::{self, MODE_TRIANGLES, Material};
 use crate::{
     DEFAULT_HEIGHT, LightingSpace, MAX_LIGHTS, Projection, RenderError, RenderOptions, UpAxis,
+    with_view,
 };
 use glam::{Mat4, Vec3};
 use std::fmt::Display;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 
 const MSAA_SAMPLES: u32 = 4;
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// Depth-bias slope scale bakes the stroke width into each mesh pipeline, so
+/// the cache keys on `line_width_px` bits; mixed-height plans stay small and
+/// this bound keeps a long-lived renderer from accumulating one pair per size
+/// it has ever seen.
+const MAX_CACHED_PIPELINE_PAIRS: usize = 16;
 
 pub struct Rendered {
     /// Straight-alpha, sRGB-encoded RGBA8 rows, tightly packed.
@@ -54,27 +69,134 @@ struct GpuInstance {
     bind_group: wgpu::BindGroup,
 }
 
-pub(crate) struct RenderSession {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    frame_buffer: wgpu::Buffer,
-    frame_bind_group: wgpu::BindGroup,
-    mesh_pipeline: wgpu::RenderPipeline,
-    line_pipeline: wgpu::RenderPipeline,
+/// One GLB's geometry uploaded to one renderer's device.
+pub(crate) struct SceneBuffers {
     gpu_assets: Vec<GpuMeshAsset>,
     gpu_instances: Vec<GpuInstance>,
+}
+
+/// Scene handle: parsed CPU geometry plus its GPU buffers. The parsed half is
+/// retained so device loss can transparently re-upload — the buffers carry the
+/// device generation they were uploaded under and go stale when the renderer
+/// recreates its device. Internal seam by design; exposure is trigger-gated.
+pub(crate) struct Scene {
+    pub(crate) parsed: glb::Scene,
+    buffers: Option<(u64, SceneBuffers)>,
+}
+
+impl Scene {
+    pub(crate) fn new(parsed: glb::Scene) -> Self {
+        Self {
+            parsed,
+            buffers: None,
+        }
+    }
+}
+
+struct PipelinePair {
+    mesh: wgpu::RenderPipeline,
+    line: wgpu::RenderPipeline,
+}
+
+/// Render targets plus readback for one output size. The two readback buffers
+/// ping-pong so the plan executor can submit view N+1 while view N's buffer is
+/// still mapped for the CPU.
+struct SizedTargets {
+    width: u32,
+    height: u32,
+    extent: wgpu::Extent3d,
     msaa_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
     resolve_texture: wgpu::Texture,
     resolve_view: wgpu::TextureView,
-    readback_buffer: wgpu::Buffer,
-    extent: wgpu::Extent3d,
+    readback: [wgpu::Buffer; 2],
     unpadded_bytes_per_row: u32,
     padded_bytes_per_row: u32,
-    clear_color: wgpu::Color,
 }
 
-pub(crate) async fn request_adapter() -> Result<wgpu::Adapter, RenderError> {
+/// One submitted view awaiting readback. Owns clones of the wgpu handles it
+/// needs so target-cache turnover cannot invalidate it.
+struct InFlightView {
+    buffer: wgpu::Buffer,
+    receiver: futures_channel::oneshot::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    submission: wgpu::SubmissionIndex,
+    height: u32,
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+}
+
+/// Cumulative resource-acquisition counters; profile reporting snapshots them
+/// around a plan to attribute work to that call.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Counters {
+    pub(crate) device_requests: u32,
+    pub(crate) pipeline_sets: u32,
+    pub(crate) scene_uploads: u32,
+    pub(crate) target_allocations: u32,
+}
+
+impl Counters {
+    pub(crate) fn since(self, start: Self) -> Self {
+        Self {
+            device_requests: self.device_requests - start.device_requests,
+            pipeline_sets: self.pipeline_sets - start.pipeline_sets,
+            scene_uploads: self.scene_uploads - start.scene_uploads,
+            target_allocations: self.target_allocations - start.target_allocations,
+        }
+    }
+}
+
+/// Everything scoped to one `wgpu::Device`, rebuilt wholesale on device loss.
+struct DeviceState {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    shader: wgpu::ShaderModule,
+    frame_buffer: wgpu::Buffer,
+    frame_bind_group: wgpu::BindGroup,
+    prim_layout: wgpu::BindGroupLayout,
+    object_layout: wgpu::BindGroupLayout,
+    pipeline_layout: wgpu::PipelineLayout,
+    /// Keyed on `line_width_px` bits (depth-bias slope scale bakes it).
+    pipelines: Vec<(u32, PipelinePair)>,
+    /// Last-used target set, keyed on (width, height).
+    targets: Option<SizedTargets>,
+    /// Next readback slot; alternates so at most one view is ever in flight
+    /// against a mapped buffer.
+    slot: usize,
+}
+
+/// Persistent GPU half: one adapter/device/pipeline set reused across calls.
+pub struct Renderer {
+    state: DeviceState,
+    lost: Arc<AtomicBool>,
+    uncaptured: Arc<Mutex<Option<String>>>,
+    power: wgpu::PowerPreference,
+    generation: u64,
+    counters: Counters,
+}
+
+/// One fully resolved plan entry: per-view options (R15 output overrides
+/// already applied), the per-view encode format, and the prepared camera and
+/// overlay layout.
+pub(crate) struct PlanEntry {
+    pub(crate) id: String,
+    pub(crate) options: RenderOptions,
+    pub(crate) format: ImageFormat,
+    pub(crate) prepared: crate::capture_overlay::PreparedView,
+}
+
+/// Per-view stage timings produced by the plan executor (zero when no clock).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ViewTimings {
+    pub(crate) render_ms: f64,
+    pub(crate) overlay_ms: f64,
+    pub(crate) encode_ms: f64,
+}
+
+pub(crate) async fn request_adapter(
+    power: wgpu::PowerPreference,
+) -> Result<wgpu::Adapter, RenderError> {
     #[cfg(target_arch = "wasm32")]
     let backends = wgpu::Backends::BROWSER_WEBGPU;
     #[cfg(not(target_arch = "wasm32"))]
@@ -85,7 +207,7 @@ pub(crate) async fn request_adapter() -> Result<wgpu::Adapter, RenderError> {
     let instance = wgpu::Instance::new(instance_descriptor);
     instance
         .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
+            power_preference: power,
             ..Default::default()
         })
         .await
@@ -120,7 +242,7 @@ fn mapped_range_error(error: wgpu::MapRangeError) -> RenderError {
 /// Canonical camera framing: fov 45, spherical placement at
 /// distance = radius * 2 * tan(30 deg) / tan(22.5 deg), then per-corner fit
 /// zoom (computeViewFittingZoom) with the padding factor.
-pub(crate) fn camera_state(scene: &Scene, options: &RenderOptions) -> CameraState {
+pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> CameraState {
     let (min, max) = scene.bounds.unwrap_or(([-1.0; 3], [1.0; 3]));
     let min = Vec3::from(min);
     let max = Vec3::from(max);
@@ -411,9 +533,147 @@ fn srgb_to_linear(channel: f32) -> f64 {
     }
 }
 
-impl RenderSession {
-    pub(crate) async fn new(scene: &Scene, options: &RenderOptions) -> Result<Self, RenderError> {
-        let adapter = request_adapter().await?;
+fn clear_color(options: &RenderOptions) -> wgpu::Color {
+    options
+        .background
+        .map_or(wgpu::Color::TRANSPARENT, |bg| wgpu::Color {
+            r: srgb_to_linear(bg[0]),
+            g: srgb_to_linear(bg[1]),
+            b: srgb_to_linear(bg[2]),
+            a: f64::from(bg[3].clamp(0.0, 1.0)),
+        })
+}
+
+fn create_pipeline_pair(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    pipeline_layout: &wgpu::PipelineLayout,
+    line_width_px: f32,
+) -> PipelinePair {
+    let position_layout = wgpu::VertexBufferLayout {
+        array_stride: 12,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+    };
+    let normal_layout = wgpu::VertexBufferLayout {
+        array_stride: 12,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &wgpu::vertex_attr_array![1 => Float32x3],
+    };
+    // Fat lines: one instance per segment carrying both endpoints; the vertex
+    // shader expands each into a screen-space body quad plus two round-cap
+    // rows (8-vertex triangle strip).
+    let segment_layout = wgpu::VertexBufferLayout {
+        array_stride: 24,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+    };
+
+    let color_target = Some(wgpu::ColorTargetState {
+        format: COLOR_FORMAT,
+        // Straight-alpha over on a transparent clear.
+        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+        write_mask: wgpu::ColorWrites::ALL,
+    });
+    let line_depth_state = Some(wgpu::DepthStencilState {
+        format: DEPTH_FORMAT,
+        depth_write_enabled: Some(true),
+        depth_compare: Some(wgpu::CompareFunction::Less),
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState::default(),
+    });
+    // Surfaces take a slope-scaled polygon offset (the classic CAD
+    // shaded+wireframe move) instead of lines being pulled forward: the edge
+    // quad is expanded in screen space at the segment's depth, so wherever it
+    // overhangs a nearer surface — grazing walls near silhouettes, bores,
+    // ridges seen edge-on — a constant line-side bias loses to the surface's
+    // depth gradient and the stroke gets chewed to a hairline. Pushing each
+    // surface back by its own screen-space depth slope times the stroke's
+    // half-width covers exactly that overhang at any resolution; `clamp`
+    // bounds the push on near-tangent surfaces so hidden edges behind them
+    // stay hidden.
+    let mesh_depth_state = Some(wgpu::DepthStencilState {
+        format: DEPTH_FORMAT,
+        depth_write_enabled: Some(true),
+        depth_compare: Some(wgpu::CompareFunction::Less),
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState {
+            constant: 2,
+            slope_scale: line_width_px * 0.5 + 1.0,
+            clamp: 0.01,
+        },
+    });
+    let multisample = wgpu::MultisampleState {
+        count: MSAA_SAMPLES,
+        mask: !0,
+        alpha_to_coverage_enabled: false,
+    };
+
+    let mesh = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("mesh"),
+        layout: Some(pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_mesh"),
+            compilation_options: Default::default(),
+            buffers: &[Some(position_layout.clone()), Some(normal_layout)],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_mesh"),
+            compilation_options: Default::default(),
+            targets: std::slice::from_ref(&color_target),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            // CAD solids are frequently marked doubleSided by the kernels.
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: mesh_depth_state,
+        multisample,
+        multiview_mask: None,
+        cache: None,
+    });
+
+    // ponytail: pipelines compiled sequentially on purpose — llvmpipe SIGSEGVs
+    // under concurrent pipeline compilation (bevy #13708).
+    let line = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("line"),
+        layout: Some(pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_line"),
+            compilation_options: Default::default(),
+            buffers: &[Some(segment_layout)],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_line"),
+            compilation_options: Default::default(),
+            targets: std::slice::from_ref(&color_target),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: line_depth_state,
+        multisample,
+        multiview_mask: None,
+        cache: None,
+    });
+
+    PipelinePair { mesh, line }
+}
+
+impl DeviceState {
+    async fn new(
+        power: wgpu::PowerPreference,
+        lost: &Arc<AtomicBool>,
+        uncaptured: &Arc<Mutex<Option<String>>>,
+    ) -> Result<Self, RenderError> {
+        let adapter = request_adapter(power).await?;
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("render-core"),
@@ -422,18 +682,36 @@ impl RenderSession {
             .await
             .map_err(request_device_error)?;
 
+        device.set_device_lost_callback({
+            let lost = lost.clone();
+            move |reason, _message| {
+                // An explicit destroy() is the caller's own teardown, not a loss.
+                if !matches!(reason, wgpu::DeviceLostReason::Destroyed) {
+                    lost.store(true, Ordering::Release);
+                }
+            }
+        });
+        // Without a handler, native wgpu panics on uncaptured validation errors
+        // and browsers only log them; storing the first message gives every
+        // consumer the same deterministic `gpu:` failure instead.
+        device.on_uncaptured_error(Arc::new({
+            let slot = uncaptured.clone();
+            move |error: wgpu::Error| {
+                let mut slot = slot.lock().unwrap_or_else(|poison| poison.into_inner());
+                slot.get_or_insert_with(|| error.to_string());
+            }
+        }));
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("render-core"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let line_width_px = line_width_px(options);
-        // Matrices are overwritten by every `render_view` before a draw; the
-        // resolved rig is written now so the buffer is never uninitialised.
-        let frame_data = frame_uniform(Mat4::ZERO, Mat4::IDENTITY, options);
+        // Matrices are overwritten by every view before a draw; zero-fill so
+        // the buffer is never uninitialised.
         let frame_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("frame"),
-            contents: bytemuck::cast_slice(&frame_data),
+            contents: bytemuck::cast_slice(&[0f32; FRAME_FLOATS]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -497,120 +775,98 @@ impl RenderSession {
             immediate_size: 0,
         });
 
-        let position_layout = wgpu::VertexBufferLayout {
-            array_stride: 12,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-        };
-        let normal_layout = wgpu::VertexBufferLayout {
-            array_stride: 12,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![1 => Float32x3],
-        };
-        // Fat lines: one instance per segment carrying both endpoints; the vertex
-        // shader expands each into a screen-space body quad plus two round-cap
-        // rows (8-vertex triangle strip).
-        let segment_layout = wgpu::VertexBufferLayout {
-            array_stride: 24,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-        };
+        Ok(Self {
+            device,
+            queue,
+            shader,
+            frame_buffer,
+            frame_bind_group,
+            prim_layout,
+            object_layout,
+            pipeline_layout,
+            pipelines: Vec::new(),
+            targets: None,
+            slot: 0,
+        })
+    }
+}
 
-        let color_target = Some(wgpu::ColorTargetState {
-            format: COLOR_FORMAT,
-            // Straight-alpha over on a transparent clear.
-            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-            write_mask: wgpu::ColorWrites::ALL,
-        });
-        let line_depth_state = Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
-        });
-        // Surfaces take a slope-scaled polygon offset (the classic CAD
-        // shaded+wireframe move) instead of lines being pulled forward: the edge
-        // quad is expanded in screen space at the segment's depth, so wherever it
-        // overhangs a nearer surface — grazing walls near silhouettes, bores,
-        // ridges seen edge-on — a constant line-side bias loses to the surface's
-        // depth gradient and the stroke gets chewed to a hairline. Pushing each
-        // surface back by its own screen-space depth slope times the stroke's
-        // half-width covers exactly that overhang at any resolution; `clamp`
-        // bounds the push on near-tangent surfaces so hidden edges behind them
-        // stay hidden.
-        let mesh_depth_state = Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState {
-                constant: 2,
-                slope_scale: line_width_px * 0.5 + 1.0,
-                clamp: 0.01,
+impl Renderer {
+    pub async fn new(power: wgpu::PowerPreference) -> Result<Self, RenderError> {
+        let lost = Arc::new(AtomicBool::new(false));
+        let uncaptured = Arc::new(Mutex::new(None));
+        let state = DeviceState::new(power, &lost, &uncaptured).await?;
+        Ok(Self {
+            state,
+            lost,
+            uncaptured,
+            power,
+            generation: 0,
+            counters: Counters {
+                device_requests: 1,
+                ..Counters::default()
             },
-        });
-        let multisample = wgpu::MultisampleState {
-            count: MSAA_SAMPLES,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        };
+        })
+    }
 
-        let mesh_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_mesh"),
-                compilation_options: Default::default(),
-                buffers: &[Some(position_layout.clone()), Some(normal_layout)],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_mesh"),
-                compilation_options: Default::default(),
-                targets: std::slice::from_ref(&color_target),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                // CAD solids are frequently marked doubleSided by the kernels.
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: mesh_depth_state,
-            multisample,
-            multiview_mask: None,
-            cache: None,
-        });
+    /// Destroys the GPU device now instead of waiting for GC/drop. Later plan
+    /// calls fail with a `gpu:` error; bindings gate disposed handles above
+    /// this layer.
+    pub fn destroy(&self) {
+        self.state.device.destroy();
+    }
 
-        // ponytail: pipelines compiled sequentially on purpose — llvmpipe SIGSEGVs
-        // under concurrent pipeline compilation (bevy #13708).
-        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("line"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_line"),
-                compilation_options: Default::default(),
-                buffers: &[Some(segment_layout)],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_line"),
-                compilation_options: Default::default(),
-                targets: std::slice::from_ref(&color_target),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: line_depth_state,
-            multisample,
-            multiview_mask: None,
-            cache: None,
-        });
+    pub(crate) fn counters(&self) -> Counters {
+        self.counters
+    }
 
+    /// Device loss is recovered transparently at the next plan entry: rebuild
+    /// every device-scoped resource and bump the generation so scene buffers
+    /// uploaded under the old device re-upload lazily.
+    pub(crate) async fn recover_if_lost(&mut self) -> Result<(), RenderError> {
+        if !self.lost.swap(false, Ordering::Acquire) {
+            return Ok(());
+        }
+        self.state = DeviceState::new(self.power, &self.lost, &self.uncaptured).await?;
+        self.generation += 1;
+        self.counters.device_requests += 1;
+        Ok(())
+    }
+
+    fn take_uncaptured(&self) -> Result<(), RenderError> {
+        let mut slot = self
+            .uncaptured
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        match slot.take() {
+            Some(message) => Err(RenderError::Gpu(message)),
+            None => Ok(()),
+        }
+    }
+
+    /// Parse-and-upload seam: uploads (or re-uploads after device loss) the
+    /// scene's GPU buffers, returning the buffers bound to this device.
+    pub(crate) fn ensure_uploaded<'scene>(
+        &mut self,
+        scene: &'scene mut Scene,
+    ) -> Result<&'scene SceneBuffers, RenderError> {
+        let stale =
+            !matches!(&scene.buffers, Some((generation, _)) if *generation == self.generation);
+        if stale {
+            let buffers = self.upload_scene(&scene.parsed);
+            self.take_uncaptured()?;
+            scene.buffers = Some((self.generation, buffers));
+        }
+        Ok(&scene
+            .buffers
+            .as_ref()
+            .expect("scene buffers just ensured")
+            .1)
+    }
+
+    fn upload_scene(&mut self, scene: &glb::Scene) -> SceneBuffers {
+        self.counters.scene_uploads += 1;
+        let device = &self.state.device;
         // Each source mesh is uploaded once. Lines are de-indexed into segment
         // endpoint pairs for the fat-line quad expansion.
         let make_bind_group = |material: &Material| {
@@ -626,7 +882,7 @@ impl RenderSession {
             });
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("prim"),
-                layout: &prim_layout,
+                layout: &self.state.prim_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: material_buffer.as_entire_binding(),
@@ -703,7 +959,7 @@ impl RenderSession {
                     mesh_index: instance.mesh_index,
                     bind_group: device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("object"),
-                        layout: &object_layout,
+                        layout: &self.state.object_layout,
                         entries: &[wgpu::BindGroupEntry {
                             binding: 0,
                             resource: buffer.as_entire_binding(),
@@ -713,10 +969,53 @@ impl RenderSession {
             })
             .collect();
 
+        SceneBuffers {
+            gpu_assets,
+            gpu_instances,
+        }
+    }
+
+    /// Index of the pipeline pair for this stroke width, creating and caching
+    /// it on first sight.
+    fn ensure_pipelines(&mut self, line_width_px: f32) -> usize {
+        let key = line_width_px.to_bits();
+        if let Some(index) = self
+            .state
+            .pipelines
+            .iter()
+            .position(|(cached, _)| *cached == key)
+        {
+            return index;
+        }
+        if self.state.pipelines.len() >= MAX_CACHED_PIPELINE_PAIRS {
+            // Oldest-first eviction; in-flight passes keep their pipelines
+            // alive internally.
+            self.state.pipelines.remove(0);
+        }
+        self.counters.pipeline_sets += 1;
+        let pair = create_pipeline_pair(
+            &self.state.device,
+            &self.state.shader,
+            &self.state.pipeline_layout,
+            line_width_px,
+        );
+        self.state.pipelines.push((key, pair));
+        self.state.pipelines.len() - 1
+    }
+
+    /// Keep the last-used target set; recreate on size change (R15 mixed-size
+    /// plans cycle it within one job).
+    fn ensure_targets(&mut self, width: u32, height: u32) {
+        if matches!(&self.state.targets, Some(targets) if targets.width == width && targets.height == height)
+        {
+            return;
+        }
+        self.counters.target_allocations += 1;
+        let device = &self.state.device;
         // Render targets: MSAA color + depth, single-sample sRGB resolve target.
         let extent = wgpu::Extent3d {
-            width: options.width,
-            height: options.height,
+            width,
+            height,
             depth_or_array_layers: 1,
         };
         let msaa_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -749,63 +1048,62 @@ impl RenderSession {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let msaa_view = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let resolve_view = resolve_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Readback buffer with 256-byte-aligned rows.
-        let unpadded_bytes_per_row = options.width * 4;
+        // Readback buffers with 256-byte-aligned rows; two so the executor can
+        // keep one view in flight while the previous one is mapped.
+        let unpadded_bytes_per_row = width * 4;
         let padded_bytes_per_row = unpadded_bytes_per_row
             .div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: (padded_bytes_per_row * options.height) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
+        let readback = std::array::from_fn(|_| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("readback"),
+                size: (padded_bytes_per_row * height) as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            })
         });
 
-        let clear_color = options
-            .background
-            .map_or(wgpu::Color::TRANSPARENT, |bg| wgpu::Color {
-                r: srgb_to_linear(bg[0]),
-                g: srgb_to_linear(bg[1]),
-                b: srgb_to_linear(bg[2]),
-                a: f64::from(bg[3].clamp(0.0, 1.0)),
-            });
-
-        Ok(Self {
-            device,
-            queue,
-            frame_buffer,
-            frame_bind_group,
-            mesh_pipeline,
-            line_pipeline,
-            gpu_assets,
-            gpu_instances,
-            msaa_view,
-            depth_view,
-            resolve_texture,
-            resolve_view,
-            readback_buffer,
+        self.state.targets = Some(SizedTargets {
+            width,
+            height,
             extent,
+            msaa_view: msaa_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            depth_view: depth_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            resolve_view: resolve_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            resolve_texture,
+            readback,
             unpadded_bytes_per_row,
             padded_bytes_per_row,
-            clear_color,
-        })
+        });
+        self.state.slot = 0;
     }
 
-    pub(crate) async fn render_view(
-        &self,
-        camera: CameraState,
-        options: &RenderOptions,
-    ) -> Result<Rendered, RenderError> {
+    /// Submit one view's render pass and readback copy without waiting for it.
+    /// The frame-uniform write and the submission ride the queue timeline in
+    /// call order, so a single uniform buffer stays correct while views
+    /// pipeline.
+    fn begin_view(
+        &mut self,
+        scene: &SceneBuffers,
+        entry: &PlanEntry,
+    ) -> Result<InFlightView, RenderError> {
+        let options = &entry.options;
+        self.ensure_targets(options.width, options.height);
+        let pipeline_index = self.ensure_pipelines(line_width_px(options));
+        let state = &self.state;
+        let targets = state.targets.as_ref().expect("targets ensured above");
+        let pair = &state.pipelines[pipeline_index].1;
+        let slot = state.slot;
+
+        let camera = entry.prepared.camera;
         let mvp = camera.projection * camera.view;
         let frame_data = frame_uniform(mvp, camera.view, options);
-        self.queue
-            .write_buffer(&self.frame_buffer, 0, bytemuck::cast_slice(&frame_data));
+        state
+            .queue
+            .write_buffer(&state.frame_buffer, 0, bytemuck::cast_slice(&frame_data));
 
-        let mut encoder = self
+        let mut encoder = state
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("render"),
@@ -814,16 +1112,16 @@ impl RenderSession {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("render"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.msaa_view,
+                    view: &targets.msaa_view,
                     depth_slice: None,
-                    resolve_target: Some(&self.resolve_view),
+                    resolve_target: Some(&targets.resolve_view),
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.clear_color),
+                        load: wgpu::LoadOp::Clear(clear_color(options)),
                         store: wgpu::StoreOp::Discard,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
+                    view: &targets.depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Discard,
@@ -835,11 +1133,11 @@ impl RenderSession {
                 multiview_mask: None,
             });
 
-            pass.set_bind_group(0, &self.frame_bind_group, &[]);
-            pass.set_pipeline(&self.mesh_pipeline);
-            for instance in &self.gpu_instances {
+            pass.set_bind_group(0, &state.frame_bind_group, &[]);
+            pass.set_pipeline(&pair.mesh);
+            for instance in &scene.gpu_instances {
                 pass.set_bind_group(2, &instance.bind_group, &[]);
-                for mesh in &self.gpu_assets[instance.mesh_index].surfaces {
+                for mesh in &scene.gpu_assets[instance.mesh_index].surfaces {
                     pass.set_bind_group(1, &mesh.bind_group, &[]);
                     pass.set_vertex_buffer(0, mesh.positions.slice(..));
                     pass.set_vertex_buffer(1, mesh.normals.slice(..));
@@ -847,72 +1145,338 @@ impl RenderSession {
                     pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
             }
-            pass.set_pipeline(&self.line_pipeline);
-            for instance in &self.gpu_instances {
+            pass.set_pipeline(&pair.line);
+            for instance in &scene.gpu_instances {
                 pass.set_bind_group(2, &instance.bind_group, &[]);
-                for lines in &self.gpu_assets[instance.mesh_index].lines {
+                for lines in &scene.gpu_assets[instance.mesh_index].lines {
                     pass.set_bind_group(1, &lines.bind_group, &[]);
                     pass.set_vertex_buffer(0, lines.segments.slice(..));
                     pass.draw(0..8, 0..lines.segment_count);
                 }
             }
         }
+        let readback = &targets.readback[slot];
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &self.resolve_texture,
+                texture: &targets.resolve_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::TexelCopyBufferInfo {
-                buffer: &self.readback_buffer,
+                buffer: readback,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(self.padded_bytes_per_row),
+                    bytes_per_row: Some(targets.padded_bytes_per_row),
                     rows_per_image: Some(options.height),
                 },
             },
-            self.extent,
+            targets.extent,
         );
-        self.queue.submit(Some(encoder.finish()));
+        let submission = state.queue.submit(Some(encoder.finish()));
 
-        let slice = self.readback_buffer.slice(..);
-        let (tx, rx) = futures_channel::oneshot::channel();
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = tx.send(result);
-        });
-        #[cfg(not(target_arch = "wasm32"))]
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(poll_error)?;
-        rx.await
-            .expect("wgpu always invokes the map callback")
-            .map_err(map_error)?;
+        let (sender, receiver) = futures_channel::oneshot::channel();
+        readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = sender.send(result);
+            });
 
-        let mut rgba = Vec::with_capacity((self.unpadded_bytes_per_row * options.height) as usize);
+        let in_flight = InFlightView {
+            buffer: readback.clone(),
+            receiver,
+            submission,
+            height: options.height,
+            unpadded_bytes_per_row: targets.unpadded_bytes_per_row,
+            padded_bytes_per_row: targets.padded_bytes_per_row,
+        };
+        self.state.slot ^= 1;
+        Ok(in_flight)
+    }
+
+    /// De-pad the mapped readback rows into tightly packed RGBA.
+    fn read_back(&self, view: &InFlightView) -> Result<Rendered, RenderError> {
+        let slice = view.buffer.slice(..);
+        let mut rgba = Vec::with_capacity((view.unpadded_bytes_per_row * view.height) as usize);
         {
             let data = slice.get_mapped_range().map_err(mapped_range_error)?;
-            for row in 0..options.height {
-                let start = (row * self.padded_bytes_per_row) as usize;
-                rgba.extend_from_slice(&data[start..start + self.unpadded_bytes_per_row as usize]);
+            for row in 0..view.height {
+                let start = (row * view.padded_bytes_per_row) as usize;
+                rgba.extend_from_slice(&data[start..start + view.unpadded_bytes_per_row as usize]);
             }
         }
-        self.readback_buffer.unmap();
-
+        view.buffer.unmap();
+        self.take_uncaptured()?;
         Ok(Rendered {
             rgba,
-            width: options.width,
-            height: options.height,
+            width: view.unpadded_bytes_per_row / 4,
+            height: view.height,
         })
     }
+
+    /// Wait for one in-flight view and read its pixels back (native: blocks on
+    /// the submission's poll, which also delivers the map callback).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn finish_view_blocking(&self, mut view: InFlightView) -> Result<Rendered, RenderError> {
+        self.state
+            .device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(view.submission.clone()),
+                timeout: None,
+            })
+            .map_err(poll_error)?;
+        match view.receiver.try_recv() {
+            Ok(Some(result)) => result.map_err(map_error)?,
+            Ok(None) | Err(_) => {
+                return Err(RenderError::Gpu(
+                    "map_async: callback not delivered after poll".into(),
+                ));
+            }
+        }
+        self.read_back(&view)
+    }
+
+    /// Wait for one in-flight view and read its pixels back (wasm: the browser
+    /// event loop delivers the map callback while other work proceeds).
+    #[cfg(target_arch = "wasm32")]
+    async fn finish_view(&self, mut view: InFlightView) -> Result<Rendered, RenderError> {
+        (&mut view.receiver)
+            .await
+            .map_err(|_| RenderError::Gpu("map_async: callback dropped".into()))?
+            .map_err(map_error)?;
+        self.read_back(&view)
+    }
+
+    /// Render one plan entry to raw pixels (overlay stamped, no encode).
+    pub(crate) async fn render_entry_to_rgba(
+        &mut self,
+        scene: &SceneBuffers,
+        entry: &PlanEntry,
+    ) -> Result<Rendered, RenderError> {
+        let in_flight = self.begin_view(scene, entry)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut rendered = self.finish_view_blocking(in_flight)?;
+        #[cfg(target_arch = "wasm32")]
+        let mut rendered = self.finish_view(in_flight).await?;
+        if wants_overlay(&entry.options) {
+            crate::capture_overlay::stamp_capture_overlay(
+                &mut rendered,
+                &entry.prepared,
+                &mut Vec::new(),
+            );
+        }
+        Ok(rendered)
+    }
+
+    /// THE render loop: every layer funnels a plan through here, so the
+    /// executor's scheduling covers every consumer. View N+1's GPU pass is
+    /// submitted before view N's pixels are consumed; on native, encodes fan
+    /// out across scoped threads while the GPU keeps rendering.
+    pub(crate) async fn execute_plan(
+        &mut self,
+        scene: &SceneBuffers,
+        plan: &[PlanEntry],
+        now: Option<&(dyn Fn() -> f64 + Sync)>,
+    ) -> Result<(Vec<Vec<u8>>, Vec<ViewTimings>), RenderError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.execute_plan_native(scene, plan, now)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.execute_plan_wasm(scene, plan, now).await
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn execute_plan_native(
+        &mut self,
+        scene: &SceneBuffers,
+        plan: &[PlanEntry],
+        now: Option<&(dyn Fn() -> f64 + Sync)>,
+    ) -> Result<(Vec<Vec<u8>>, Vec<ViewTimings>), RenderError> {
+        let clock = |now: Option<&(dyn Fn() -> f64 + Sync)>| now.map_or(0.0, |clock| clock());
+        if let [entry] = plan {
+            // Single view: no pipelining or worker to win anything with.
+            let render_started = clock(now);
+            let in_flight = self.begin_view(scene, entry)?;
+            let rendered = self
+                .finish_view_blocking(in_flight)
+                .map_err(|error| with_view(error, &entry.id))?;
+            let (bytes, timings) = encode_entry(
+                entry,
+                rendered,
+                clock(now) - render_started,
+                now,
+                &mut Vec::new(),
+            )?;
+            return Ok((vec![bytes], vec![timings]));
+        }
+
+        type Slot = Option<Result<(Vec<u8>, ViewTimings), RenderError>>;
+        let results: Mutex<Vec<Slot>> = Mutex::new((0..plan.len()).map(|_| None).collect());
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZero::get)
+            .min(plan.len())
+            .min(8);
+        let (sender, receiver) = std::sync::mpsc::channel::<(usize, Rendered, f64)>();
+        let receiver = Mutex::new(receiver);
+        let render_result = std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    let mut scratch = Vec::new();
+                    loop {
+                        let job = {
+                            let receiver =
+                                receiver.lock().unwrap_or_else(|poison| poison.into_inner());
+                            receiver.recv()
+                        };
+                        let Ok((index, rendered, render_ms)) = job else {
+                            return;
+                        };
+                        let result =
+                            encode_entry(&plan[index], rendered, render_ms, now, &mut scratch);
+                        results.lock().unwrap_or_else(|poison| poison.into_inner())[index] =
+                            Some(result);
+                    }
+                });
+            }
+
+            let mut render = |sender: &std::sync::mpsc::Sender<(usize, Rendered, f64)>| {
+                let mut pending: Option<(usize, f64, InFlightView)> = None;
+                for (index, entry) in plan.iter().enumerate() {
+                    let started = clock(now);
+                    let in_flight = self.begin_view(scene, entry)?;
+                    if let Some((prev_index, prev_started, prev_flight)) =
+                        pending.replace((index, started, in_flight))
+                    {
+                        let rendered = self
+                            .finish_view_blocking(prev_flight)
+                            .map_err(|error| with_view(error, &plan[prev_index].id))?;
+                        let _ = sender.send((prev_index, rendered, clock(now) - prev_started));
+                    }
+                }
+                if let Some((index, started, in_flight)) = pending.take() {
+                    let rendered = self
+                        .finish_view_blocking(in_flight)
+                        .map_err(|error| with_view(error, &plan[index].id))?;
+                    let _ = sender.send((index, rendered, clock(now) - started));
+                }
+                Ok(())
+            };
+            let outcome = render(&sender);
+            drop(sender);
+            outcome
+        });
+        render_result?;
+
+        let mut images = Vec::with_capacity(plan.len());
+        let mut timings = Vec::with_capacity(plan.len());
+        // In plan order so a failing view reports deterministically even when
+        // encodes completed out of order.
+        for slot in results
+            .into_inner()
+            .unwrap_or_else(|poison| poison.into_inner())
+        {
+            let (bytes, view_timings) =
+                slot.expect("every submitted view is encoded before the scope joins")?;
+            images.push(bytes);
+            timings.push(view_timings);
+        }
+        Ok((images, timings))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn execute_plan_wasm(
+        &mut self,
+        scene: &SceneBuffers,
+        plan: &[PlanEntry],
+        now: Option<&(dyn Fn() -> f64 + Sync)>,
+    ) -> Result<(Vec<Vec<u8>>, Vec<ViewTimings>), RenderError> {
+        let clock = |now: Option<&(dyn Fn() -> f64 + Sync)>| now.map_or(0.0, |clock| clock());
+        let mut images = Vec::with_capacity(plan.len());
+        let mut timings = Vec::with_capacity(plan.len());
+        let mut scratch = Vec::new();
+        let mut pending: Option<(usize, f64, InFlightView)> = None;
+        // Submit view N+1 before consuming view N, so the GPU renders under
+        // the CPU's de-pad + overlay + encode of the previous view.
+        for (index, entry) in plan.iter().enumerate() {
+            let started = clock(now);
+            let in_flight = self.begin_view(scene, entry)?;
+            if let Some((prev_index, prev_started, prev_flight)) =
+                pending.replace((index, started, in_flight))
+            {
+                let rendered = self
+                    .finish_view(prev_flight)
+                    .await
+                    .map_err(|error| with_view(error, &plan[prev_index].id))?;
+                let (bytes, view_timings) = encode_entry(
+                    &plan[prev_index],
+                    rendered,
+                    clock(now) - prev_started,
+                    now,
+                    &mut scratch,
+                )?;
+                images.push(bytes);
+                timings.push(view_timings);
+            }
+        }
+        if let Some((index, started, in_flight)) = pending.take() {
+            let rendered = self
+                .finish_view(in_flight)
+                .await
+                .map_err(|error| with_view(error, &plan[index].id))?;
+            let (bytes, view_timings) = encode_entry(
+                &plan[index],
+                rendered,
+                clock(now) - started,
+                now,
+                &mut scratch,
+            )?;
+            images.push(bytes);
+            timings.push(view_timings);
+        }
+        Ok((images, timings))
+    }
+}
+
+fn wants_overlay(options: &RenderOptions) -> bool {
+    options.include_axes || options.include_label || options.include_scale
+}
+
+/// Stamp the overlay (when requested) and encode one finished view. Pure CPU:
+/// safe to run on worker threads.
+fn encode_entry(
+    entry: &PlanEntry,
+    mut rendered: Rendered,
+    render_ms: f64,
+    now: Option<&(dyn Fn() -> f64 + Sync)>,
+    scratch: &mut Vec<u8>,
+) -> Result<(Vec<u8>, ViewTimings), RenderError> {
+    let clock = |now: Option<&(dyn Fn() -> f64 + Sync)>| now.map_or(0.0, |clock| clock());
+    let overlay_started = clock(now);
+    if wants_overlay(&entry.options) {
+        crate::capture_overlay::stamp_capture_overlay(&mut rendered, &entry.prepared, scratch);
+    }
+    let overlay_ms = clock(now) - overlay_started;
+    let encode_started = clock(now);
+    let bytes = encode(&rendered, entry.format).map_err(|error| with_view(error, &entry.id))?;
+    Ok((
+        bytes,
+        ViewTimings {
+            render_ms,
+            overlay_ms,
+            encode_ms: clock(now) - encode_started,
+        },
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn scene() -> Scene {
-        Scene {
+    fn scene() -> glb::Scene {
+        glb::Scene {
             meshes: Vec::new(),
             instances: Vec::new(),
             bounds: Some(([-1.0; 3], [1.0; 3])),
@@ -1249,6 +1813,27 @@ mod tests {
     }
 
     #[test]
+    fn counters_report_per_call_deltas() {
+        let start = Counters {
+            device_requests: 1,
+            pipeline_sets: 2,
+            scene_uploads: 3,
+            target_allocations: 4,
+        };
+        let end = Counters {
+            device_requests: 1,
+            pipeline_sets: 3,
+            scene_uploads: 4,
+            target_allocations: 6,
+        };
+        let delta = end.since(start);
+        assert_eq!(delta.device_requests, 0);
+        assert_eq!(delta.pipeline_sets, 1);
+        assert_eq!(delta.scene_uploads, 1);
+        assert_eq!(delta.target_allocations, 2);
+    }
+
+    #[test]
     fn gpu_failures_keep_stable_context() {
         assert!(matches!(
             adapter_error(wgpu::RequestAdapterError::EnvNotSet),
@@ -1265,7 +1850,8 @@ mod tests {
                 .starts_with("gpu: map_async:")
         );
 
-        let adapter = pollster::block_on(request_adapter()).expect("adapter");
+        let adapter = pollster::block_on(request_adapter(wgpu::PowerPreference::HighPerformance))
+            .expect("adapter");
         let unsupported = (wgpu::Features::all() - adapter.features())
             .iter()
             .next()
@@ -1296,6 +1882,90 @@ mod tests {
             mapped_range_error(range_error)
                 .to_string()
                 .starts_with("gpu: mapped range:")
+        );
+    }
+
+    #[test]
+    fn renderer_surfaces_uncaptured_errors_and_recovers_from_device_loss() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+
+        // A buffer usage violation is an uncaptured validation error; the
+        // stored message must surface as a deterministic `gpu:` failure.
+        let bad = renderer
+            .state
+            .device
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("uncaptured probe"),
+                size: 4,
+                usage: wgpu::BufferUsages::UNIFORM,
+                mapped_at_creation: false,
+            });
+        bad.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        let _ = renderer.state.device.poll(wgpu::PollType::Poll);
+        assert!(matches!(
+            renderer.take_uncaptured(),
+            Err(RenderError::Gpu(_))
+        ));
+        // The slot is drained: the next check is clean.
+        assert!(renderer.take_uncaptured().is_ok());
+
+        // Simulated device loss: the next plan entry rebuilds the device and
+        // bumps the generation so stale scene buffers re-upload.
+        let generation = renderer.generation;
+        renderer.lost.store(true, Ordering::Release);
+        pollster::block_on(renderer.recover_if_lost()).expect("recreate");
+        assert_eq!(renderer.generation, generation + 1);
+        assert_eq!(renderer.counters.device_requests, 2);
+        // Without a pending loss the call is a no-op.
+        pollster::block_on(renderer.recover_if_lost()).expect("no-op");
+        assert_eq!(renderer.counters.device_requests, 2);
+
+        // Explicit destroy is not a loss: the callback ignores Destroyed.
+        renderer.destroy();
+        let _ = renderer.state.device.poll(wgpu::PollType::Poll);
+        assert!(!renderer.lost.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn pipeline_and_target_caches_reuse_and_evict() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+
+        let first = renderer.ensure_pipelines(2.0);
+        assert_eq!(renderer.ensure_pipelines(2.0), first);
+        assert_eq!(renderer.counters.pipeline_sets, 1);
+        let second = renderer.ensure_pipelines(4.0);
+        assert_ne!(first, second);
+        assert_eq!(renderer.counters.pipeline_sets, 2);
+
+        // Fill past the cap: the oldest entry is evicted, the cache stays bounded.
+        for width in 0..MAX_CACHED_PIPELINE_PAIRS as u32 {
+            renderer.ensure_pipelines(8.0 + width as f32);
+        }
+        assert_eq!(renderer.state.pipelines.len(), MAX_CACHED_PIPELINE_PAIRS);
+        assert!(
+            !renderer
+                .state
+                .pipelines
+                .iter()
+                .any(|(key, _)| *key == 2.0f32.to_bits())
+        );
+
+        renderer.ensure_targets(320, 240);
+        assert_eq!(renderer.counters.target_allocations, 1);
+        renderer.ensure_targets(320, 240);
+        assert_eq!(renderer.counters.target_allocations, 1);
+        renderer.ensure_targets(640, 480);
+        assert_eq!(renderer.counters.target_allocations, 2);
+        let targets = renderer.state.targets.as_ref().expect("targets");
+        assert_eq!(targets.readback.len(), 2);
+        assert_eq!(targets.unpadded_bytes_per_row, 640 * 4);
+        assert_eq!(
+            targets.padded_bytes_per_row % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
+            0
         );
     }
 }

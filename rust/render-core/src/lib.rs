@@ -2,6 +2,11 @@
 //! them with wgpu (metallic-roughness surfaces + line edges) into RGBA/PNG
 //! bytes, with no surface/canvas — works headless on native
 //! (Metal/Vulkan/DX12) and in the browser via WebGPU.
+//!
+//! Architecture: state crosses the boundary as handles, work crosses as plans.
+//! [`Renderer`] keeps the GPU device, shader, and pipeline/target caches alive
+//! across calls; the free functions are one-shot sugar (create → render →
+//! destroy) with unchanged signatures.
 
 mod bench;
 mod capture_overlay;
@@ -15,10 +20,10 @@ use glb::parse_glb;
 pub use bench::{bench_encodes, bench_multi_view, codec_conformance};
 pub use encode::{ImageFormat, encode, encode_jpeg, encode_png, encode_webp};
 pub use options::{
-    LightRequest, LightingRequest, LightingRigRequest, RenderImagesRequest, RenderRequest,
-    RenderView,
+    CreateRendererRequest, LightRequest, LightingRequest, LightingRigRequest, RenderImagesRequest,
+    RenderRequest, RenderView,
 };
-pub use render::Rendered;
+pub use render::{Rendered, Renderer};
 
 /// World axis the camera treats as "up" when placing the spherical eye and
 /// fitting the view. Kernel-exported GLBs are standard Y-up.
@@ -194,7 +199,11 @@ impl std::fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
-/// Per-view timings recorded by the benchmark path.
+/// Host clock supplying monotonic milliseconds. `Sync` because the native plan
+/// executor reads stage timings from encode worker threads.
+pub type ProfileClock = dyn Fn() -> f64 + Sync;
+
+/// Per-view timings recorded by profiled plan calls.
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderViewProfile {
@@ -205,6 +214,9 @@ pub struct RenderViewProfile {
 }
 
 /// Batch setup/resource evidence recorded without changing the render path.
+/// The resource counters attribute acquisitions to the profiled call, so a
+/// warm renderer reports zero device requests while the one-shot sugar
+/// reports one.
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderBatchProfile {
@@ -217,6 +229,14 @@ pub struct RenderBatchProfile {
     pub scene_uploads: u32,
     pub target_allocations: u32,
     pub views: Vec<RenderViewProfile>,
+}
+
+impl RenderBatchProfile {
+    /// Camel-cased JSON for the bindings' wire shape.
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("profile fields always serialize")
+    }
 }
 
 fn validate_options(options: &RenderOptions) -> Result<(), RenderError> {
@@ -247,7 +267,7 @@ fn validate_options(options: &RenderOptions) -> Result<(), RenderError> {
     Ok(())
 }
 
-fn with_view(error: RenderError, id: &str) -> RenderError {
+pub(crate) fn with_view(error: RenderError, id: &str) -> RenderError {
     if id.is_empty() {
         return error;
     }
@@ -269,20 +289,299 @@ fn with_view_result<T>(result: Result<T, RenderError>, id: &str) -> Result<T, Re
     }
 }
 
+fn clock_ms(now: Option<&ProfileClock>) -> f64 {
+    now.map_or(0.0, |clock| clock())
+}
+
+/// Apply one view's camera identity and output overrides to the shared options.
+fn resolved_view_options(options: &RenderOptions, view: &RenderView) -> RenderOptions {
+    let mut view_options = options.clone();
+    view_options.phi_deg = view.phi_deg;
+    view_options.theta_deg = view.theta_deg;
+    view_options.label.clone_from(&view.label);
+    if let Some(width) = view.width {
+        view_options.width = width;
+    }
+    if let Some(height) = view.height {
+        view_options.height = height;
+    }
+    view_options
+}
+
+/// Resolve and validate every view into a plan entry (all CPU: no GPU work has
+/// happened when this rejects).
+fn build_plan(
+    scene: &glb::Scene,
+    options: &RenderOptions,
+    format: ImageFormat,
+    views: &[RenderView],
+) -> Result<Vec<render::PlanEntry>, RenderError> {
+    let mut plan = Vec::with_capacity(views.len());
+    for view in views {
+        let view_options = resolved_view_options(options, view);
+        with_view_result(validate_options(&view_options), &view.id)?;
+        let prepared = with_view_result(
+            capture_overlay::prepare_view(scene, &view_options),
+            &view.id,
+        )?;
+        plan.push(render::PlanEntry {
+            id: view.id.clone(),
+            format: view.format.unwrap_or(format),
+            options: view_options,
+            prepared,
+        });
+    }
+    Ok(plan)
+}
+
+/// Upload the parsed scene and run the plan on a ready renderer, assembling
+/// the profile from the executor's timings and the renderer's counter deltas.
+async fn run_plan(
+    renderer: &mut Renderer,
+    counters_start: render::Counters,
+    parsed: glb::Scene,
+    plan: Vec<render::PlanEntry>,
+    now: Option<&ProfileClock>,
+    parse_ms: f64,
+    setup_started: f64,
+) -> Result<(Vec<Vec<u8>>, Option<RenderBatchProfile>), RenderError> {
+    let mut scene = render::Scene::new(parsed);
+    let buffers = renderer.ensure_uploaded(&mut scene)?;
+    let setup_ms = clock_ms(now) - setup_started;
+    let (images, timings) = renderer.execute_plan(buffers, &plan, now).await?;
+    let profile = now.map(|_| {
+        let delta = renderer.counters().since(counters_start);
+        RenderBatchProfile {
+            parse_ms,
+            setup_ms,
+            peak_readback_bytes: plan
+                .iter()
+                .map(|entry| u64::from(entry.options.width) * u64::from(entry.options.height) * 4)
+                .max()
+                .unwrap_or(0),
+            glb_parses: 1,
+            adapter_device_requests: delta.device_requests,
+            pipeline_sets: delta.pipeline_sets,
+            scene_uploads: delta.scene_uploads,
+            target_allocations: delta.target_allocations,
+            views: plan
+                .iter()
+                .zip(timings)
+                .map(|(entry, view_timings)| RenderViewProfile {
+                    id: entry.id.clone(),
+                    render_ms: view_timings.render_ms,
+                    overlay_ms: view_timings.overlay_ms,
+                    encode_ms: view_timings.encode_ms,
+                })
+                .collect(),
+        }
+    });
+    Ok((images, profile))
+}
+
+/// One-shot sugar: create a renderer, run the plan, destroy the device.
+async fn render_once(
+    glb: &[u8],
+    options: &RenderOptions,
+    format: ImageFormat,
+    views: &[RenderView],
+    now: Option<&ProfileClock>,
+) -> Result<(Vec<Vec<u8>>, Option<RenderBatchProfile>), RenderError> {
+    validate_options(options)?;
+    if views.is_empty() {
+        return Err(RenderError::Parse(
+            "views must contain at least one view".into(),
+        ));
+    }
+    let parse_started = clock_ms(now);
+    let scene = parse_glb(glb).map_err(RenderError::Parse)?;
+    let parse_ms = clock_ms(now) - parse_started;
+    let setup_started = clock_ms(now);
+    let plan = build_plan(&scene, options, format, views)?;
+    let mut renderer = Renderer::new(wgpu::PowerPreference::HighPerformance).await?;
+    let result = run_plan(
+        &mut renderer,
+        render::Counters::default(),
+        scene,
+        plan,
+        now,
+        parse_ms,
+        setup_started,
+    )
+    .await;
+    // Release the device now instead of waiting for GC/drop (wasm especially).
+    renderer.destroy();
+    result
+}
+
+impl Renderer {
+    /// Binding constructor: parse the `createRenderer` request JSON (currently
+    /// `powerPreference`) and bring up the device.
+    pub async fn from_request(options_json: Option<&str>) -> Result<Self, RenderError> {
+        let power = CreateRendererRequest::from_json(options_json)?.resolve()?;
+        Self::new(power).await
+    }
+
+    /// Render ordered identified views on this renderer's warm device, parsing
+    /// and uploading the GLB once. The whole plan executes in one crossing.
+    pub async fn render_glb_to_images(
+        &mut self,
+        glb: &[u8],
+        options: &RenderOptions,
+        format: ImageFormat,
+        views: &[RenderView],
+        now: Option<&ProfileClock>,
+    ) -> Result<(Vec<Vec<u8>>, Option<RenderBatchProfile>), RenderError> {
+        validate_options(options)?;
+        if views.is_empty() {
+            return Err(RenderError::Parse(
+                "views must contain at least one view".into(),
+            ));
+        }
+        let counters_start = self.counters();
+        self.recover_if_lost().await?;
+        let parse_started = clock_ms(now);
+        let scene = parse_glb(glb).map_err(RenderError::Parse)?;
+        let parse_ms = clock_ms(now) - parse_started;
+        let setup_started = clock_ms(now);
+        let plan = build_plan(&scene, options, format, views)?;
+        run_plan(
+            self,
+            counters_start,
+            scene,
+            plan,
+            now,
+            parse_ms,
+            setup_started,
+        )
+        .await
+    }
+
+    /// Render one view on this renderer's warm device straight to
+    /// straight-alpha RGBA8 pixels (overlay stamped, no encode).
+    pub async fn render_glb_to_rgba(
+        &mut self,
+        glb: &[u8],
+        options: &RenderOptions,
+    ) -> Result<Rendered, RenderError> {
+        validate_options(options)?;
+        self.recover_if_lost().await?;
+        let scene = parse_glb(glb).map_err(RenderError::Parse)?;
+        let prepared = capture_overlay::prepare_view(&scene, options)?;
+        let entry = render::PlanEntry {
+            id: String::new(),
+            options: options.clone(),
+            // Unused: the RGBA path stops before encode.
+            format: ImageFormat::Png,
+            prepared,
+        };
+        let mut scene = render::Scene::new(scene);
+        let buffers = self.ensure_uploaded(&mut scene)?;
+        self.render_entry_to_rgba(buffers, &entry).await
+    }
+
+    /// Binding surface: singular render-request JSON on a warm renderer.
+    pub async fn render_image_request(
+        &mut self,
+        glb: &[u8],
+        options_json: &str,
+    ) -> Result<Vec<u8>, RenderError> {
+        let (options, format) = RenderRequest::from_json(options_json)?.resolve()?;
+        let view = singular_view(&options);
+        let (mut images, _) = self
+            .render_glb_to_images(glb, &options, format, std::slice::from_ref(&view), None)
+            .await?;
+        Ok(images.remove(0))
+    }
+
+    /// Binding surface: plural render-request JSON on a warm renderer. The
+    /// request's `profile: true` flag opts into stage timings; `now` supplies
+    /// the clock on wasm (native self-clocks via `Instant`).
+    pub async fn render_images_request(
+        &mut self,
+        glb: &[u8],
+        options_json: &str,
+        now: Option<&ProfileClock>,
+    ) -> Result<(Vec<Vec<u8>>, Option<RenderBatchProfile>), RenderError> {
+        let (options, format, views, want_profile) =
+            RenderImagesRequest::from_json(options_json)?.resolve()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let fallback = instant_clock();
+        let clock: Option<&ProfileClock> = if want_profile {
+            match now {
+                Some(clock) => Some(clock),
+                #[cfg(not(target_arch = "wasm32"))]
+                None => Some(&fallback),
+                #[cfg(target_arch = "wasm32")]
+                None => {
+                    return Err(RenderError::Parse(
+                        "profile requires a host clock on wasm".into(),
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+        self.render_glb_to_images(glb, &options, format, &views, clock)
+            .await
+    }
+
+    /// Binding surface: singular render-request JSON to raw pixels on a warm
+    /// renderer (`format`/`quality` in the request are ignored — nothing is
+    /// encoded).
+    pub async fn render_pixels_request(
+        &mut self,
+        glb: &[u8],
+        options_json: &str,
+    ) -> Result<Rendered, RenderError> {
+        let (options, _format) = RenderRequest::from_json(options_json)?.resolve()?;
+        self.render_glb_to_rgba(glb, &options).await
+    }
+}
+
+fn singular_view(options: &RenderOptions) -> RenderView {
+    RenderView {
+        id: String::new(),
+        label: options.label.clone(),
+        phi_deg: options.phi_deg,
+        theta_deg: options.theta_deg,
+        width: None,
+        height: None,
+        format: None,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn instant_clock() -> impl Fn() -> f64 + Sync {
+    let epoch = std::time::Instant::now();
+    move || epoch.elapsed().as_secs_f64() * 1000.0
+}
+
 /// Render a kernel GLB to straight-alpha RGBA8 (sRGB-encoded) pixels.
 pub async fn render_glb_to_rgba(
     glb: &[u8],
     options: &RenderOptions,
 ) -> Result<Rendered, RenderError> {
     validate_options(options)?;
-    let scene = parse_glb(glb).map_err(RenderError::Parse)?;
-    let prepared = capture_overlay::prepare_view(&scene, options)?;
-    let session = render::RenderSession::new(&scene, options).await?;
-    let mut rendered = session.render_view(prepared.camera, options).await?;
-    if options.include_axes || options.include_label || options.include_scale {
-        capture_overlay::stamp_capture_overlay(&mut rendered, &prepared, &mut Vec::new());
+    // Reject before any GPU work: parse and prepare precede device creation.
+    let parsed = parse_glb(glb).map_err(RenderError::Parse)?;
+    let prepared = capture_overlay::prepare_view(&parsed, options)?;
+    let entry = render::PlanEntry {
+        id: String::new(),
+        options: options.clone(),
+        // Unused: the RGBA path stops before encode.
+        format: ImageFormat::Png,
+        prepared,
+    };
+    let mut renderer = Renderer::new(wgpu::PowerPreference::HighPerformance).await?;
+    let mut scene = render::Scene::new(parsed);
+    let result = async {
+        let buffers = renderer.ensure_uploaded(&mut scene)?;
+        renderer.render_entry_to_rgba(buffers, &entry).await
     }
-    Ok(rendered)
+    .await;
+    renderer.destroy();
+    result
 }
 
 /// Render a kernel GLB straight to encoded image bytes.
@@ -291,13 +590,9 @@ pub async fn render_glb_to_image(
     options: &RenderOptions,
     format: ImageFormat,
 ) -> Result<Vec<u8>, RenderError> {
-    let view = RenderView {
-        id: String::new(),
-        label: options.label.clone(),
-        phi_deg: options.phi_deg,
-        theta_deg: options.theta_deg,
-    };
-    let mut images = render_glb_to_images(glb, options, format, &[view]).await?;
+    let view = singular_view(options);
+    let mut images =
+        render_glb_to_images(glb, options, format, std::slice::from_ref(&view)).await?;
     Ok(images.remove(0))
 }
 
@@ -308,7 +603,7 @@ pub async fn render_glb_to_images(
     format: ImageFormat,
     views: &[RenderView],
 ) -> Result<Vec<Vec<u8>>, RenderError> {
-    render_glb_to_images_inner(glb, options, format, views, None)
+    render_once(glb, options, format, views, None)
         .await
         .map(|(images, _)| images)
 }
@@ -319,90 +614,10 @@ pub async fn render_glb_to_images_profiled(
     options: &RenderOptions,
     format: ImageFormat,
     views: &[RenderView],
-    now: &dyn Fn() -> f64,
+    now: &ProfileClock,
 ) -> Result<(Vec<Vec<u8>>, RenderBatchProfile), RenderError> {
-    let (images, profile) =
-        render_glb_to_images_inner(glb, options, format, views, Some(now)).await?;
+    let (images, profile) = render_once(glb, options, format, views, Some(now)).await?;
     Ok((images, profile.expect("profile requested")))
-}
-
-async fn render_glb_to_images_inner(
-    glb: &[u8],
-    options: &RenderOptions,
-    format: ImageFormat,
-    views: &[RenderView],
-    now: Option<&dyn Fn() -> f64>,
-) -> Result<(Vec<Vec<u8>>, Option<RenderBatchProfile>), RenderError> {
-    validate_options(options)?;
-    if views.is_empty() {
-        return Err(RenderError::Parse(
-            "views must contain at least one view".into(),
-        ));
-    }
-    let parse_started = now.map_or(0.0, |clock| clock());
-    let scene = parse_glb(glb).map_err(RenderError::Parse)?;
-    let parse_ms = now.map_or(0.0, |clock| clock() - parse_started);
-    let setup_started = now.map_or(0.0, |clock| clock());
-    let mut prepared = Vec::with_capacity(views.len());
-    for view in views {
-        let mut view_options = options.clone();
-        view_options.phi_deg = view.phi_deg;
-        view_options.theta_deg = view.theta_deg;
-        view_options.label.clone_from(&view.label);
-        with_view_result(validate_options(&view_options), &view.id)?;
-        prepared.push(with_view_result(
-            capture_overlay::prepare_view(&scene, &view_options),
-            &view.id,
-        )?);
-    }
-    let session = render::RenderSession::new(&scene, options).await?;
-    let setup_ms = now.map_or(0.0, |clock| clock() - setup_started);
-    let mut images = Vec::with_capacity(views.len());
-    let mut overlay_scratch = Vec::new();
-    let mut view_profiles = Vec::with_capacity(if now.is_some() { views.len() } else { 0 });
-    for (view, prepared_view) in views.iter().zip(prepared) {
-        let mut view_options = options.clone();
-        view_options.phi_deg = view.phi_deg;
-        view_options.theta_deg = view.theta_deg;
-        view_options.label.clone_from(&view.label);
-        let render_started = now.map_or(0.0, |clock| clock());
-        let rendered = session
-            .render_view(prepared_view.camera, &view_options)
-            .await;
-        let mut rendered = with_view_result(rendered, &view.id)?;
-        let render_ms = now.map_or(0.0, |clock| clock() - render_started);
-        let overlay_started = now.map_or(0.0, |clock| clock());
-        if view_options.include_axes || view_options.include_label || view_options.include_scale {
-            capture_overlay::stamp_capture_overlay(
-                &mut rendered,
-                &prepared_view,
-                &mut overlay_scratch,
-            );
-        }
-        let overlay_ms = now.map_or(0.0, |clock| clock() - overlay_started);
-        let encode_started = now.map_or(0.0, |clock| clock());
-        images.push(with_view_result(encode(&rendered, format), &view.id)?);
-        if let Some(clock) = now {
-            view_profiles.push(RenderViewProfile {
-                id: view.id.clone(),
-                render_ms,
-                overlay_ms,
-                encode_ms: clock() - encode_started,
-            });
-        }
-    }
-    let profile = now.map(|_| RenderBatchProfile {
-        parse_ms,
-        setup_ms,
-        peak_readback_bytes: u64::from(options.width) * u64::from(options.height) * 4,
-        glb_parses: 1,
-        adapter_device_requests: 1,
-        pipeline_sets: 1,
-        scene_uploads: 1,
-        target_allocations: 1,
-        views: view_profiles,
-    });
-    Ok((images, profile))
 }
 
 /// One-call surface for the wasm/napi bindings: parse the TS façade's JSON
@@ -412,19 +627,51 @@ pub async fn render_glb_request(glb: &[u8], options_json: &str) -> Result<Vec<u8
     render_glb_to_image(glb, &options, format).await
 }
 
-/// Binding surface for an ordered plural request.
+/// Binding surface for an ordered plural request. The request's
+/// `profile: true` flag opts into stage timings; `now` supplies the clock on
+/// wasm (native self-clocks via `Instant`).
 pub async fn render_glb_images_request(
     glb: &[u8],
     options_json: &str,
-) -> Result<Vec<Vec<u8>>, RenderError> {
-    let (options, format, views) = RenderImagesRequest::from_json(options_json)?.resolve()?;
-    render_glb_to_images(glb, &options, format, &views).await
+    now: Option<&ProfileClock>,
+) -> Result<(Vec<Vec<u8>>, Option<RenderBatchProfile>), RenderError> {
+    let (options, format, views, want_profile) =
+        RenderImagesRequest::from_json(options_json)?.resolve()?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let fallback = instant_clock();
+    let clock: Option<&ProfileClock> = if want_profile {
+        match now {
+            Some(clock) => Some(clock),
+            #[cfg(not(target_arch = "wasm32"))]
+            None => Some(&fallback),
+            #[cfg(target_arch = "wasm32")]
+            None => {
+                return Err(RenderError::Parse(
+                    "profile requires a host clock on wasm".into(),
+                ));
+            }
+        }
+    } else {
+        None
+    };
+    render_once(glb, &options, format, &views, clock).await
 }
 
-/// Report the adapter wgpu selects (backend + device name) — used by spike
-/// harnesses and CI to assert the expected backend (Metal/lavapipe/WARP).
+/// Binding surface for a singular raw-pixels request (`format`/`quality` in
+/// the request are ignored — nothing is encoded).
+pub async fn render_glb_pixels_request(
+    glb: &[u8],
+    options_json: &str,
+) -> Result<Rendered, RenderError> {
+    let (options, _format) = RenderRequest::from_json(options_json)?.resolve()?;
+    render_glb_to_rgba(glb, &options).await
+}
+
+/// Report the adapter wgpu selects (backend + device name) — lets consumers
+/// distinguish absent WebGPU from a software "(Cpu)" adapter before
+/// committing, and lets CI assert the expected backend (Metal/lavapipe/WARP).
 pub async fn describe_adapter() -> Result<String, RenderError> {
-    let adapter = render::request_adapter().await?;
+    let adapter = render::request_adapter(wgpu::PowerPreference::HighPerformance).await?;
     let info = adapter.get_info();
     Ok(format!(
         "{:?} / {} ({:?})",
@@ -435,7 +682,7 @@ pub async fn describe_adapter() -> Result<String, RenderError> {
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
-    use std::cell::Cell;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use serde_json::json;
 
@@ -460,6 +707,18 @@ mod tests {
         }
         .to_vec()
         .expect("variant GLB")
+    }
+
+    fn view(id: &str, phi_deg: f32, theta_deg: f32) -> RenderView {
+        RenderView {
+            id: id.into(),
+            label: None,
+            phi_deg,
+            theta_deg,
+            width: None,
+            height: None,
+            format: None,
+        }
     }
 
     #[test]
@@ -575,6 +834,40 @@ mod tests {
     }
 
     #[test]
+    fn view_overrides_resolve_onto_shared_options() {
+        let options = RenderOptions::default();
+        let plain = resolved_view_options(&options, &view("front", 90.0, 0.0));
+        assert_eq!((plain.width, plain.height), (768, 432));
+        assert_eq!((plain.phi_deg, plain.theta_deg), (90.0, 0.0));
+
+        let overridden = resolved_view_options(
+            &options,
+            &RenderView {
+                width: Some(1536),
+                height: Some(804),
+                format: Some(ImageFormat::Jpeg { quality: 80 }),
+                ..view("og", 60.0, -45.0)
+            },
+        );
+        assert_eq!((overridden.width, overridden.height), (1536, 804));
+
+        // A per-view dimension override outside the valid range rejects with
+        // the view's identity attached.
+        let bad = RenderView {
+            width: Some(8),
+            ..view("tiny", 60.0, -45.0)
+        };
+        let error = pollster::block_on(render_glb_to_images(
+            FIXTURE,
+            &RenderOptions::default(),
+            ImageFormat::Png,
+            std::slice::from_ref(&bad),
+        ))
+        .unwrap_err();
+        assert!(error.to_string().contains("view \"tiny\""), "{error}");
+    }
+
+    #[test]
     fn public_requests_reject_before_gpu_work() {
         let invalid_options = RenderOptions {
             width: 1,
@@ -614,39 +907,37 @@ mod tests {
                 b"bad",
                 &RenderOptions::default(),
                 ImageFormat::Png,
-                &[RenderView {
-                    id: "front".into(),
-                    label: None,
-                    phi_deg: 90.0,
-                    theta_deg: 0.0,
-                }],
+                &[view("front", 90.0, 0.0)],
                 &|| 0.0,
             ))
             .is_err()
         );
         assert!(pollster::block_on(render_glb_request(FIXTURE, "{")).is_err());
         assert!(pollster::block_on(render_glb_request(FIXTURE, r#"{"width":1}"#)).is_err());
-        assert!(pollster::block_on(render_glb_images_request(FIXTURE, "{}")).is_err());
+        assert!(pollster::block_on(render_glb_images_request(FIXTURE, "{}", None)).is_err());
         assert!(
             pollster::block_on(render_glb_images_request(
                 FIXTURE,
-                r#"{"views":[{"id":"x","phi":null,"theta":0}]}"#
+                r#"{"views":[{"id":"x","phi":null,"theta":0}]}"#,
+                None,
             ))
             .is_err()
         );
+        assert!(pollster::block_on(render_glb_pixels_request(FIXTURE, r#"{"width":1}"#)).is_err());
+        assert!(
+            pollster::block_on(Renderer::from_request(Some(
+                r#"{"powerPreference":"turbo"}"#
+            )))
+            .is_err()
+        );
 
-        let view = RenderView {
-            id: "bad".into(),
-            label: None,
-            phi_deg: 90.0,
-            theta_deg: 0.0,
-        };
+        let front = view("bad", 90.0, 0.0);
         assert!(
             pollster::block_on(render_glb_to_images(
                 FIXTURE,
                 &invalid_options,
                 ImageFormat::Png,
-                std::slice::from_ref(&view),
+                std::slice::from_ref(&front),
             ))
             .is_err()
         );
@@ -657,7 +948,7 @@ mod tests {
                 ImageFormat::Png,
                 &[RenderView {
                     phi_deg: f32::NAN,
-                    ..view.clone()
+                    ..front.clone()
                 }],
             ))
             .is_err()
@@ -670,7 +961,7 @@ mod tests {
                     ..Default::default()
                 },
                 ImageFormat::Png,
-                std::slice::from_ref(&view),
+                std::slice::from_ref(&front),
             ))
             .is_err()
         );
@@ -689,10 +980,8 @@ mod tests {
             ..Default::default()
         };
         let views = [RenderView {
-            id: "front".into(),
             label: Some("Front".into()),
-            phi_deg: 90.0,
-            theta_deg: 0.0,
+            ..view("front", 90.0, 0.0)
         }];
 
         let rendered =
@@ -732,11 +1021,8 @@ mod tests {
         .expect("batch render");
         assert_eq!(&images[0][..4], b"RIFF");
 
-        let tick = Cell::new(0.0);
-        let clock = || {
-            tick.set(tick.get() + 1.0);
-            tick.get()
-        };
+        let tick = AtomicU64::new(0);
+        let clock = move || (tick.fetch_add(1, Ordering::Relaxed) + 1) as f64;
         let (_, profile) = pollster::block_on(render_glb_to_images_profiled(
             FIXTURE,
             &options,
@@ -746,21 +1032,96 @@ mod tests {
         ))
         .expect("profiled render");
         assert_eq!(profile.glb_parses, 1);
+        assert_eq!(profile.adapter_device_requests, 1);
+        assert_eq!(profile.scene_uploads, 1);
         assert_eq!(profile.views[0].id, "front");
         assert!(profile.views[0].encode_ms > 0.0);
 
         let request = r#"{"format":"png","width":192,"height":192,"background":[1,1,1,1]}"#;
         assert!(pollster::block_on(render_glb_request(FIXTURE, request)).is_ok());
         let plural = r#"{"format":"png","width":192,"height":192,"background":[1,1,1,1],"views":[{"id":"front","phi":90,"theta":0}]}"#;
-        assert!(pollster::block_on(render_glb_images_request(FIXTURE, plural)).is_ok());
+        assert!(pollster::block_on(render_glb_images_request(FIXTURE, plural, None)).is_ok());
+        let pixels = pollster::block_on(render_glb_pixels_request(
+            FIXTURE,
+            r#"{"width":192,"height":192}"#,
+        ))
+        .expect("pixels request");
+        assert_eq!(pixels.width, 192);
+        assert_eq!(pixels.rgba.len(), 192 * 192 * 4);
         assert!(
             pollster::block_on(describe_adapter())
                 .expect("adapter description")
                 .contains('/')
         );
 
-        let benchmark = pollster::block_on(bench_multi_view(FIXTURE, 192, 192, &clock))
+        let benchmark = pollster::block_on(bench::bench_multi_view(FIXTURE, 192, 192, &clock))
             .expect("multi-view benchmark");
         assert_eq!(benchmark["variants"].as_array().map(Vec::len), Some(8));
+    }
+
+    #[test]
+    fn warm_renderer_reuses_the_device_across_calls_and_plans() {
+        let mut renderer = pollster::block_on(Renderer::from_request(None)).expect("renderer");
+        let options = RenderOptions {
+            width: 192,
+            height: 192,
+            ..Default::default()
+        };
+
+        // One-shot sugar and the warm renderer must produce identical bytes.
+        let cold = pollster::block_on(render_glb_to_image(FIXTURE, &options, ImageFormat::Png))
+            .expect("cold render");
+        let warm = pollster::block_on(
+            renderer.render_image_request(FIXTURE, r#"{"format":"png","width":192,"height":192}"#),
+        )
+        .expect("warm render");
+        assert_eq!(cold, warm);
+
+        // The second call reuses the device: profiled counters attribute zero
+        // adapter/device requests and zero pipeline builds to the call.
+        let plural = r#"{"format":"png","width":192,"height":192,"profile":true,"views":[{"id":"front","phi":90,"theta":0},{"id":"top","phi":0,"theta":0}]}"#;
+        let (images, profile) =
+            pollster::block_on(renderer.render_images_request(FIXTURE, plural, None))
+                .expect("warm batch");
+        assert_eq!(images.len(), 2);
+        let profile = profile.expect("profile requested");
+        assert_eq!(profile.adapter_device_requests, 0);
+        assert_eq!(profile.pipeline_sets, 0);
+        assert_eq!(profile.target_allocations, 0);
+        assert_eq!(profile.scene_uploads, 1);
+        assert_eq!(profile.views.len(), 2);
+        assert!(profile.views[0].encode_ms > 0.0);
+
+        // R15: per-view output overrides — a mixed-size, mixed-format ladder
+        // in one plan call, byte-identical to the equivalent singular calls.
+        let ladder = r#"{"format":"png","width":192,"height":192,"views":[{"id":"card","phi":60,"theta":-45},{"id":"og","phi":60,"theta":-45,"width":256,"height":256},{"id":"hero","phi":60,"theta":-45,"width":256,"height":256,"format":"webp","quality":0.9}]}"#;
+        let (ladder_images, _) =
+            pollster::block_on(renderer.render_images_request(FIXTURE, ladder, None))
+                .expect("ladder");
+        assert_eq!(ladder_images.len(), 3);
+        let og_singular = pollster::block_on(renderer.render_image_request(
+            FIXTURE,
+            r#"{"format":"png","width":256,"height":256,"phi":60,"theta":-45}"#,
+        ))
+        .expect("og singular");
+        let hero_singular = pollster::block_on(renderer.render_image_request(
+            FIXTURE,
+            r#"{"format":"webp","quality":0.9,"width":256,"height":256,"phi":60,"theta":-45}"#,
+        ))
+        .expect("hero singular");
+        assert_eq!(ladder_images[0], cold);
+        assert_eq!(ladder_images[1], og_singular);
+        assert_eq!(ladder_images[2], hero_singular);
+        assert_eq!(&ladder_images[2][..4], b"RIFF");
+
+        // Raw pixels come from the same pathway, stopping before encode.
+        let pixels = pollster::block_on(
+            renderer.render_pixels_request(FIXTURE, r#"{"width":192,"height":192}"#),
+        )
+        .expect("pixels");
+        assert_eq!((pixels.width, pixels.height), (192, 192));
+        assert_eq!(pixels.rgba.len(), 192 * 192 * 4);
+
+        renderer.destroy();
     }
 }

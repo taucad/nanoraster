@@ -101,45 +101,24 @@ pub async fn bench_multi_view(
     glb: &[u8],
     width: u32,
     height: u32,
-    now: &dyn Fn() -> f64,
+    now: &crate::ProfileClock,
 ) -> Result<serde_json::Value, RenderError> {
+    let view = |id: &str, label: &str, phi_deg: f32, theta_deg: f32| RenderView {
+        id: id.into(),
+        label: Some(label.into()),
+        phi_deg,
+        theta_deg,
+        width: None,
+        height: None,
+        format: None,
+    };
     let views = [
-        RenderView {
-            id: "front".into(),
-            label: Some("Front".into()),
-            phi_deg: 90.0,
-            theta_deg: 270.0,
-        },
-        RenderView {
-            id: "back".into(),
-            label: Some("Back".into()),
-            phi_deg: 90.0,
-            theta_deg: 90.0,
-        },
-        RenderView {
-            id: "right".into(),
-            label: Some("Right".into()),
-            phi_deg: 90.0,
-            theta_deg: 0.0,
-        },
-        RenderView {
-            id: "left".into(),
-            label: Some("Left".into()),
-            phi_deg: 90.0,
-            theta_deg: 180.0,
-        },
-        RenderView {
-            id: "top".into(),
-            label: Some("Top".into()),
-            phi_deg: 0.0,
-            theta_deg: 0.0,
-        },
-        RenderView {
-            id: "bottom".into(),
-            label: Some("Bottom".into()),
-            phi_deg: 180.0,
-            theta_deg: 0.0,
-        },
+        view("front", "Front", 90.0, 270.0),
+        view("back", "Back", 90.0, 90.0),
+        view("right", "Right", 90.0, 0.0),
+        view("left", "Left", 90.0, 180.0),
+        view("top", "Top", 0.0, 0.0),
+        view("bottom", "Bottom", 180.0, 0.0),
     ];
     let mut variants = Vec::new();
     for bits in 0..8 {

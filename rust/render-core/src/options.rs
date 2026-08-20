@@ -80,7 +80,8 @@ pub struct RenderRequest {
     pub lighting: Option<LightingRequest>,
 }
 
-/// Wire shape for one identified camera in a batch.
+/// Wire shape for one identified camera in a batch: camera identity plus
+/// optional per-view output overrides defaulting to the shared values.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RenderImageViewRequest {
@@ -88,6 +89,10 @@ pub struct RenderImageViewRequest {
     pub label: Option<String>,
     pub phi: f32,
     pub theta: f32,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub format: Option<String>,
+    pub quality: Option<f32>,
 }
 
 /// Wire shape for ordered multi-image rendering.
@@ -106,16 +111,48 @@ pub struct RenderImagesRequest {
     pub include_label: Option<bool>,
     pub include_scale: Option<bool>,
     pub lighting: Option<LightingRequest>,
+    pub profile: Option<bool>,
     pub views: Vec<RenderImageViewRequest>,
 }
 
-/// Resolved camera view. IDs are carried so failures can name the view.
+/// Resolved camera view. IDs are carried so failures can name the view; the
+/// output overrides are `None` when the shared values apply.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderView {
     pub id: String,
     pub label: Option<String>,
     pub phi_deg: f32,
     pub theta_deg: f32,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub format: Option<ImageFormat>,
+}
+
+/// Wire shape for `createRenderer` options.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+pub struct CreateRendererRequest {
+    pub power_preference: Option<String>,
+}
+
+impl CreateRendererRequest {
+    pub fn from_json(json: Option<&str>) -> Result<Self, RenderError> {
+        match json {
+            None => Ok(Self::default()),
+            Some(json) => serde_json::from_str(json)
+                .map_err(|error| RenderError::Parse(format!("options: {error}"))),
+        }
+    }
+
+    pub fn resolve(&self) -> Result<wgpu::PowerPreference, RenderError> {
+        match self.power_preference.as_deref() {
+            None | Some("high-performance") => Ok(wgpu::PowerPreference::HighPerformance),
+            Some("low-power") => Ok(wgpu::PowerPreference::LowPower),
+            Some(other) => Err(RenderError::Parse(format!(
+                "powerPreference {other:?} not high-performance/low-power"
+            ))),
+        }
+    }
 }
 
 struct CommonRequest<'a> {
@@ -175,13 +212,17 @@ impl RenderImagesRequest {
         serde_json::from_str(json).map_err(|error| RenderError::Parse(format!("options: {error}")))
     }
 
-    pub fn resolve(&self) -> Result<(RenderOptions, ImageFormat, Vec<RenderView>), RenderError> {
+    pub fn resolve(
+        &self,
+    ) -> Result<(RenderOptions, ImageFormat, Vec<RenderView>, bool), RenderError> {
         let (options, format) = resolve_common(self.common())?;
         if self.views.is_empty() {
             return Err(RenderError::Parse(
                 "views must contain at least one view".into(),
             ));
         }
+        let shared_format_name = self.format.as_deref().unwrap_or("png");
+        let annotated = options.include_axes || options.include_label || options.include_scale;
         let mut ids = HashSet::with_capacity(self.views.len());
         let mut views = Vec::with_capacity(self.views.len());
         for (index, view) in self.views.iter().enumerate() {
@@ -206,6 +247,41 @@ impl RenderImagesRequest {
                     "views[{index}].theta must be finite"
                 )));
             }
+            for (name, value) in [("width", view.width), ("height", view.height)] {
+                if let Some(value) = value
+                    && !(MIN_DIMENSION..=MAX_DIMENSION).contains(&value)
+                {
+                    return Err(RenderError::Parse(format!(
+                        "views[{index}].{name} {value} outside {MIN_DIMENSION}..={MAX_DIMENSION}"
+                    )));
+                }
+            }
+            if annotated
+                && (view.width.unwrap_or(options.width) < ANNOTATED_MIN_DIMENSION
+                    || view.height.unwrap_or(options.height) < ANNOTATED_MIN_DIMENSION)
+            {
+                return Err(RenderError::Parse(format!(
+                    "views[{index}]: annotated images must be at least {ANNOTATED_MIN_DIMENSION}x{ANNOTATED_MIN_DIMENSION}"
+                )));
+            }
+            if let Some(quality) = view.quality
+                && (!quality.is_finite() || !(0.0..=1.0).contains(&quality))
+            {
+                return Err(RenderError::Parse(format!(
+                    "views[{index}].quality {quality} outside 0..=1"
+                )));
+            }
+            // A per-view format or quality resolves against the same defaults
+            // and lossless-only-at-exactly-1 rule as the shared pair.
+            let view_format = if view.format.is_some() || view.quality.is_some() {
+                let name = view.format.as_deref().unwrap_or(shared_format_name);
+                Some(
+                    resolve_format(name, view.quality.or(self.quality))
+                        .map_err(|error| RenderError::Parse(format!("views[{index}]: {error}")))?,
+                )
+            } else {
+                None
+            };
             validate_optional_label(view.label.as_deref(), &format!("views[{index}].label"))?;
             if options.include_label && view.label.is_none() {
                 return Err(RenderError::Parse(format!(
@@ -217,9 +293,12 @@ impl RenderImagesRequest {
                 label: view.label.clone(),
                 phi_deg: view.phi,
                 theta_deg: view.theta,
+                width: view.width,
+                height: view.height,
+                format: view_format,
             });
         }
-        Ok((options, format, views))
+        Ok((options, format, views, self.profile.unwrap_or(false)))
     }
 
     fn common(&self) -> CommonRequest<'_> {
@@ -268,19 +347,6 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
             "margin {margin} outside 0..=0.5"
         )));
     }
-    // WebP defaults to 1 (lossless, matching earlier lossless-only releases);
-    // JPEG keeps 0.92. PNG ignores quality entirely.
-    let default_quality = if request.format == Some("webp") {
-        1.0
-    } else {
-        0.92
-    };
-    let quality = request.quality.unwrap_or(default_quality);
-    if !quality.is_finite() || !(0.0..=1.0).contains(&quality) {
-        return Err(RenderError::Parse(format!(
-            "quality {quality} outside 0..=1"
-        )));
-    }
     let up = match request.up {
         None => defaults.up,
         Some("x") => UpAxis::X,
@@ -309,16 +375,8 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
 
     let lighting = resolve_lighting(request.lighting)?;
 
-    let format_name = request.format.unwrap_or("png");
-    // Only an exact quality of 1 selects lossless WebP: rounding alone would
-    // send 0.995..1.0 to 100, silently breaking the "below 1 is lossy"
-    // contract.
-    let encoder_quality = match (quality * 100.0).round() as u8 {
-        100 if quality < 1.0 => 99,
-        rounded => rounded,
-    };
-    let format = ImageFormat::from_name(format_name, encoder_quality)
-        .map_err(|_| RenderError::Parse(format!("format {format_name:?} not png/webp/jpeg/jpg")))?;
+    let format = resolve_format(request.format.unwrap_or("png"), request.quality)
+        .map_err(RenderError::Parse)?;
 
     Ok((
         RenderOptions {
@@ -337,6 +395,27 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
         },
         format,
     ))
+}
+
+/// Resolve a format name plus 0..=1 quality into the encoder format, applying
+/// the per-format quality default and the lossless-only-at-exactly-1 WebP
+/// rule. WebP defaults to 1 (lossless, matching earlier lossless-only
+/// releases); JPEG keeps 0.92. PNG ignores quality entirely.
+fn resolve_format(name: &str, quality: Option<f32>) -> Result<ImageFormat, String> {
+    let default_quality = if name == "webp" { 1.0 } else { 0.92 };
+    let quality = quality.unwrap_or(default_quality);
+    if !quality.is_finite() || !(0.0..=1.0).contains(&quality) {
+        return Err(format!("quality {quality} outside 0..=1"));
+    }
+    // Only an exact quality of 1 selects lossless WebP: rounding alone would
+    // send 0.995..1.0 to 100, silently breaking the "below 1 is lossy"
+    // contract.
+    let encoder_quality = match (quality * 100.0).round() as u8 {
+        100 if quality < 1.0 => 99,
+        rounded => rounded,
+    };
+    ImageFormat::from_name(name, encoder_quality)
+        .map_err(|_| format!("format {name:?} not png/webp/jpeg/jpg"))
 }
 
 /// `'studio'`, omitted, and the studio values spelled out all resolve to the
@@ -507,7 +586,7 @@ mod tests {
 
     #[test]
     fn plural_resolves_shared_settings_and_ordered_views() {
-        let (options, format, views) = RenderImagesRequest::from_json(
+        let (options, format, views, profile) = RenderImagesRequest::from_json(
             r#"{"format":"webp","includeAxes":true,"includeLabel":true,"includeScale":true,"views":[{"id":"front","label":"Front","phi":90,"theta":0},{"id":"top","label":"Top","phi":0,"theta":0}]}"#,
         )
         .expect("parse")
@@ -516,10 +595,45 @@ mod tests {
         assert!(options.include_axes);
         assert!(options.include_label);
         assert!(options.include_scale);
+        assert!(!profile);
         assert_eq!(views[0].label.as_deref(), Some("Front"));
         assert_eq!(format, ImageFormat::WebP { quality: 100 });
         assert_eq!(views[0].id, "front");
         assert_eq!(views[1].id, "top");
+        assert_eq!(views[0].width, None);
+        assert_eq!(views[0].format, None);
+    }
+
+    #[test]
+    fn plural_resolves_per_view_output_overrides() {
+        let (options, format, views, profile) = RenderImagesRequest::from_json(
+            r#"{"format":"webp","quality":0.9,"width":768,"height":432,"profile":true,"views":[
+                {"id":"card","phi":60,"theta":-45},
+                {"id":"og","phi":60,"theta":-45,"width":1536,"height":804},
+                {"id":"hero","phi":60,"theta":-45,"format":"png"},
+                {"id":"print","phi":60,"theta":-45,"format":"jpeg","quality":0.8},
+                {"id":"exact","phi":60,"theta":-45,"quality":1}
+            ]}"#,
+        )
+        .expect("parse")
+        .resolve()
+        .expect("resolve");
+        assert!(profile);
+        // Shared pair: lossy webp at 0.9.
+        assert_eq!(format, ImageFormat::WebP { quality: 90 });
+        // No overrides: shared values apply.
+        assert_eq!(views[0].format, None);
+        // Dimensions only: format untouched.
+        assert_eq!((views[1].width, views[1].height), (Some(1536), Some(804)));
+        assert_eq!(views[1].format, None);
+        // Format override without quality: PNG ignores the shared quality.
+        assert_eq!(views[2].format, Some(ImageFormat::Png));
+        // Format + quality override.
+        assert_eq!(views[3].format, Some(ImageFormat::Jpeg { quality: 80 }));
+        // Quality override alone resolves against the shared format name, and
+        // exactly 1 selects lossless per the shared WebP rule.
+        assert_eq!(views[4].format, Some(ImageFormat::WebP { quality: 100 }));
+        assert_eq!(options.width, 768);
     }
 
     #[test]
@@ -552,7 +666,7 @@ mod tests {
             r#"{"views":[]}"#,
             r#"{"views":[{"id":"../front","phi":90,"theta":0}]}"#,
             r#"{"views":[{"id":"front","phi":90,"theta":0},{"id":"front","phi":0,"theta":0}]}"#,
-            r#"{"views":[{"id":"front","phi":90,"theta":0,"format":"png"}]}"#,
+            r#"{"views":[{"id":"front","phi":90,"theta":0,"zoom":2}]}"#,
             r#"{"phi":90,"views":[{"id":"front","phi":90,"theta":0}]}"#,
             r#"{"includeLabel":true,"views":[{"id":"front","phi":90,"theta":0}]}"#,
         ] {
@@ -562,6 +676,80 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn rejects_invalid_per_view_output_overrides_by_name() {
+        let cases = [
+            (
+                r#"{"views":[{"id":"front","phi":90,"theta":0,"width":15}]}"#,
+                "parse: views[0].width 15 outside 16..=4096",
+            ),
+            (
+                r#"{"views":[{"id":"front","phi":90,"theta":0,"height":4097}]}"#,
+                "parse: views[0].height 4097 outside 16..=4096",
+            ),
+            (
+                r#"{"views":[{"id":"front","phi":90,"theta":0,"quality":1.5}]}"#,
+                "parse: views[0].quality 1.5 outside 0..=1",
+            ),
+            (
+                r#"{"views":[{"id":"front","phi":90,"theta":0,"format":"gif"}]}"#,
+                "parse: views[0]: format \"gif\" not png/webp/jpeg/jpg",
+            ),
+            (
+                r#"{"includeAxes":true,"views":[{"id":"front","phi":90,"theta":0,"width":191}]}"#,
+                "parse: views[0]: annotated images must be at least 192x192",
+            ),
+        ];
+        for (json, expected) in cases {
+            let error = RenderImagesRequest::from_json(json)
+                .and_then(|request| request.resolve())
+                .unwrap_err()
+                .to_string();
+            assert_eq!(error, expected, "{json}");
+        }
+    }
+
+    #[test]
+    fn create_renderer_request_resolves_power_preferences() {
+        assert_eq!(
+            CreateRendererRequest::from_json(None)
+                .expect("parse")
+                .resolve()
+                .expect("resolve"),
+            wgpu::PowerPreference::HighPerformance
+        );
+        for (json, expected) in [
+            (
+                r#"{"powerPreference":"high-performance"}"#,
+                wgpu::PowerPreference::HighPerformance,
+            ),
+            (
+                r#"{"powerPreference":"low-power"}"#,
+                wgpu::PowerPreference::LowPower,
+            ),
+            (r"{}", wgpu::PowerPreference::HighPerformance),
+        ] {
+            assert_eq!(
+                CreateRendererRequest::from_json(Some(json))
+                    .expect("parse")
+                    .resolve()
+                    .expect("resolve"),
+                expected,
+                "{json}"
+            );
+        }
+        assert_eq!(
+            CreateRendererRequest::from_json(Some(r#"{"powerPreference":"turbo"}"#))
+                .expect("parse")
+                .resolve()
+                .unwrap_err()
+                .to_string(),
+            "parse: powerPreference \"turbo\" not high-performance/low-power"
+        );
+        assert!(CreateRendererRequest::from_json(Some(r#"{"battery":true}"#)).is_err());
+        assert!(CreateRendererRequest::from_json(Some("not json")).is_err());
     }
 
     #[test]
@@ -599,7 +787,7 @@ mod tests {
             assert_eq!(lighting_of(json).expect("resolve"), studio, "{json}");
         }
         // The plural request carries the same field.
-        let (options, _, _) = RenderImagesRequest::from_json(
+        let (options, _, _, _) = RenderImagesRequest::from_json(
             r#"{"lighting":"studio","views":[{"id":"front","phi":90,"theta":0}]}"#,
         )
         .expect("parse")
@@ -741,6 +929,10 @@ mod tests {
                     label: None,
                     phi,
                     theta,
+                    width: None,
+                    height: None,
+                    format: None,
+                    quality: None,
                 }],
                 ..Default::default()
             };
