@@ -300,41 +300,31 @@ impl<W: Write> Vp8Encoder<W> {
             macroblock_info.luma_mode as i8,
         );
 
-        match macroblock_info.luma_mode.into_intra() {
-            None => {
-                // 11.3 code each of the subblocks
-                if let Some(bpred) = macroblock_info.luma_bpred {
-                    for y in 0usize..4 {
-                        let mut left = self.left_b_pred[y];
-                        for x in 0usize..4 {
-                            let top = self.top_b_pred[mbx * 4 + x];
-                            let probs = &KEYFRAME_BPRED_MODE_PROBS[top as usize][left as usize];
-                            let intra_mode = bpred[y * 4 + x];
-                            self.encoder.write_with_tree(
-                                &KEYFRAME_BPRED_MODE_TREE,
-                                probs,
-                                intra_mode as i8,
-                            );
-                            left = intra_mode;
-                            self.top_b_pred[mbx * 4 + x] = intra_mode;
-                        }
-                        self.left_b_pred[y] = left;
+        if macroblock_info.luma_mode.into_intra().is_none() {
+            // 11.3 code each of the subblocks. The running context each mode
+            // is coded against stays local; `advance_bpred_context` below is
+            // the only writer of the context the next macroblocks read.
+            if let Some(bpred) = macroblock_info.luma_bpred {
+                let mut top: [IntraMode; 4] = self.top_b_pred[mbx * 4..][..4].try_into().unwrap();
+                for y in 0usize..4 {
+                    let mut left = self.left_b_pred[y];
+                    for x in 0usize..4 {
+                        let probs = &KEYFRAME_BPRED_MODE_PROBS[top[x] as usize][left as usize];
+                        let intra_mode = bpred[y * 4 + x];
+                        self.encoder.write_with_tree(
+                            &KEYFRAME_BPRED_MODE_TREE,
+                            probs,
+                            intra_mode as i8,
+                        );
+                        left = intra_mode;
+                        top[x] = intra_mode;
                     }
-                } else {
-                    panic!("Invalid, can't set luma mode to B without setting preds");
                 }
-            }
-            Some(intra_mode) => {
-                for (left, top) in self
-                    .left_b_pred
-                    .iter_mut()
-                    .zip(self.top_b_pred[4 * mbx..][..4].iter_mut())
-                {
-                    *left = intra_mode;
-                    *top = intra_mode;
-                }
+            } else {
+                panic!("Invalid, can't set luma mode to B without setting preds");
             }
         }
+        self.advance_bpred_context(macroblock_info, mbx);
 
         // encode macroblock info chroma mode
         self.encoder.write_with_tree(
@@ -344,9 +334,11 @@ impl<W: Write> Vp8Encoder<W> {
         );
     }
 
-    /// Leaves the subblock mode context where `write_macroblock_header` leaves
-    /// it, without coding anything, so that the first pass searches every
-    /// macroblock against the context the second pass will code it with.
+    /// Commits the subblock mode context a macroblock leaves behind: the
+    /// bottom row and right-hand column of its (effective) subblock modes.
+    /// `write_macroblock_header` ends by calling this, and the first pass
+    /// calls it directly, so the search context and the coded context cannot
+    /// drift apart.
     fn advance_bpred_context(&mut self, macroblock_info: &MacroblockInfo, mbx: usize) {
         match macroblock_info.luma_mode.into_intra() {
             None => {
@@ -750,6 +742,13 @@ impl<W: Write> Vp8Encoder<W> {
         height: u16,
         lossy_quality: u8,
     ) -> Result<(), EncodingError> {
+        // `EncoderParams::lossy_quality` is public and nothing narrows it on
+        // the way here, so an out-of-range value is a caller error, not a
+        // broken invariant.
+        if lossy_quality > 100 {
+            return Err(EncodingError::InvalidQuality);
+        }
+
         let (y_bytes, u_bytes, v_bytes) = match color {
             ColorType::Rgb8 => convert_image_yuv::<3>(data, width, height),
             ColorType::Rgba8 => convert_image_yuv::<4>(data, width, height),
@@ -1216,9 +1215,8 @@ impl<W: Write> Vp8Encoder<W> {
         u_buf: Vec<u8>,
         v_buf: Vec<u8>,
     ) {
-        if lossy_quality > 100 {
-            panic!("lossy quality must be between 0 and 100");
-        }
+        // `encode_image`, the sole caller, has already rejected qualities
+        // above 100; the table lookup would panic on one anyway.
         let quant_index: u8 = QUALITY_TO_QUANTIZER_INDEX[usize::from(lossy_quality)];
         let quant_index_usize: usize = quant_index as usize;
 
@@ -2091,8 +2089,13 @@ fn quantize(value: i32, quant: i16, coefficient: usize) -> i32 {
     } else {
         DC_ROUND_UP_AT
     };
-    let quant = i32::from(quant);
-    let magnitude = (value.abs() * 256 + (256 - round_up_at) * quant) / (256 * quant);
+    // `unsigned_abs` and the widening keep the arithmetic total: `abs` alone
+    // would panic on `i32::MIN` in debug builds, unreachable as that is for
+    // residuals of 8-bit pixels.
+    let quant = u64::from(quant.unsigned_abs());
+    let magnitude = (u64::from(value.unsigned_abs()) * 256 + (256 - round_up_at) as u64 * quant)
+        / (256 * quant);
+    let magnitude = magnitude as i32;
     if value < 0 {
         -magnitude
     } else {
@@ -3010,6 +3013,21 @@ mod tests {
         // pixel level out asks the finest DC quantizer of the curve for.
         const _: () = assert!(AC_ROUND_UP_AT > 128);
         const _: () = assert!(DC_ROUND_UP_AT * 12 > 256 * 8);
+    }
+
+    #[test]
+    fn quality_above_100_is_an_error_not_a_panic() {
+        let rgb = image(16, 16, |_, _| [128, 128, 128]);
+        let mut encoder = crate::WebPEncoder::new(Vec::new());
+        encoder.set_params(crate::EncoderParams {
+            use_lossy: true,
+            lossy_quality: 101,
+            ..Default::default()
+        });
+        assert!(matches!(
+            encoder.encode(&rgb, 16, 16, ColorType::Rgb8),
+            Err(EncodingError::InvalidQuality)
+        ));
     }
 
     #[test]
