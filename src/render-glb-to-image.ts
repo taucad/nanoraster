@@ -6,7 +6,15 @@ import type { RenderImageOptions } from '#options.js';
 import { imageFileName, toImageRequestJson } from '#options.js';
 import { renderRaw } from '#renderer.js';
 
-const serialize = (options: RenderImageOptions): string => {
+/**
+ * Validate and serialize singular options, wrapping validation failures in
+ * the `parse` taxonomy.
+ *
+ * @internal
+ * @param options - Singular image settings
+ * @returns The validated JSON request
+ */
+export const serializeImageOptions = (options: RenderImageOptions): string => {
   try {
     return toImageRequestJson(options);
   } catch (error) {
@@ -29,9 +37,9 @@ export const renderGlbToImage = async (
 ): Promise<RenderedImageFile> => {
   let bytes: Uint8Array<ArrayBuffer>;
   try {
-    bytes = await renderRaw(glb, serialize(options));
+    bytes = await renderRaw(glb, serializeImageOptions(options));
   } catch (error) {
     throw RenderError.from(error);
   }
-  return createRenderedImageFile(options.format, imageFileName(options.format), Uint8Array.from(bytes));
+  return createRenderedImageFile(options.format, imageFileName(options.format), bytes);
 };

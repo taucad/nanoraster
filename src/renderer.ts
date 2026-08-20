@@ -2,19 +2,54 @@
 
 import { RenderError } from '#render-error.js';
 
-type RawRenderer = (
-  glb: Uint8Array<ArrayBuffer>,
-  optionsJson: string,
-) => Uint8Array<ArrayBuffer> | Promise<Uint8Array<ArrayBuffer>>;
+/** Ordered encoded images plus the optional profile JSON. @internal */
+export type RawImagesResult = {
+  readonly images: ReadonlyArray<Uint8Array<ArrayBuffer>>;
+  readonly profile?: string;
+};
 
-type RawImagesRenderer = (
-  glb: Uint8Array<ArrayBuffer>,
-  optionsJson: string,
-) => ReadonlyArray<Uint8Array<ArrayBuffer>> | Promise<ReadonlyArray<Uint8Array<ArrayBuffer>>>;
+/** Raw pixels result shared by both bindings. @internal */
+export type RawPixelsResult = {
+  readonly rgba: Uint8Array<ArrayBuffer>;
+  readonly width: number;
+  readonly height: number;
+};
+
+/** One persistent binding-level renderer handle. @internal */
+export type RawRendererHandle = {
+  readonly renderImage: (
+    glb: Uint8Array<ArrayBuffer>,
+    optionsJson: string,
+  ) => Promise<Uint8Array<ArrayBuffer>>;
+  readonly renderImages: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawImagesResult>;
+  readonly renderPixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawPixelsResult>;
+  readonly dispose: () => void;
+};
 
 type RendererBindings = {
-  readonly renderImage: RawRenderer;
-  readonly renderImages: RawImagesRenderer;
+  readonly renderImage: (
+    glb: Uint8Array<ArrayBuffer>,
+    optionsJson: string,
+  ) => Promise<Uint8Array<ArrayBuffer>>;
+  readonly renderImages: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawImagesResult>;
+  readonly renderPixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawPixelsResult>;
+  readonly createRenderer: (optionsJson: string | undefined) => Promise<RawRendererHandle>;
+  readonly describeAdapter: () => Promise<string>;
+};
+
+type WasmImagesResult = {
+  images: Array<Uint8Array<ArrayBuffer>>;
+  profile?: string;
+};
+
+type WasmRenderer = {
+  render_glb_to_image: (
+    glb: Uint8Array<ArrayBuffer>,
+    optionsJson: string,
+  ) => Promise<Uint8Array<ArrayBuffer>>;
+  render_glb_to_images: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<WasmImagesResult>;
+  render_glb_to_pixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawPixelsResult>;
+  dispose: () => void;
 };
 
 type WasmModule = {
@@ -23,15 +58,32 @@ type WasmModule = {
     glb: Uint8Array<ArrayBuffer>,
     optionsJson: string,
   ) => Promise<Uint8Array<ArrayBuffer>>;
-  render_glb_to_images: (
-    glb: Uint8Array<ArrayBuffer>,
-    optionsJson: string,
-  ) => Promise<Array<Uint8Array<ArrayBuffer>>>;
+  render_glb_to_images: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<WasmImagesResult>;
+  render_glb_to_pixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawPixelsResult>;
+  describe_adapter: () => Promise<string>;
+  Renderer: {
+    create: (optionsJson?: string) => Promise<WasmRenderer>;
+  };
+};
+
+type NapiImagesResult = {
+  images: Array<Uint8Array<ArrayBuffer>>;
+  profile?: string | null;
+};
+
+type NapiRenderer = {
+  renderGlbToImage: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<Uint8Array<ArrayBuffer>>;
+  renderGlbToImages: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<NapiImagesResult>;
+  renderGlbToPixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawPixelsResult>;
+  dispose: () => void;
 };
 
 type NapiModule = {
-  renderGlbToImage: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Uint8Array<ArrayBuffer>;
-  renderGlbToImages: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Array<Uint8Array<ArrayBuffer>>;
+  renderGlbToImage: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<Uint8Array<ArrayBuffer>>;
+  renderGlbToImages: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<NapiImagesResult>;
+  renderGlbToPixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawPixelsResult>;
+  createRenderer: (optionsJson?: string) => Promise<NapiRenderer>;
+  describeAdapter: () => string;
 };
 
 const nativePackages = {
@@ -54,12 +106,35 @@ const isNodeRuntime = (): boolean => {
   return typeof proc?.versions?.node === 'string';
 };
 
+const normalizeImagesResult = (result: {
+  images: Array<Uint8Array<ArrayBuffer>>;
+  profile?: string | null;
+}): RawImagesResult => ({
+  images: [...result.images],
+  ...(typeof result.profile === 'string' ? { profile: result.profile } : {}),
+});
+
 const loadWasmBindings = async (): Promise<RendererBindings> => {
   const wasm = (await import('./wasm/render_wasm.js')) as unknown as WasmModule;
   await wasm.default({ module_or_path: new URL('wasm/render_wasm_bg.wasm', import.meta.url) });
   return {
     renderImage: async (glb, optionsJson) => wasm.render_glb_to_image(glb, optionsJson),
-    renderImages: async (glb, optionsJson) => [...(await wasm.render_glb_to_images(glb, optionsJson))],
+    renderImages: async (glb, optionsJson) =>
+      normalizeImagesResult(await wasm.render_glb_to_images(glb, optionsJson)),
+    renderPixels: async (glb, optionsJson) => wasm.render_glb_to_pixels(glb, optionsJson),
+    createRenderer: async (optionsJson) => {
+      const renderer = await wasm.Renderer.create(optionsJson);
+      return {
+        renderImage: async (glb, json) => renderer.render_glb_to_image(glb, json),
+        renderImages: async (glb, json) =>
+          normalizeImagesResult(await renderer.render_glb_to_images(glb, json)),
+        renderPixels: async (glb, json) => renderer.render_glb_to_pixels(glb, json),
+        dispose: () => {
+          renderer.dispose();
+        },
+      };
+    },
+    describeAdapter: async () => wasm.describe_adapter(),
   };
 };
 
@@ -85,8 +160,22 @@ const loadNapiBindings = async (): Promise<RendererBindings> => {
     );
   }
   return {
-    renderImage: (glb, optionsJson) => native.renderGlbToImage(glb, optionsJson),
-    renderImages: (glb, optionsJson) => [...native.renderGlbToImages(glb, optionsJson)],
+    renderImage: async (glb, optionsJson) => native.renderGlbToImage(glb, optionsJson),
+    renderImages: async (glb, optionsJson) =>
+      normalizeImagesResult(await native.renderGlbToImages(glb, optionsJson)),
+    renderPixels: async (glb, optionsJson) => native.renderGlbToPixels(glb, optionsJson),
+    createRenderer: async (optionsJson) => {
+      const renderer = await native.createRenderer(optionsJson);
+      return {
+        renderImage: async (glb, json) => renderer.renderGlbToImage(glb, json),
+        renderImages: async (glb, json) => normalizeImagesResult(await renderer.renderGlbToImages(glb, json)),
+        renderPixels: async (glb, json) => renderer.renderGlbToPixels(glb, json),
+        dispose: () => {
+          renderer.dispose();
+        },
+      };
+    },
+    describeAdapter: () => Promise.resolve(native.describeAdapter()),
   };
 };
 
@@ -106,7 +195,25 @@ export const renderRaw = async (
 export const renderManyRaw = async (
   glb: Uint8Array<ArrayBuffer>,
   optionsJson: string,
-): Promise<ReadonlyArray<Uint8Array<ArrayBuffer>>> => {
+): Promise<RawImagesResult> => {
   const renderer = await bindings();
   return renderer.renderImages(glb, optionsJson);
+};
+
+export const renderPixelsRaw = async (
+  glb: Uint8Array<ArrayBuffer>,
+  optionsJson: string,
+): Promise<RawPixelsResult> => {
+  const renderer = await bindings();
+  return renderer.renderPixels(glb, optionsJson);
+};
+
+export const createRendererRaw = async (optionsJson: string | undefined): Promise<RawRendererHandle> => {
+  const renderer = await bindings();
+  return renderer.createRenderer(optionsJson);
+};
+
+export const describeAdapterRaw = async (): Promise<string> => {
+  const renderer = await bindings();
+  return renderer.describeAdapter();
 };

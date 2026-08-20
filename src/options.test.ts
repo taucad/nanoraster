@@ -7,6 +7,7 @@ import {
   imageViewFileName,
   toImageRequestJson,
   toImagesRequestJson,
+  toPixelsRequestJson,
 } from '#options.js';
 
 const parse = (json: string): Record<string, unknown> => JSON.parse(json) as Record<string, unknown>;
@@ -132,7 +133,7 @@ describe('image request serialization', () => {
         { id: 'front', phi: 0, theta: 0 },
       ],
       [{ id: 'front', phi: Number.POSITIVE_INFINITY, theta: 0 }],
-      [{ id: 'front', phi: 90, theta: 0, format: 'png' }],
+      [{ id: 'front', phi: 90, theta: 0, zoom: 2 }],
     ];
     for (const views of invalid) {
       expect(() => toImagesRequestJson({ format: 'png', views } as unknown as RenderImagesOptions)).toThrow(
@@ -271,6 +272,101 @@ describe('image request serialization', () => {
         views: [{ id: 'front', phi: 90, theta: 0 }],
       } as unknown as RenderImagesOptions),
     ).toThrow('views[0].label is required when includeLabel is true');
+  });
+
+  it('should serialize per-view output overrides and the profile flag', () => {
+    expect(
+      parse(
+        toImagesRequestJson({
+          format: 'webp',
+          quality: 0.9,
+          profile: true,
+          views: [
+            { id: 'card', phi: 60, theta: -45 },
+            { id: 'og', phi: 60, theta: -45, width: 1536, height: 804 },
+            { id: 'hero', phi: 60, theta: -45, format: 'png' },
+            { id: 'exact', phi: 60, theta: -45, quality: 1 },
+          ],
+        }),
+      ),
+    ).toEqual({
+      format: 'webp',
+      quality: 0.9,
+      profile: true,
+      views: [
+        { id: 'card', phi: 60, theta: -45 },
+        { id: 'og', phi: 60, theta: -45, width: 1536, height: 804 },
+        { id: 'hero', phi: 60, theta: -45, format: 'png' },
+        { id: 'exact', phi: 60, theta: -45, quality: 1 },
+      ],
+    });
+  });
+
+  it('should reject invalid per-view overrides and profile values by path', () => {
+    const cases: readonly (readonly [Record<string, unknown>, string])[] = [
+      [{ id: 'front', phi: 90, theta: 0, width: 15 }, 'views[0].width must be between 16 and 4096'],
+      [{ id: 'front', phi: 90, theta: 0, height: 4097 }, 'views[0].height must be between 16 and 4096'],
+      [{ id: 'front', phi: 90, theta: 0, format: 'gif' }, 'views[0].format must be png, webp, jpeg, or jpg'],
+      [{ id: 'front', phi: 90, theta: 0, quality: 1.5 }, 'views[0].quality must be between 0 and 1'],
+    ];
+    for (const [view, message] of cases) {
+      expect(() =>
+        toImagesRequestJson({ format: 'png', views: [view] } as unknown as RenderImagesOptions),
+      ).toThrow(message);
+    }
+    expect(() =>
+      toImagesRequestJson({
+        format: 'png',
+        includeAxes: true,
+        views: [{ id: 'front', phi: 90, theta: 0, width: 191 }],
+      } as unknown as RenderImagesOptions),
+    ).toThrow('views[0]: annotated images must be at least 192x192');
+    expect(() =>
+      toImagesRequestJson({
+        format: 'png',
+        profile: 'yes',
+        views: [{ id: 'front', phi: 90, theta: 0 }],
+      } as unknown as RenderImagesOptions),
+    ).toThrow('profile must be a boolean');
+  });
+
+  it('should serialize pixels requests without an encoder pair', () => {
+    expect(
+      parse(
+        toPixelsRequestJson({
+          width: 640,
+          height: 480,
+          phi: 45,
+          theta: 90,
+          background: '#0080FF',
+          label: 'Front',
+          includeLabel: true,
+        }),
+      ),
+    ).toEqual({
+      width: 640,
+      height: 480,
+      phi: 45,
+      theta: 90,
+      background: [0, 128 / 255, 1, 1],
+      label: 'Front',
+      includeLabel: true,
+    });
+    expect(parse(toPixelsRequestJson({}))).toEqual({});
+  });
+
+  it('should reject encoder options and invalid values on pixels requests', () => {
+    const invalid: readonly (readonly [unknown, string])[] = [
+      [null, 'options must be an object'],
+      [{ format: 'png' }, 'options contains unknown property "format"'],
+      [{ quality: 0.9 }, 'options contains unknown property "quality"'],
+      [{ width: 15 }, 'width must be between 16 and 4096'],
+      [{ includeLabel: true }, 'label is required when includeLabel is true'],
+      [{ phi: Number.NaN }, 'phi must be a finite number'],
+    ];
+    for (const [options, message] of invalid) {
+      expect(() => toPixelsRequestJson(options as never)).toThrow(message);
+    }
   });
 });
 

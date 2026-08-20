@@ -9,13 +9,26 @@ expectTypeOf<
     keyof RenderModule,
     | 'RenderDeps'
     | 'RawRenderer'
+    | 'RawImagesResult'
+    | 'RawPixelsResult'
+    | 'RawRendererHandle'
+    | 'RenderedImagesResult'
     | 'StrictRenderImagesOptions'
+    | 'assembleRenderedImages'
+    | 'createRendererRaw'
+    | 'describeAdapterRaw'
     | 'imageFileName'
     | 'isNodeRuntime'
     | 'renderManyRaw'
+    | 'renderPixelsRaw'
     | 'renderRaw'
+    | 'serializeImageOptions'
+    | 'serializeImagesOptions'
+    | 'serializePixelsOptions'
     | 'toImageRequestJson'
     | 'toImagesRequestJson'
+    | 'toPixelsRequestJson'
+    | 'toRenderedPixels'
   >
 >().toEqualTypeOf<never>();
 
@@ -56,12 +69,60 @@ const options = createRenderImagesOptions({
 });
 const rendered = renderGlbToImages(glb, options);
 expectTypeOf(rendered).toEqualTypeOf<
-  Promise<readonly [renderModule.RenderedImage<'front'>, renderModule.RenderedImage<'top'>]>
+  Promise<readonly [renderModule.RenderedImage<'front', 'png'>, renderModule.RenderedImage<'top', 'png'>]>
 >();
 
 const dynamicViews: renderModule.RenderImageView[] = [{ id: 'front', phi: 90, theta: 0 }];
 const dynamic = renderGlbToImages(glb, { format: 'png', views: dynamicViews });
-expectTypeOf(dynamic).toEqualTypeOf<Promise<readonly renderModule.RenderedImage[]>>();
+expectTypeOf(dynamic).toEqualTypeOf<Promise<readonly renderModule.RenderedImage<string, 'png'>[]>>();
+
+// Per-view output overrides flow into each entry's mime type (R15), and
+// profile: true adds a typed profile to the result.
+const ladder = renderGlbToImages(glb, {
+  format: 'webp',
+  views: [
+    { id: 'card', phi: 60, theta: -45 },
+    { id: 'hero', phi: 60, theta: -45, width: 1536, height: 804, format: 'png' },
+  ],
+});
+expectTypeOf(ladder).toEqualTypeOf<
+  Promise<readonly [renderModule.RenderedImage<'card', 'webp'>, renderModule.RenderedImage<'hero', 'png'>]>
+>();
+declare const cardFile: Awaited<typeof ladder>[0]['file'];
+expectTypeOf(cardFile.mimeType).toEqualTypeOf<'image/webp'>();
+declare const heroFile: Awaited<typeof ladder>[1]['file'];
+expectTypeOf(heroFile.mimeType).toEqualTypeOf<'image/png'>();
+
+const profiled = renderGlbToImages(glb, {
+  format: 'png',
+  profile: true,
+  views: [{ id: 'front', phi: 90, theta: 0 }],
+});
+expectTypeOf((await profiled).profile).toEqualTypeOf<renderModule.RenderProfile>();
+const unprofiled = await renderGlbToImages(glb, {
+  format: 'png',
+  views: [{ id: 'front', phi: 90, theta: 0 }],
+});
+// @ts-expect-error no profile without profile: true
+void unprofiled.profile;
+
+// Renderer handles mirror the module-level surface.
+declare const renderer: renderModule.Renderer;
+expectTypeOf(renderer.renderGlbToImage(glb, singular)).toEqualTypeOf<
+  Promise<renderModule.RenderedImageFile>
+>();
+expectTypeOf(renderer.renderGlbToImages(glb, options)).toEqualTypeOf<typeof rendered>();
+expectTypeOf(renderer.renderGlbToPixels(glb, {})).toEqualTypeOf<Promise<renderModule.RenderedPixels>>();
+expectTypeOf(renderer.dispose).toEqualTypeOf<() => void>();
+expectTypeOf(renderer[Symbol.dispose]).toEqualTypeOf<() => void>();
+expectTypeOf(renderModule.createRenderer()).toEqualTypeOf<Promise<renderModule.Renderer>>();
+expectTypeOf(renderModule.createRenderer({ powerPreference: 'low-power' })).toEqualTypeOf<
+  Promise<renderModule.Renderer>
+>();
+// @ts-expect-error pixels options carry no encoder pair
+void renderer.renderGlbToPixels(glb, { format: 'png' });
+// @ts-expect-error unknown power preference
+void renderModule.createRenderer({ powerPreference: 'turbo' });
 
 // @ts-expect-error empty literal view tuples are rejected
 void renderGlbToImages(glb, { format: 'png', views: [] });
@@ -95,8 +156,10 @@ void renderGlbToImages(glb, {
 });
 // @ts-expect-error singular label is not a batch-level property
 createRenderImagesOptions({ format: 'png', label: 'Front', views: [{ id: 'front', phi: 90, theta: 0 }] });
-// @ts-expect-error format is shared, not per view
-createRenderImagesOptions({ format: 'png', views: [{ id: 'front', phi: 90, theta: 0, format: 'png' }] });
+// Per-view output overrides are part of the plan-entry schema (R15).
+createRenderImagesOptions({ format: 'png', views: [{ id: 'front', phi: 90, theta: 0, format: 'webp' }] });
+// @ts-expect-error unknown per-view format
+createRenderImagesOptions({ format: 'png', views: [{ id: 'front', phi: 90, theta: 0, format: 'gif' }] });
 // @ts-expect-error plural angles belong on each view
 createRenderImagesOptions({ format: 'png', phi: 90, views: [{ id: 'front', phi: 90, theta: 0 }] });
 // @ts-expect-error missing theta
@@ -150,7 +213,6 @@ createRenderImagesOptions({
   },
   views: [{ id: 'front', phi: 90, theta: 0 }],
 });
-// @ts-expect-error width is shared, not per view
 void renderGlbToImages(glb, { format: 'png', views: [{ id: 'front', phi: 90, theta: 0, width: 320 }] });
 // @ts-expect-error missing view id
 createRenderImagesOptions({ format: 'png', views: [{ phi: 90, theta: 0 }] });

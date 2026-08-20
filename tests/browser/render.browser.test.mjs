@@ -1,5 +1,10 @@
 import { beforeAll, expect, test } from 'vitest';
-import init, { codec_conformance, describe_adapter, render_glb_to_image } from 'nanoraster-wasm-candidate';
+import init, {
+  Renderer,
+  codec_conformance,
+  describe_adapter,
+  render_glb_to_image,
+} from 'nanoraster-wasm-candidate';
 
 import { withPbrFactors } from '../pbr-fixture.mjs';
 
@@ -28,6 +33,42 @@ test('wasm shell renders a deterministic 192x192 PNG', async () => {
   expect(view.getUint32(16)).toBe(192);
   expect(view.getUint32(20)).toBe(192);
   expect(png.byteLength).toBeGreaterThan(1_000);
+});
+
+test('a warm renderer produces byte-identical output and disposes cleanly', async () => {
+  const options = JSON.stringify({ width: 192, height: 192, format: 'png' });
+  const oneShot = await render_glb_to_image(glb, options);
+  const renderer = await Renderer.create();
+  const first = await renderer.render_glb_to_image(glb, options);
+  const second = await renderer.render_glb_to_image(glb, options);
+  expect(first).toEqual(oneShot);
+  expect(second).toEqual(oneShot);
+
+  const batch = await renderer.render_glb_to_images(
+    glb,
+    JSON.stringify({
+      width: 192,
+      height: 192,
+      format: 'png',
+      profile: true,
+      views: [
+        { id: 'front', phi: 90, theta: 0 },
+        { id: 'big', phi: 90, theta: 0, width: 256, height: 256 },
+      ],
+    }),
+  );
+  expect(batch.images).toHaveLength(2);
+  const profile = JSON.parse(batch.profile ?? '{}');
+  expect(profile.adapterDeviceRequests).toBe(0);
+  expect(profile.views).toHaveLength(2);
+
+  const pixels = await renderer.render_glb_to_pixels(glb, JSON.stringify({ width: 64, height: 48 }));
+  expect(pixels.width).toBe(64);
+  expect(pixels.height).toBe(48);
+  expect(pixels.rgba.byteLength).toBe(64 * 48 * 4);
+
+  renderer.dispose();
+  await expect(renderer.render_glb_to_image(glb, options)).rejects.toThrow('gpu: renderer disposed');
 });
 
 test('PBR factors produce deterministic and distinguishable renders', async () => {

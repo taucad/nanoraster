@@ -42,7 +42,10 @@ describe('renderer binding selection', () => {
     Object.defineProperty(process, 'arch', { configurable: true, value: 'arm64' });
     const native = {
       renderGlbToImage: vi.fn(() => new Uint8Array([1, 2])),
-      renderGlbToImages: vi.fn(() => [new Uint8Array([3]), new Uint8Array([4])]),
+      renderGlbToImages: vi.fn(() => ({ images: [new Uint8Array([3]), new Uint8Array([4])], profile: null })),
+      renderGlbToPixels: vi.fn(() => ({ rgba: new Uint8Array([5]), width: 1, height: 1 })),
+      createRenderer: vi.fn(),
+      describeAdapter: vi.fn(() => 'Metal / Test (IntegratedGpu)'),
     };
     const require = vi.fn(() => native);
     vi.doMock('node:module', () => ({ createRequire: vi.fn(() => require) }));
@@ -50,10 +53,9 @@ describe('renderer binding selection', () => {
     const glb = new Uint8Array([9]);
 
     await expect(renderRaw(glb, '{}')).resolves.toEqual(new Uint8Array([1, 2]));
-    await expect(renderManyRaw(glb, '{"views":[]}')).resolves.toEqual([
-      new Uint8Array([3]),
-      new Uint8Array([4]),
-    ]);
+    await expect(renderManyRaw(glb, '{"views":[]}')).resolves.toEqual({
+      images: [new Uint8Array([3]), new Uint8Array([4])],
+    });
     expect(require).toHaveBeenCalledOnce();
     expect(require).toHaveBeenCalledWith('nanoraster-darwin-arm64');
   });
@@ -62,7 +64,9 @@ describe('renderer binding selection', () => {
     Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { gpu: {} } });
     const initialize = vi.fn((_options: { module_or_path: URL }) => Promise.resolve(undefined));
     const renderImage = vi.fn(() => Promise.resolve(new Uint8Array([5])));
-    const renderImages = vi.fn(() => Promise.resolve([new Uint8Array([6])]));
+    const renderImages = vi.fn(() =>
+      Promise.resolve({ images: [new Uint8Array([6])], profile: 'profile-json' }),
+    );
     vi.doMock('./wasm/render_wasm.js', () => ({
       default: initialize,
       render_glb_to_image: renderImage,
@@ -72,7 +76,10 @@ describe('renderer binding selection', () => {
     const glb = new Uint8Array([9]);
 
     await expect(renderRaw(glb, '{}')).resolves.toEqual(new Uint8Array([5]));
-    await expect(renderManyRaw(glb, '{}')).resolves.toEqual([new Uint8Array([6])]);
+    await expect(renderManyRaw(glb, '{}')).resolves.toEqual({
+      images: [new Uint8Array([6])],
+      profile: 'profile-json',
+    });
     expect(initialize).toHaveBeenCalledWith({ module_or_path: expect.any(URL) });
     expect(initialize.mock.calls[0]?.[0].module_or_path.pathname.endsWith('/wasm/render_wasm_bg.wasm')).toBe(
       true,

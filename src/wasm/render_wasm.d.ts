@@ -1,8 +1,31 @@
 /* tslint:disable */
 /* eslint-disable */
 
-/** Render ordered identified views through one batch-scoped render session. */
-export function render_glb_to_images(glb: Uint8Array, options_json: string): Promise<Array<Uint8Array>>;
+/** Ordered encoded images plus the optional JSON profile from `profile: true`. */
+export type RenderImagesResult = { images: Array<Uint8Array>; profile?: string };
+/** Straight-alpha sRGB RGBA8 rows, tightly packed. */
+export type RenderPixelsResult = { rgba: Uint8Array; width: number; height: number };
+/**
+ * Persistent GPU renderer: one adapter/device/pipeline set reused across
+ * calls in this worker. Calls must be awaited in sequence; after dispose()
+ * every call rejects.
+ */
+export class Renderer {
+    private constructor();
+    free(): void;
+    static create(options_json?: string): Promise<Renderer>;
+    render_glb_to_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
+    render_glb_to_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
+    render_glb_to_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
+    dispose(): void;
+}
+
+
+
+/** Render ordered identified views through one batch-scoped plan call. */
+export function render_glb_to_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
+/** Render a kernel GLB to raw straight-alpha RGBA8 pixels (no encode). */
+export function render_glb_to_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
 
 
 
@@ -33,6 +56,8 @@ export function describe_adapter(): Promise<string>;
  * render-request contract (`render_core::RenderRequest`): width/height,
  * format `"png" | "webp" | "jpeg" | "jpg"`, quality 0..=1, phi/theta degrees,
  * margin 0..=0.5, up `"x" | "y" | "z"`, background `[r, g, b, a]` in 0..=1.
+ * One-shot sugar: creates and destroys a device per call — hold a `Renderer`
+ * to amortize that across calls.
  */
 export function render_glb_to_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
 
@@ -40,17 +65,26 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_renderer_free: (a: number, b: number) => void;
+    readonly renderer_create: (a: number, b: number) => number;
+    readonly renderer_render_glb_to_image: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly renderer_render_glb_to_images: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly renderer_render_glb_to_pixels: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly renderer_dispose: (a: number) => void;
     readonly render_glb_to_image: (a: number, b: number, c: number, d: number) => number;
     readonly render_glb_to_images: (a: number, b: number, c: number, d: number) => number;
+    readonly render_glb_to_pixels: (a: number, b: number, c: number, d: number) => number;
     readonly bench_codecs: (a: number, b: number, c: number, d: number) => number;
     readonly bench_multi_view: (a: number, b: number, c: number, d: number) => number;
     readonly codec_conformance: (a: number) => void;
     readonly describe_adapter: () => number;
-    readonly __wasm_bindgen_func_elem_1938: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_958: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_958_2: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_958_3: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1955: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2051: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1055: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1055_4: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1055_5: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2068: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1052: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1052_3: (a: number, b: number, c: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

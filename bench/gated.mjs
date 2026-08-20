@@ -23,12 +23,12 @@ const fnv64 = (bytes) => {
   return hash.toString(16).padStart(16, '0');
 };
 
-native.renderGlbToImage(glb, options);
+await native.renderGlbToImage(glb, options);
 const durations = [];
 let output;
 for (let index = 0; index < iterations; index += 1) {
   const started = performance.now();
-  output = native.renderGlbToImage(glb, options);
+  output = await native.renderGlbToImage(glb, options);
   durations.push(performance.now() - started);
 }
 durations.sort((left, right) => left - right);
