@@ -25,11 +25,18 @@ const sizes = {
 // overflow-proof quantizer arithmetic).
 // The lossy-WebP build before it was +40,591 raw (+5.0%) over the
 // configurable-lighting build for the VP8 lossy encoder itself.
+// Handles-first build (R1 inversion): raw 918,110, gzip-9 366,755, brotli-11
+// 291,245 on macOS, against 875,874 / 350,646 / 279,276 for the
+// lossy-encoder-uplift build — +42,236 raw (+4.8%). That is the Renderer
+// class surface in wasm-bindgen (class glue, JS result objects, the
+// createRenderer request struct's serde), the plan executor with its
+// pipelined readback, and per-view override resolution. Pixel and byte
+// output are unchanged (verified against the previous build's addon).
 // Ceilings are the measured figure plus ~1%. The gate runs on Linux CI, whose
 // figure has not been re-measured since the PBR build (315,196 gzip-9 there
 // against 312,881 on macOS) — gzip9 carries extra slack until a CI run
 // re-anchors it.
-const ceilings = { raw: 884_000, gzip9: 354_500, brotli11: 282_000 };
+const ceilings = { raw: 927_000, gzip9: 370_500, brotli11: 294_200 };
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {
