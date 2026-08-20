@@ -15,11 +15,11 @@ alone; the encoded file size never enters the bill. A 5 KB lossy WebP and a
 30 KB lossless WebP of the same 768×432 render cost identical tokens on every
 provider below.
 
-| Provider  | Image tokens                                    | Reference                                                                              |
-| --------- | ----------------------------------------------- | -------------------------------------------------------------------------------------- |
-| OpenAI    | ⌈width/32⌉ × ⌈height/32⌉ patches                | [Images and vision](https://developers.openai.com/api/docs/guides/images-vision)        |
-| Anthropic | ⌈width/28⌉ × ⌈height/28⌉ visual tokens          | [Vision](https://platform.claude.com/docs/en/build-with-claude/vision)                  |
-| Gemini    | fixed per-image budget, set by media resolution | [Image understanding](https://ai.google.dev/gemini-api/docs/image-understanding)        |
+| Provider  | Image tokens                                    | Reference                                                                        |
+| --------- | ----------------------------------------------- | -------------------------------------------------------------------------------- |
+| OpenAI    | ⌈width/32⌉ × ⌈height/32⌉ patches                | [Images and vision](https://developers.openai.com/api/docs/guides/images-vision) |
+| Anthropic | ⌈width/28⌉ × ⌈height/28⌉ visual tokens          | [Vision](https://platform.claude.com/docs/en/build-with-claude/vision)           |
+| Gemini    | fixed per-image budget, set by media resolution | [Image understanding](https://ai.google.dev/gemini-api/docs/image-understanding) |
 
 These are the documented base formulas for current-generation models on
 images small enough to skip provider-side resizing; some models add
