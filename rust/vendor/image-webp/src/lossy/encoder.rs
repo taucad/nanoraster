@@ -3017,7 +3017,7 @@ mod tests {
 
     #[test]
     fn quality_above_100_is_an_error_not_a_panic() {
-        let rgb = image(16, 16, |_, _| [128, 128, 128]);
+        let rgb = vec![128u8; 16 * 16 * 3];
         let mut encoder = crate::WebPEncoder::new(Vec::new());
         encoder.set_params(crate::EncoderParams {
             use_lossy: true,
