@@ -31,6 +31,48 @@ const assert = (condition, message) => {
   if (!condition) throw new Error(message);
 };
 
+const CHANGELOG_PATH = new URL('../CHANGELOG.md', import.meta.url);
+const THANK_YOU = '### ❤️ Thank You';
+/**
+ * Authors that are not people: the `tau-release-bot` that commits the release
+ * itself, Dependabot, and the coding assistants whose `Co-Authored-By` trailer
+ * nx reads as an author.
+ */
+const NON_HUMAN_AUTHOR = /^- (?:claude\b|.*\[bot\])/iu;
+
+/**
+ * Drop non-human authors from the newest changelog entry's Thank You list.
+ *
+ * The commit trailer records who and what produced a change, which is where
+ * that provenance belongs. This section credits people, so it follows the
+ * usual release-note convention of leaving bots out of the thanks. Published
+ * entries are left untouched — they are the record of what shipped.
+ */
+export const withoutNonHumanAuthors = (changelog) => {
+  const lines = changelog.split('\n');
+  const nextEntry = lines.findIndex((line, index) => index > 0 && line.startsWith('## '));
+  const limit = nextEntry === -1 ? lines.length : nextEntry;
+  const heading = lines.findIndex((line, index) => index < limit && line === THANK_YOU);
+  if (heading === -1) return changelog;
+
+  let end = heading + 1;
+  while (end < limit && lines[end] === '') end += 1;
+  const authors = [];
+  while (end < limit && lines[end].startsWith('- ')) {
+    authors.push(lines[end]);
+    end += 1;
+  }
+
+  const people = authors.filter((author) => !NON_HUMAN_AUTHOR.test(author));
+  if (people.length === authors.length) return changelog;
+
+  // With nobody left to thank the heading goes too, along with the blank line
+  // that separated it from the entry above.
+  const start = people.length > 0 || lines[heading - 1] !== '' ? heading : heading - 1;
+  const kept = people.length > 0 ? [THANK_YOU, '', ...people] : [];
+  return [...lines.slice(0, start), ...kept, ...lines.slice(end)].join('\n');
+};
+
 const packageVersions = () => PACKAGE_PATHS.map((path) => JSON.parse(readFileSync(path, 'utf8')).version);
 
 const syncOptionalDependencies = (version) => {
@@ -136,6 +178,7 @@ const prepare = async ({ dryRun, requestedVersion }) => {
     releaseGraph: preview.releaseGraph,
     version,
   });
+  writeFileSync(CHANGELOG_PATH, withoutNonHumanAuthors(readFileSync(CHANGELOG_PATH, 'utf8')));
   assert(
     packageVersions().every((prepared) => prepared === version),
     `fixed release did not prepare every package at ${version}`,
