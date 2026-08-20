@@ -310,7 +310,13 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
     let lighting = resolve_lighting(request.lighting)?;
 
     let format_name = request.format.unwrap_or("png");
-    let encoder_quality = (quality * 100.0).round() as u8;
+    // Only an exact quality of 1 selects lossless WebP: rounding alone would
+    // send 0.995..1.0 to 100, silently breaking the "below 1 is lossy"
+    // contract.
+    let encoder_quality = match (quality * 100.0).round() as u8 {
+        100 if quality < 1.0 => 99,
+        rounded => rounded,
+    };
     let format = ImageFormat::from_name(format_name, encoder_quality)
         .map_err(|_| RenderError::Parse(format!("format {format_name:?} not png/webp/jpeg/jpg")))?;
 
@@ -481,6 +487,22 @@ mod tests {
         assert!(!options.include_label);
         assert!(!options.include_scale);
         assert_eq!(format, ImageFormat::Png);
+    }
+
+    #[test]
+    fn webp_quality_below_one_is_always_lossy() {
+        for (json, expected) in [
+            (r#"{"format":"webp"}"#, 100u8),
+            (r#"{"format":"webp","quality":1}"#, 100),
+            (r#"{"format":"webp","quality":0.995}"#, 99),
+            (r#"{"format":"webp","quality":0.9}"#, 90),
+        ] {
+            let (_, format) = RenderRequest::from_json(json)
+                .expect("parse")
+                .resolve()
+                .expect("resolve");
+            assert_eq!(format, ImageFormat::WebP { quality: expected }, "{json}");
+        }
     }
 
     #[test]
