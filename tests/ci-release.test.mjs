@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import { deriveRelease } from '../scripts/ci-release.mjs';
-import { validateRequestedVersion, versionFromPlans } from '../scripts/prepare-release.mjs';
+import {
+  validateRequestedVersion,
+  versionFromPlans,
+  withoutNonHumanAuthors,
+} from '../scripts/prepare-release.mjs';
 
 const SHA = 'a'.repeat(40);
 const stable = {
@@ -140,5 +144,53 @@ describe('version derivation from plans', () => {
         }),
       /stable SemVer/u,
     );
+  });
+});
+
+describe('changelog thank you section', () => {
+  const entry = (authors) =>
+    [
+      '## 0.3.1 (2026-08-20)',
+      '',
+      '### 🩹 Fixes',
+      '',
+      '- a fix',
+      '',
+      '### ❤️ Thank You',
+      '',
+      ...authors,
+      '',
+    ].join('\n');
+  const published = ['## 0.3.0 (2026-08-19)', '', '### ❤️ Thank You', '', '- Claude Fable 5', ''].join('\n');
+
+  it('keeps people and drops assistants and bots', () => {
+    const changelog = `${entry(['- Claude Fable 5', '- Richard Fontein @rifont', '- dependabot[bot]'])}\n${published}`;
+    const rendered = withoutNonHumanAuthors(changelog);
+
+    assert.match(rendered, /### ❤️ Thank You\n\n- Richard Fontein @rifont\n/u);
+    assert.doesNotMatch(rendered.split('## 0.3.0')[0], /Claude|\[bot\]/u);
+  });
+
+  it('leaves published entries untouched', () => {
+    const changelog = `${entry(['- Claude Fable 5', '- Richard Fontein @rifont'])}\n${published}`;
+    assert(withoutNonHumanAuthors(changelog).endsWith(published));
+  });
+
+  it('removes the heading when nobody is left to thank', () => {
+    const rendered = withoutNonHumanAuthors(entry(['- dependabot[bot]']));
+
+    assert.doesNotMatch(rendered, /Thank You/u);
+    assert.match(rendered, /- a fix\n$/u);
+  });
+
+  it('leaves a changelog without the section alone', () => {
+    const changelog = '## 0.3.1 (2026-08-20)\n\n### 🩹 Fixes\n\n- a fix\n';
+    assert.equal(withoutNonHumanAuthors(changelog), changelog);
+  });
+
+  it('is idempotent', () => {
+    const changelog = entry(['- Claude Fable 5', '- Richard Fontein @rifont']);
+    const once = withoutNonHumanAuthors(changelog);
+    assert.equal(withoutNonHumanAuthors(once), once);
   });
 });
