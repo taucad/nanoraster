@@ -282,7 +282,10 @@ pub(crate) fn with_view(error: RenderError, id: &str) -> RenderError {
     }
 }
 
-fn with_view_result<T>(result: Result<T, RenderError>, id: &str) -> Result<T, RenderError> {
+pub(crate) fn with_view_result<T>(
+    result: Result<T, RenderError>,
+    id: &str,
+) -> Result<T, RenderError> {
     match result {
         Ok(value) => Ok(value),
         Err(error) => Err(with_view(error, id)),
@@ -1060,6 +1063,53 @@ mod tests {
     }
 
     #[test]
+    fn profile_serializes_camel_cased_json() {
+        let profile = RenderBatchProfile {
+            parse_ms: 1.5,
+            setup_ms: 2.0,
+            peak_readback_bytes: 4096,
+            glb_parses: 1,
+            adapter_device_requests: 0,
+            pipeline_sets: 0,
+            scene_uploads: 1,
+            target_allocations: 0,
+            views: vec![RenderViewProfile {
+                id: "front".into(),
+                render_ms: 3.0,
+                overlay_ms: 0.0,
+                encode_ms: 4.0,
+            }],
+        };
+        let json: serde_json::Value = serde_json::from_str(&profile.to_json()).expect("valid JSON");
+        assert_eq!(json["parseMs"], 1.5);
+        assert_eq!(json["adapterDeviceRequests"], 0);
+        assert_eq!(json["views"][0]["encodeMs"], 4.0);
+    }
+
+    #[test]
+    fn encode_failures_carry_through_the_plan_executor() {
+        // A transparent JPEG passes validation and fails at encode, exercising
+        // the executor's error propagation on both the singular fast path and
+        // the parallel batch path.
+        let singular = pollster::block_on(render_glb_to_image(
+            FIXTURE,
+            &RenderOptions::default(),
+            ImageFormat::Jpeg { quality: 85 },
+        ))
+        .unwrap_err();
+        assert!(singular.to_string().starts_with("encode:"), "{singular}");
+
+        let batch = pollster::block_on(render_glb_to_images(
+            FIXTURE,
+            &RenderOptions::default(),
+            ImageFormat::Jpeg { quality: 85 },
+            &[view("iso", 60.0, -45.0), view("front", 90.0, 0.0)],
+        ))
+        .unwrap_err();
+        assert!(batch.to_string().starts_with("encode: view \"iso\":"));
+    }
+
+    #[test]
     fn warm_renderer_reuses_the_device_across_calls_and_plans() {
         let mut renderer = pollster::block_on(Renderer::from_request(None)).expect("renderer");
         let options = RenderOptions {
@@ -1121,6 +1171,42 @@ mod tests {
         .expect("pixels");
         assert_eq!((pixels.width, pixels.height), (192, 192));
         assert_eq!(pixels.rgba.len(), 192 * 192 * 4);
+
+        // A caller-supplied clock takes precedence over the native fallback,
+        // on both the warm-renderer and one-shot request paths.
+        let host_clock = || 42.0;
+        let profiled_request = r#"{"format":"png","width":192,"height":192,"profile":true,"views":[{"id":"front","phi":90,"theta":0}]}"#;
+        let (_, hosted) = pollster::block_on(renderer.render_images_request(
+            FIXTURE,
+            profiled_request,
+            Some(&host_clock),
+        ))
+        .expect("hosted clock profile");
+        assert_eq!(hosted.expect("profile").parse_ms, 0.0);
+        let (_, free_hosted) = pollster::block_on(render_glb_images_request(
+            FIXTURE,
+            profiled_request,
+            Some(&host_clock),
+        ))
+        .expect("free hosted clock profile");
+        assert_eq!(free_hosted.expect("profile").parse_ms, 0.0);
+        // Without a host clock, native self-clocks via Instant.
+        let (_, fallback) =
+            pollster::block_on(render_glb_images_request(FIXTURE, profiled_request, None))
+                .expect("fallback clock profile");
+        assert!(fallback.expect("profile").views[0].encode_ms >= 0.0);
+
+        // The typed warm entry rejects an empty plan before any GPU work.
+        assert!(
+            pollster::block_on(renderer.render_glb_to_images(
+                FIXTURE,
+                &RenderOptions::default(),
+                ImageFormat::Png,
+                &[],
+                None,
+            ))
+            .is_err()
+        );
 
         renderer.destroy();
     }

@@ -25,9 +25,9 @@ const sizes = {
 // overflow-proof quantizer arithmetic).
 // The lossy-WebP build before it was +40,591 raw (+5.0%) over the
 // configurable-lighting build for the VP8 lossy encoder itself.
-// Handles-first build (R1 inversion): raw 918,110, gzip-9 366,755, brotli-11
-// 291,245 on macOS, against 875,874 / 350,646 / 279,276 for the
-// lossy-encoder-uplift build — +42,236 raw (+4.8%). That is the Renderer
+// Handles-first build (R1 inversion): raw 918,021, gzip-9 366,752, brotli-11
+// 291,416 on macOS, against 875,874 / 350,646 / 279,276 for the
+// lossy-encoder-uplift build — +42,147 raw (+4.8%). That is the Renderer
 // class surface in wasm-bindgen (class glue, JS result objects, the
 // createRenderer request struct's serde), the plan executor with its
 // pipelined readback, and per-view override resolution. Pixel and byte

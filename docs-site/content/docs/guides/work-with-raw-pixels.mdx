@@ -13,7 +13,7 @@ An encoded file exists to be stored or transmitted. When the next step is a
 canvas, an encoder of your own, or a diff, encoding is pure overhead — and in
 a browser the file is _decoded again_ before it can be shown. At 960×720 the
 encode plus decode round trip costs roughly 20 ms per frame that the pixels
-path simply does not spend.
+path never spends.
 
 ```typescript
 import { renderGlbToPixels } from 'nanoraster';

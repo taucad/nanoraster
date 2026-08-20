@@ -13,7 +13,7 @@ use crate::encode::{ImageFormat, encode};
 use crate::glb::{self, MODE_TRIANGLES, Material};
 use crate::{
     DEFAULT_HEIGHT, LightingSpace, MAX_LIGHTS, Projection, RenderError, RenderOptions, UpAxis,
-    with_view,
+    with_view_result,
 };
 use glam::{Mat4, Vec3};
 use std::fmt::Display;
@@ -192,6 +192,13 @@ pub(crate) struct ViewTimings {
     pub(crate) render_ms: f64,
     pub(crate) overlay_ms: f64,
     pub(crate) encode_ms: f64,
+}
+
+/// An explicit destroy() is the caller's own teardown, not a loss.
+fn note_device_lost(lost: &AtomicBool, reason: wgpu::DeviceLostReason) {
+    if !matches!(reason, wgpu::DeviceLostReason::Destroyed) {
+        lost.store(true, Ordering::Release);
+    }
 }
 
 pub(crate) async fn request_adapter(
@@ -684,12 +691,7 @@ impl DeviceState {
 
         device.set_device_lost_callback({
             let lost = lost.clone();
-            move |reason, _message| {
-                // An explicit destroy() is the caller's own teardown, not a loss.
-                if !matches!(reason, wgpu::DeviceLostReason::Destroyed) {
-                    lost.store(true, Ordering::Release);
-                }
-            }
+            move |reason, _message| note_device_lost(&lost, reason)
         });
         // Without a handler, native wgpu panics on uncaptured validation errors
         // and browsers only log them; storing the first message gives every
@@ -697,7 +699,9 @@ impl DeviceState {
         device.on_uncaptured_error(Arc::new({
             let slot = uncaptured.clone();
             move |error: wgpu::Error| {
-                let mut slot = slot.lock().unwrap_or_else(|poison| poison.into_inner());
+                let mut slot = slot
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 slot.get_or_insert_with(|| error.to_string());
             }
         }));
@@ -837,7 +841,7 @@ impl Renderer {
         let mut slot = self
             .uncaptured
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match slot.take() {
             Some(message) => Err(RenderError::Gpu(message)),
             None => Ok(()),
@@ -1225,14 +1229,11 @@ impl Renderer {
                 timeout: None,
             })
             .map_err(poll_error)?;
-        match view.receiver.try_recv() {
-            Ok(Some(result)) => result.map_err(map_error)?,
-            Ok(None) | Err(_) => {
-                return Err(RenderError::Gpu(
-                    "map_async: callback not delivered after poll".into(),
-                ));
-            }
-        }
+        view.receiver
+            .try_recv()
+            .expect("the map sender outlives the poll")
+            .expect("wgpu delivers the map callback during the awaited poll")
+            .map_err(map_error)?;
         self.read_back(&view)
     }
 
@@ -1288,6 +1289,26 @@ impl Renderer {
         }
     }
 
+    /// Wait for one pipelined view (when there is one) and hand its frame to
+    /// the encode workers. Shared by the loop body and the final flush so the
+    /// executor has exactly one resolve path.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn resolve_pending(
+        &self,
+        plan: &[PlanEntry],
+        pending: Option<(usize, f64, InFlightView)>,
+        sender: &std::sync::mpsc::Sender<(usize, Rendered, f64)>,
+        now: Option<&(dyn Fn() -> f64 + Sync)>,
+    ) -> Result<(), RenderError> {
+        let Some((index, started, in_flight)) = pending else {
+            return Ok(());
+        };
+        let finished = with_view_result(self.finish_view_blocking(in_flight), &plan[index].id);
+        let elapsed = now.map_or(0.0, |clock| clock()) - started;
+        let _ = sender.send((index, finished?, elapsed));
+        Ok(())
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn execute_plan_native(
         &mut self,
@@ -1300,9 +1321,7 @@ impl Renderer {
             // Single view: no pipelining or worker to win anything with.
             let render_started = clock(now);
             let in_flight = self.begin_view(scene, entry)?;
-            let rendered = self
-                .finish_view_blocking(in_flight)
-                .map_err(|error| with_view(error, &entry.id))?;
+            let rendered = with_view_result(self.finish_view_blocking(in_flight), &entry.id)?;
             let (bytes, timings) = encode_entry(
                 entry,
                 rendered,
@@ -1327,8 +1346,9 @@ impl Renderer {
                     let mut scratch = Vec::new();
                     loop {
                         let job = {
-                            let receiver =
-                                receiver.lock().unwrap_or_else(|poison| poison.into_inner());
+                            let receiver = receiver
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                             receiver.recv()
                         };
                         let Ok((index, rendered, render_ms)) = job else {
@@ -1336,7 +1356,9 @@ impl Renderer {
                         };
                         let result =
                             encode_entry(&plan[index], rendered, render_ms, now, &mut scratch);
-                        results.lock().unwrap_or_else(|poison| poison.into_inner())[index] =
+                        results
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)[index] =
                             Some(result);
                     }
                 });
@@ -1347,22 +1369,10 @@ impl Renderer {
                 for (index, entry) in plan.iter().enumerate() {
                     let started = clock(now);
                     let in_flight = self.begin_view(scene, entry)?;
-                    if let Some((prev_index, prev_started, prev_flight)) =
-                        pending.replace((index, started, in_flight))
-                    {
-                        let rendered = self
-                            .finish_view_blocking(prev_flight)
-                            .map_err(|error| with_view(error, &plan[prev_index].id))?;
-                        let _ = sender.send((prev_index, rendered, clock(now) - prev_started));
-                    }
+                    let previous = pending.replace((index, started, in_flight));
+                    self.resolve_pending(plan, previous, sender, now)?;
                 }
-                if let Some((index, started, in_flight)) = pending.take() {
-                    let rendered = self
-                        .finish_view_blocking(in_flight)
-                        .map_err(|error| with_view(error, &plan[index].id))?;
-                    let _ = sender.send((index, rendered, clock(now) - started));
-                }
-                Ok(())
+                self.resolve_pending(plan, pending.take(), sender, now)
             };
             let outcome = render(&sender);
             drop(sender);
@@ -1376,7 +1386,7 @@ impl Renderer {
         // encodes completed out of order.
         for slot in results
             .into_inner()
-            .unwrap_or_else(|poison| poison.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
         {
             let (bytes, view_timings) =
                 slot.expect("every submitted view is encoded before the scope joins")?;
@@ -1406,10 +1416,8 @@ impl Renderer {
             if let Some((prev_index, prev_started, prev_flight)) =
                 pending.replace((index, started, in_flight))
             {
-                let rendered = self
-                    .finish_view(prev_flight)
-                    .await
-                    .map_err(|error| with_view(error, &plan[prev_index].id))?;
+                let rendered =
+                    with_view_result(self.finish_view(prev_flight).await, &plan[prev_index].id)?;
                 let (bytes, view_timings) = encode_entry(
                     &plan[prev_index],
                     rendered,
@@ -1422,10 +1430,7 @@ impl Renderer {
             }
         }
         if let Some((index, started, in_flight)) = pending.take() {
-            let rendered = self
-                .finish_view(in_flight)
-                .await
-                .map_err(|error| with_view(error, &plan[index].id))?;
+            let rendered = with_view_result(self.finish_view(in_flight).await, &plan[index].id)?;
             let (bytes, view_timings) = encode_entry(
                 &plan[index],
                 rendered,
@@ -1460,7 +1465,7 @@ fn encode_entry(
     }
     let overlay_ms = clock(now) - overlay_started;
     let encode_started = clock(now);
-    let bytes = encode(&rendered, entry.format).map_err(|error| with_view(error, &entry.id))?;
+    let bytes = with_view_result(encode(&rendered, entry.format), &entry.id)?;
     Ok((
         bytes,
         ViewTimings {
@@ -1883,6 +1888,37 @@ mod tests {
                 .to_string()
                 .starts_with("gpu: mapped range:")
         );
+    }
+
+    #[test]
+    fn device_loss_notes_every_reason_except_explicit_destroy() {
+        let lost = AtomicBool::new(false);
+        note_device_lost(&lost, wgpu::DeviceLostReason::Destroyed);
+        assert!(!lost.load(Ordering::Acquire));
+        note_device_lost(&lost, wgpu::DeviceLostReason::Unknown);
+        assert!(lost.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn scene_buffers_upload_once_per_device_generation() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let mut handle = Scene::new(scene());
+
+        renderer.ensure_uploaded(&mut handle).expect("first upload");
+        renderer
+            .ensure_uploaded(&mut handle)
+            .expect("cached upload");
+        assert_eq!(renderer.counters.scene_uploads, 1);
+
+        // A recreated device invalidates the buffers: the same handle
+        // re-uploads lazily on next use.
+        renderer.lost.store(true, Ordering::Release);
+        pollster::block_on(renderer.recover_if_lost()).expect("recreate");
+        renderer.ensure_uploaded(&mut handle).expect("re-upload");
+        assert_eq!(renderer.counters.scene_uploads, 2);
+        renderer.destroy();
     }
 
     #[test]

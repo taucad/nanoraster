@@ -736,8 +736,7 @@ mod tests {
                     .expect("parse")
                     .resolve()
                     .expect("resolve"),
-                expected,
-                "{json}"
+                expected
             );
         }
         assert_eq!(
