@@ -204,6 +204,8 @@ export const RenderDemo = ({
 
               {control.kind === 'range' ? (
                 <input
+                  // PNG is the one format that ignores quality entirely.
+                  disabled={control.key === 'quality' && values['format'] === 'png'}
                   max={control.max}
                   min={control.min}
                   onChange={(event) => {

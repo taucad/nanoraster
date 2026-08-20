@@ -10,7 +10,7 @@ const heroExample = `import { renderGlbToImage } from 'nanoraster';
 
 const image = await renderGlbToImage(glb, {
   format: 'webp',
-  quality: 0.9,
+  quality: 1,
   phi: 60,
   theta: -45,
   margin: 0.1,

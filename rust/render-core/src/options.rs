@@ -268,7 +268,14 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
             "margin {margin} outside 0..=0.5"
         )));
     }
-    let quality = request.quality.unwrap_or(0.92);
+    // WebP defaults to 1 (lossless, matching earlier lossless-only releases);
+    // JPEG keeps 0.92. PNG ignores quality entirely.
+    let default_quality = if request.format == Some("webp") {
+        1.0
+    } else {
+        0.92
+    };
+    let quality = request.quality.unwrap_or(default_quality);
     if !quality.is_finite() || !(0.0..=1.0).contains(&quality) {
         return Err(RenderError::Parse(format!(
             "quality {quality} outside 0..=1"
@@ -303,8 +310,14 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
     let lighting = resolve_lighting(request.lighting)?;
 
     let format_name = request.format.unwrap_or("png");
-    let jpeg_quality = (quality * 100.0).round() as u8;
-    let format = ImageFormat::from_name(format_name, jpeg_quality)
+    // Only an exact quality of 1 selects lossless WebP: rounding alone would
+    // send 0.995..1.0 to 100, silently breaking the "below 1 is lossy"
+    // contract.
+    let encoder_quality = match (quality * 100.0).round() as u8 {
+        100 if quality < 1.0 => 99,
+        rounded => rounded,
+    };
+    let format = ImageFormat::from_name(format_name, encoder_quality)
         .map_err(|_| RenderError::Parse(format!("format {format_name:?} not png/webp/jpeg/jpg")))?;
 
     Ok((
@@ -477,6 +490,22 @@ mod tests {
     }
 
     #[test]
+    fn webp_quality_below_one_is_always_lossy() {
+        for (json, expected) in [
+            (r#"{"format":"webp"}"#, 100u8),
+            (r#"{"format":"webp","quality":1}"#, 100),
+            (r#"{"format":"webp","quality":0.995}"#, 99),
+            (r#"{"format":"webp","quality":0.9}"#, 90),
+        ] {
+            let (_, format) = RenderRequest::from_json(json)
+                .expect("parse")
+                .resolve()
+                .expect("resolve");
+            assert_eq!(format, ImageFormat::WebP { quality: expected }, "{json}");
+        }
+    }
+
+    #[test]
     fn plural_resolves_shared_settings_and_ordered_views() {
         let (options, format, views) = RenderImagesRequest::from_json(
             r#"{"format":"webp","includeAxes":true,"includeLabel":true,"includeScale":true,"views":[{"id":"front","label":"Front","phi":90,"theta":0},{"id":"top","label":"Top","phi":0,"theta":0}]}"#,
@@ -488,7 +517,7 @@ mod tests {
         assert!(options.include_label);
         assert!(options.include_scale);
         assert_eq!(views[0].label.as_deref(), Some("Front"));
-        assert_eq!(format, ImageFormat::WebP);
+        assert_eq!(format, ImageFormat::WebP { quality: 100 });
         assert_eq!(views[0].id, "front");
         assert_eq!(views[1].id, "top");
     }

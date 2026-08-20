@@ -1,7 +1,6 @@
-//! RGBA → PNG / lossless-WebP / JPEG encoders. All pure Rust so every
-//! artifact (native, wasm, napi) produces byte-identical files from the same
-//! pixels — jpeg-encoder's opt-in x86 `simd` feature stays off for the same
-//! reason.
+//! RGBA → PNG / WebP / JPEG encoders. All pure Rust so every artifact
+//! (native, wasm, napi) produces byte-identical files from the same pixels —
+//! jpeg-encoder's opt-in x86 `simd` feature stays off for the same reason.
 
 use crate::{RenderError, Rendered};
 use std::io::Write;
@@ -10,8 +9,11 @@ use std::io::Write;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFormat {
     Png,
-    /// Lossless (VP8L) with alpha — `image-webp` does not encode lossy.
-    WebP,
+    /// WebP with alpha. Quality 100 encodes lossless (VP8L); anything lower
+    /// encodes lossy (VP8), mirroring Chrome's canvas `toBlob` semantics.
+    WebP {
+        quality: u8,
+    },
     /// Baseline JPEG, 4:4:4 chroma (subsampling smears colored edge lines).
     /// No alpha channel: render with an opaque `RenderOptions::background`.
     Jpeg {
@@ -20,11 +22,11 @@ pub enum ImageFormat {
 }
 
 impl ImageFormat {
-    /// Binding-facing parse; `quality` (0-100) applies to jpeg only.
+    /// Binding-facing parse; `quality` (0-100) applies to webp and jpeg.
     pub fn from_name(name: &str, quality: u8) -> Result<Self, RenderError> {
         match name {
             "png" => Ok(Self::Png),
-            "webp" => Ok(Self::WebP),
+            "webp" => Ok(Self::WebP { quality }),
             "jpeg" | "jpg" => Ok(Self::Jpeg { quality }),
             other => Err(RenderError::Encode(format!(
                 "unknown image format {other:?}"
@@ -37,7 +39,7 @@ impl ImageFormat {
 pub fn encode(rendered: &Rendered, format: ImageFormat) -> Result<Vec<u8>, RenderError> {
     match format {
         ImageFormat::Png => encode_png(rendered),
-        ImageFormat::WebP => encode_webp(rendered),
+        ImageFormat::WebP { quality } => encode_webp(rendered, quality),
         ImageFormat::Jpeg { quality } => encode_jpeg(rendered, quality),
     }
 }
@@ -81,9 +83,20 @@ pub fn encode_png(rendered: &Rendered) -> Result<Vec<u8>, RenderError> {
     Ok(out)
 }
 
-fn write_webp(rendered: &Rendered, output: &mut impl Write) -> Result<(), RenderError> {
+fn write_webp(
+    rendered: &Rendered,
+    quality: u8,
+    output: &mut impl Write,
+) -> Result<(), RenderError> {
     validate_rendered(rendered)?;
-    image_webp::WebPEncoder::new(output)
+    let mut encoder = image_webp::WebPEncoder::new(output);
+    if quality < 100 {
+        let mut params = image_webp::EncoderParams::default();
+        params.use_lossy = true;
+        params.lossy_quality = quality;
+        encoder.set_params(params);
+    }
+    encoder
         .encode(
             &rendered.rgba,
             rendered.width,
@@ -93,10 +106,13 @@ fn write_webp(rendered: &Rendered, output: &mut impl Write) -> Result<(), Render
         .map_err(|error| RenderError::Encode(error.to_string()))
 }
 
-/// Encode rendered RGBA pixels as lossless WebP (alpha preserved).
-pub fn encode_webp(rendered: &Rendered) -> Result<Vec<u8>, RenderError> {
+/// Encode rendered RGBA pixels as WebP (alpha preserved).
+///
+/// Quality 100 is lossless (VP8L); 0-99 is lossy (VP8, 4:2:0 chroma) with a
+/// losslessly coded alpha channel.
+pub fn encode_webp(rendered: &Rendered, quality: u8) -> Result<Vec<u8>, RenderError> {
     let mut out = Vec::new();
-    write_webp(rendered, &mut out)?;
+    write_webp(rendered, quality, &mut out)?;
     Ok(out)
 }
 
@@ -177,10 +193,78 @@ mod tests {
         }
     }
 
+    /// A larger high-entropy roundtrip: dense residuals stress the arithmetic
+    /// coder's renormalisation and carry paths, and the varied alpha channel
+    /// must survive exactly (lossy WebP codes alpha losslessly).
+    #[test]
+    fn lossy_webp_roundtrips_high_entropy_content() {
+        let (width, height) = (193u32, 129u32);
+        let mut state = 0x0dd5_eedd_00d5_eedau64;
+        let mut rgba = Vec::new();
+        for _ in 0..width * height {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            let [red, green, blue, alpha, ..] = state.to_le_bytes();
+            rgba.extend_from_slice(&[red, green, blue, alpha]);
+        }
+        let rendered = Rendered {
+            rgba,
+            width,
+            height,
+        };
+        for quality in [10u8, 50, 90] {
+            let bytes = encode_webp(&rendered, quality).expect("encode");
+            let mut decoder =
+                image_webp::WebPDecoder::new(std::io::Cursor::new(&bytes)).expect("decoder");
+            assert_eq!(decoder.dimensions(), (width, height));
+            let mut pixels = vec![0u8; decoder.output_buffer_size().expect("size")];
+            decoder.read_image(&mut pixels).expect("decode");
+            let alpha_matches = pixels
+                .iter()
+                .skip(3)
+                .step_by(4)
+                .zip(rendered.rgba.iter().skip(3).step_by(4))
+                .all(|(decoded, original)| decoded == original);
+            assert!(alpha_matches, "alpha diverged at quality {quality}");
+        }
+    }
+
+    /// Odd dimensions exercise the trailing row and column of the lossy YUV
+    /// conversion, which the vendored encoder once left as zeroed samples.
+    #[test]
+    fn lossy_webp_converts_odd_trailing_row_and_column() {
+        let (width, height) = (17u32, 17u32);
+        let rgba: Vec<u8> = std::iter::repeat_n([200u8, 40, 40, 255], (width * height) as usize)
+            .flatten()
+            .collect();
+        let rendered = Rendered {
+            rgba,
+            width,
+            height,
+        };
+        let bytes = encode_webp(&rendered, 90).expect("encode");
+        let mut decoder =
+            image_webp::WebPDecoder::new(std::io::Cursor::new(&bytes)).expect("decoder");
+        let mut pixels = vec![0u8; decoder.output_buffer_size().expect("size")];
+        decoder.read_image(&mut pixels).expect("decode");
+        let worst_drift = pixels
+            .chunks_exact(4)
+            .flat_map(|pixel| {
+                pixel[..3]
+                    .iter()
+                    .zip(&[200u8, 40, 40])
+                    .map(|(channel, &expected)| channel.abs_diff(expected))
+            })
+            .max()
+            .expect("pixels");
+        assert!(worst_drift < 32, "worst channel drift {worst_drift}");
+    }
+
     #[test]
     fn webp_roundtrips_losslessly() {
         let rendered = gradient(200);
-        let bytes = encode_webp(&rendered).expect("encode");
+        let bytes = encode_webp(&rendered, 100).expect("encode");
         assert_eq!(&bytes[..4], b"RIFF");
         assert_eq!(&bytes[8..12], b"WEBP");
         let mut decoder =
@@ -189,6 +273,48 @@ mod tests {
         let mut pixels = vec![0u8; decoder.output_buffer_size().expect("size")];
         decoder.read_image(&mut pixels).expect("decode");
         assert_eq!(pixels, rendered.rgba);
+    }
+
+    #[test]
+    fn webp_below_quality_100_encodes_lossy_and_keeps_alpha() {
+        let rendered = gradient(200);
+        let bytes = encode_webp(&rendered, 75).expect("encode");
+        // Lossy-with-alpha uses the extended container, not the VP8L chunk.
+        assert!(!bytes.windows(4).any(|chunk| chunk == b"VP8L"));
+        assert!(bytes.windows(4).any(|chunk| chunk == b"ALPH"));
+        let mut decoder =
+            image_webp::WebPDecoder::new(std::io::Cursor::new(&bytes)).expect("decoder");
+        assert_eq!(decoder.dimensions(), (4, 4));
+        let mut pixels = vec![0u8; decoder.output_buffer_size().expect("size")];
+        decoder.read_image(&mut pixels).expect("decode");
+        // Color channels are quantized; the alpha channel is coded losslessly.
+        assert!(pixels.iter().skip(3).step_by(4).all(|&alpha| alpha == 200));
+    }
+
+    #[test]
+    fn webp_quality_orders_output_size() {
+        // Deterministic noise: smooth gradients are VP8L's best case and
+        // would compress below the lossy floor, inverting the ordering.
+        let (width, height) = (64u32, 64u32);
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut rgba = Vec::new();
+        for _ in 0..width * height {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            let [red, green, blue, ..] = state.to_le_bytes();
+            rgba.extend_from_slice(&[red, green, blue, 255]);
+        }
+        let rendered = Rendered {
+            rgba,
+            width,
+            height,
+        };
+        let low = encode_webp(&rendered, 25).expect("q25").len();
+        let high = encode_webp(&rendered, 90).expect("q90").len();
+        let lossless = encode_webp(&rendered, 100).expect("q100").len();
+        assert!(low < high, "q25 {low} not below q90 {high}");
+        assert!(high < lossless, "q90 {high} not below lossless {lossless}");
     }
 
     #[test]
@@ -211,7 +337,7 @@ mod tests {
         ));
         assert!(matches!(
             ImageFormat::from_name("webp", 85),
-            Ok(ImageFormat::WebP)
+            Ok(ImageFormat::WebP { quality: 85 })
         ));
         assert!(matches!(
             ImageFormat::from_name("jpg", 80),
@@ -228,7 +354,8 @@ mod tests {
             height: 1,
         };
         assert!(encode_png(&empty).is_err());
-        assert!(encode_webp(&empty).is_err());
+        assert!(encode_webp(&empty, 100).is_err());
+        assert!(encode_webp(&empty, 75).is_err());
         assert!(encode_jpeg(&empty, 85).is_err());
 
         let too_wide = Rendered {
@@ -256,15 +383,20 @@ mod tests {
         let rendered = gradient(255);
         let mut png_errors = 0;
         let mut webp_errors = 0;
+        let mut webp_lossy_errors = 0;
         let mut jpeg_errors = 0;
         for writes in 0..64 {
             png_errors += usize::from(write_png(&rendered, &mut FailAfter { writes }).is_err());
-            webp_errors += usize::from(write_webp(&rendered, &mut FailAfter { writes }).is_err());
+            webp_errors +=
+                usize::from(write_webp(&rendered, 100, &mut FailAfter { writes }).is_err());
+            webp_lossy_errors +=
+                usize::from(write_webp(&rendered, 75, &mut FailAfter { writes }).is_err());
             jpeg_errors +=
                 usize::from(write_jpeg(&rendered, 85, &mut FailAfter { writes }).is_err());
         }
         assert!(png_errors > 2);
         assert!(webp_errors > 0);
+        assert!(webp_lossy_errors > 0);
         assert!(jpeg_errors > 0);
     }
 }

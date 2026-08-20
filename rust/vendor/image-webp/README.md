@@ -16,11 +16,16 @@ decoding.
   and XMP chunks. Decoding speed is generally in the range of **70-100%** of the
   speed of libwebp.
 
-- **Encoder:** This crate only supports lossless encoding. The encoder
-  implementation is relatively basic which makes it very fast, but it doesn't
-  get as good compression ratios as libwebp can. Nonetheless, it often produces
-  smaller files than PNG, even when compared against the slowest/highest
-  compression options of PNG encoders.
+- **Encoder:** Supports lossless encoding, and lossy encoding of still images
+  through `EncoderParams::use_lossy`. The lossless encoder implementation is
+  relatively basic which makes it very fast, but it doesn't get as good
+  compression ratios as libwebp can. Nonetheless, it often produces smaller
+  files than PNG, even when compared against the slowest/highest compression
+  options of PNG encoders. The lossy encoder chooses every macroblock's intra
+  prediction mode (16×16 and 4×4) by rate-distortion cost, skips macroblocks
+  whose coefficients quantize away, and maps quality onto the quantizer through
+  a nonlinear curve; libwebp still writes smaller files at the same quality,
+  but the gap is far narrower than it was.
 
 ## Future possibilities
 
@@ -30,9 +35,10 @@ decoding.
 - Another potential area is **animation encoding**. Much of the groundwork is in
   place for this, but it will require some additional work to implement.
 
-- We would like to add **lossy encoding** support, but this is a non-trivial
-  task and would require a lot of work. If you are interested in helping with
-  this, please get in touch!
+- The **lossy encoder** could close more of the remaining gap to libwebp
+  through segment adaptation, trellis quantization, and a rate-aware
+  coefficient zeroing pass. If you are interested in helping with this, please
+  get in touch!
 
 ## Unsafe code
 

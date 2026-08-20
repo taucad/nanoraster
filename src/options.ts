@@ -59,7 +59,13 @@ type RenderImageSharedOptions = {
   readonly width?: number;
   /** Output height in pixels, inclusive range 16–4096. @default 432 */
   readonly height?: number;
-  /** Encoder quality from 0 to 1. @default 0.92 */
+  /**
+   * Encoder quality from 0 to 1. For WebP, 1 is lossless and anything lower
+   * encodes lossy, following Chrome's canvas `toBlob` semantics. PNG ignores
+   * quality.
+   *
+   * @default 0.92 (jpeg), 1 (webp)
+   */
   readonly quality?: number;
   /** Empty fraction around the fitted subject, from 0 to 0.5. @default 0.1 */
   readonly margin?: number;

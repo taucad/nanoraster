@@ -36,7 +36,10 @@ durations.sort((left, right) => left - right);
 const report = {
   // v2: R8/R9 retuned the studio preset (ACES tone map + diffuse environment
   // irradiance), so every pixel — and therefore outputFnv — changed on purpose.
-  name: 'gear-parse-raster-encode-512x384-v2',
+  // v3: the vendored image-webp update that added lossy encoding also revised
+  // its lossless encoder, so codecConformance's webp fingerprints changed on
+  // purpose (pixels and PNG output are untouched).
+  name: 'gear-parse-raster-encode-512x384-v3',
   adapter: native.describeAdapter(),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,
