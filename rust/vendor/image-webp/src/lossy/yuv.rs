@@ -404,35 +404,28 @@ pub(crate) fn convert_image_yuv<const BPP: usize>(
     let mut u_bytes = vec![0u8; chroma_size];
     let mut v_bytes = vec![0u8; chroma_size];
 
-    // loop through two rows at a time so that we can calculate the average of the 2x2 pixels
-    // for averaging for the chroma pixels when downscaling
-    for (((image_rows, y_rows), u_row), v_row) in image_data
-        .chunks_exact(BPP * width * 2)
-        .zip(y_bytes.chunks_exact_mut(luma_width * 2))
-        .zip(u_bytes.chunks_exact_mut(chroma_width))
-        .zip(v_bytes.chunks_exact_mut(chroma_width))
-    {
-        let (image_row_1, image_row_2) = image_rows.split_at(BPP * width);
-        let (y_row_1, y_row_2) = y_rows.split_at_mut(luma_width);
+    // Sample with clamped coordinates so odd trailing rows and columns are
+    // converted rather than left zero, and the macroblock padding replicates
+    // the image edge the way libwebp's RGBA import does. `chunks_exact`-based
+    // 2x2 iteration silently dropped the final odd row and column.
+    let sample = |x: usize, y: usize| -> &[u8] {
+        let sx = x.min(width - 1);
+        let sy = y.min(height - 1);
+        &image_data[BPP * (sy * width + sx)..BPP * (sy * width + sx) + BPP]
+    };
 
-        for (((((row_1, row_2), y_pixels_1), y_pixels_2), u_pixel), v_pixel) in image_row_1
-            .chunks_exact(BPP * 2)
-            .zip(image_row_2.chunks_exact(BPP * 2))
-            .zip(y_row_1.chunks_exact_mut(2))
-            .zip(y_row_2.chunks_exact_mut(2))
-            .zip(u_row.iter_mut())
-            .zip(v_row.iter_mut())
-        {
-            let (rgb1, rgb2) = row_1.split_at(BPP);
-            let (rgb3, rgb4) = row_2.split_at(BPP);
-
-            y_pixels_1[0] = rgb_to_y(rgb1);
-            y_pixels_1[1] = rgb_to_y(rgb2);
-            y_pixels_2[0] = rgb_to_y(rgb3);
-            y_pixels_2[1] = rgb_to_y(rgb4);
-
-            *u_pixel = rgb_to_u_avg(rgb1, rgb2, rgb3, rgb4);
-            *v_pixel = rgb_to_v_avg(rgb1, rgb2, rgb3, rgb4);
+    for luma_y in 0..16 * mb_height {
+        for luma_x in 0..luma_width {
+            y_bytes[luma_y * luma_width + luma_x] = rgb_to_y(sample(luma_x, luma_y));
+        }
+    }
+    for chroma_y in 0..8 * mb_height {
+        for chroma_x in 0..chroma_width {
+            let (x, y) = (2 * chroma_x, 2 * chroma_y);
+            let (rgb1, rgb2) = (sample(x, y), sample(x + 1, y));
+            let (rgb3, rgb4) = (sample(x, y + 1), sample(x + 1, y + 1));
+            u_bytes[chroma_y * chroma_width + chroma_x] = rgb_to_u_avg(rgb1, rgb2, rgb3, rgb4);
+            v_bytes[chroma_y * chroma_width + chroma_x] = rgb_to_v_avg(rgb1, rgb2, rgb3, rgb4);
         }
     }
 

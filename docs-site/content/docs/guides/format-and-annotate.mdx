@@ -25,7 +25,7 @@ const image = await renderGlbToImage(glb, {
 | Format | Alpha | Lossy                          | Use for                                                  |
 | ------ | ----- | ------------------------------ | -------------------------------------------------------- |
 | `png`  | Yes   | No                             | Exact pixels, diffing, transparent thumbnails            |
-| `webp` | Yes   | Only when `quality` is below 1 | Web delivery; lossless by default, much smaller lossy    |
+| `webp` | Yes   | Only when `quality` is below 1 | Web delivery; lossless by default, optionally lossy      |
 | `jpeg` | No    | Yes                            | Interop with tools that accept nothing else              |
 | `jpg`  | No    | Yes                            | Alias for `jpeg`; the filename keeps the `jpg` extension |
 

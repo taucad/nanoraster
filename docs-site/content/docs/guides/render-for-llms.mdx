@@ -21,15 +21,19 @@ provider below.
 | Anthropic | ⌈width/28⌉ × ⌈height/28⌉ visual tokens          | [Vision](https://platform.claude.com/docs/en/build-with-claude/vision)                  |
 | Gemini    | fixed per-image budget, set by media resolution | [Image understanding](https://ai.google.dev/gemini-api/docs/image-understanding)        |
 
-The default 768×432 render costs 336 patches on OpenAI and 448 visual tokens
-on Anthropic. Width and height are the only cost lever the renderer controls:
+These are the documented base formulas for current-generation models on
+images small enough to skip provider-side resizing; some models add
+multipliers or `detail` and resolution settings that scale the result — the
+linked pages carry the per-model rules. Under those base formulas the default
+768×432 render costs 336 patches on OpenAI and 448 visual tokens on
+Anthropic. Width and height are the only cost lever the renderer controls:
 halving both roughly quarters the bill, and shrinking the file changes
 nothing.
 
 ### 2. Send lossless input
 
-Since bytes are free, compression can only lose information the model might
-need. WebP's default `quality` of `1` encodes lossless, so an explicit
+Since bytes are free, lossy compression can only lose information the model
+might need. WebP's default `quality` of `1` encodes lossless, so an explicit
 `format: 'webp'` with no `quality` sends the model exactly the rendered
 pixels. Anthropic's vision guidance warns that lossy artifacts can degrade
 model performance while saving nothing on tokens. Reach for

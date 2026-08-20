@@ -1,5 +1,4 @@
 // currently just a direct translation of the encoder given in the vp8 specification
-#[derive(Default)]
 pub(crate) struct ArithmeticEncoder {
     /// the entropy values that have been encoded so far
     writer: Vec<u8>,
@@ -9,6 +8,14 @@ pub(crate) struct ArithmeticEncoder {
     range: u32,
     /// number of bits that have been encoded in the current byte
     bit_num: i32,
+}
+
+/// `Default` matches `new()` so `std::mem::take` yields a usable encoder
+/// (the derived default's `range: 0` state underflows `write_bool`).
+impl Default for ArithmeticEncoder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ArithmeticEncoder {
@@ -23,12 +30,18 @@ impl ArithmeticEncoder {
 
     // we need to go back and add one to existing values
     fn add_one_to_output(&mut self) {
+        // RFC 6386's reference carry (`while (*--q == 255) *q = 0; ++*q;`)
+        // zeroes trailing 0xff bytes and keeps them; dropping them would
+        // shift every later byte and corrupt the partition.
+        let mut carried = 0;
         while let Some(value) = self.writer.pop() {
             if value < 255 {
                 self.writer.push(value + 1);
                 break;
             }
+            carried += 1;
         }
+        self.writer.resize(self.writer.len() + carried, 0);
     }
 
     // writes a flag
@@ -172,6 +185,14 @@ mod tests {
         let mut new_buf = vec![[0u8; 4]; (buffer.len() + 3) / 4];
         new_buf.as_mut_slice().as_flattened_mut()[..buffer.len()].copy_from_slice(buffer);
         new_buf
+    }
+
+    #[test]
+    fn carry_zeroes_and_keeps_ff_bytes() {
+        let mut encoder = ArithmeticEncoder::new();
+        encoder.writer = vec![0x12, 0xff, 0xff];
+        encoder.add_one_to_output();
+        assert_eq!(encoder.writer, vec![0x13, 0x00, 0x00]);
     }
 
     #[test]

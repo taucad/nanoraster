@@ -151,6 +151,11 @@ impl<W: Write> Vp8Encoder<W> {
         let version = u32::from(self.frame.version);
         let for_display = if self.frame.for_display { 1 } else { 0 };
 
+        // The first-partition size field is 19 bits; a larger value would
+        // silently truncate in the 24-bit tag and produce an undecodable frame.
+        if partition_size >= 1 << 19 {
+            return Err(EncodingError::InvalidDimensions);
+        }
         let keyframe_bit = 0;
         let tag = (partition_size << 5) | (for_display << 4) | (version << 1) | (keyframe_bit);
         self.writer.write_u24::<LittleEndian>(tag)?;

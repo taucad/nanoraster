@@ -193,6 +193,35 @@ mod tests {
         }
     }
 
+    /// Odd dimensions exercise the trailing row and column of the lossy YUV
+    /// conversion, which the vendored encoder once left as zeroed samples.
+    #[test]
+    fn lossy_webp_converts_odd_trailing_row_and_column() {
+        let (width, height) = (17u32, 17u32);
+        let rgba: Vec<u8> = std::iter::repeat_n([200u8, 40, 40, 255], (width * height) as usize)
+            .flatten()
+            .collect();
+        let rendered = Rendered {
+            rgba,
+            width,
+            height,
+        };
+        let bytes = encode_webp(&rendered, 90).expect("encode");
+        let mut decoder =
+            image_webp::WebPDecoder::new(std::io::Cursor::new(&bytes)).expect("decoder");
+        let mut pixels = vec![0u8; decoder.output_buffer_size().expect("size")];
+        decoder.read_image(&mut pixels).expect("decode");
+        for (index, pixel) in pixels.chunks_exact(4).enumerate() {
+            let (x, y) = (index as u32 % width, index as u32 / width);
+            for (channel, &expected) in pixel[..3].iter().zip(&[200u8, 40, 40]) {
+                assert!(
+                    channel.abs_diff(expected) < 32,
+                    "pixel ({x},{y}) drifted to {pixel:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn webp_roundtrips_losslessly() {
         let rendered = gradient(200);
