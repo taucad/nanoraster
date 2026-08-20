@@ -45,6 +45,16 @@ const assertClean = () => {
   assert(status.length === 0, 'release preparation requires a clean worktree');
 };
 
+/** The one version every pending Version Plan agrees on, for `--from-plans` runs. */
+export const versionFromPlans = (plannedVersions) => {
+  assert(
+    plannedVersions.length > 0 && plannedVersions.every(Boolean),
+    'no pending Version Plan affects the fixed release group',
+  );
+  assert(new Set(plannedVersions).size === 1, 'Version Plans did not produce one fixed version');
+  return plannedVersions[0];
+};
+
 export const validateRequestedVersion = ({
   currentVersions,
   optionalDependencyVersions,
@@ -89,11 +99,12 @@ const prepare = async ({ dryRun, requestedVersion }) => {
   });
   const plannedVersions = PROJECTS.map((project) => preview.projectsVersionData[project]?.newVersion);
   assert(plannedVersions.every(Boolean), 'no pending Version Plan affects the fixed release group');
+  const version = requestedVersion ?? versionFromPlans(plannedVersions);
   validateRequestedVersion({
     currentVersions,
     optionalDependencyVersions,
     plannedVersions,
-    requestedVersion,
+    requestedVersion: version,
   });
 
   await releaseChangelog({
@@ -102,41 +113,46 @@ const prepare = async ({ dryRun, requestedVersion }) => {
     deleteVersionPlans: true,
     dryRun: true,
     releaseGraph: preview.releaseGraph,
-    version: requestedVersion,
+    version,
   });
-  if (dryRun) return;
+  if (dryRun) return version;
 
   assertClean();
   await releaseVersion({
     ...GIT_OPTIONS,
     deleteVersionPlans: true,
-    version: requestedVersion,
+    version,
   });
-  syncOptionalDependencies(requestedVersion);
+  syncOptionalDependencies(version);
   execFileSync('pnpm', ['install', '--lockfile-only'], { stdio: 'inherit' });
   await releaseChangelog({
     ...GIT_OPTIONS,
     createRelease: false,
     deleteVersionPlans: false,
     releaseGraph: preview.releaseGraph,
-    version: requestedVersion,
+    version,
   });
   assert(
-    packageVersions().every((version) => version === requestedVersion),
-    `fixed release did not prepare every package at ${requestedVersion}`,
+    packageVersions().every((prepared) => prepared === version),
+    `fixed release did not prepare every package at ${version}`,
   );
+  return version;
 };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const requestedVersion = process.argv.slice(2).find((value) => !value.startsWith('-'));
   const dryRun = process.argv.includes('--dry-run');
+  const fromPlans = process.argv.includes('--from-plans');
 
   try {
-    assert(requestedVersion, 'usage: pnpm release:prepare -- <version> [--dry-run]');
-    await prepare({ dryRun, requestedVersion });
-    console.log(`${dryRun ? 'Would prepare' : 'Prepared'} nanoraster v${requestedVersion}`);
+    assert(
+      fromPlans ? !requestedVersion : requestedVersion,
+      'usage: pnpm release:prepare -- <version> [--dry-run], or pnpm release:prepare -- --from-plans [--dry-run]',
+    );
+    const version = await prepare({ dryRun, requestedVersion });
+    console.log(`${dryRun ? 'Would prepare' : 'Prepared'} nanoraster v${version}`);
     if (!dryRun) {
-      console.log(`Commit generated release files as: chore(release): nanoraster v${requestedVersion}`);
+      console.log(`Commit generated release files as: chore(release): nanoraster v${version}`);
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

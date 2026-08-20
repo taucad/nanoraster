@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import { deriveRelease } from '../scripts/ci-release.mjs';
-import { validateRequestedVersion } from '../scripts/prepare-release.mjs';
+import { validateRequestedVersion, versionFromPlans } from '../scripts/prepare-release.mjs';
 
 const SHA = 'a'.repeat(40);
 const stable = {
@@ -107,6 +107,38 @@ describe('fixed release version validation', () => {
           requestedVersion: '0.1.0',
         }),
       /native optional dependency versions do not match/u,
+    );
+  });
+});
+
+describe('version derivation from plans', () => {
+  it('derives the one version every plan agrees on', () => {
+    assert.equal(versionFromPlans(Array(4).fill('0.4.0')), '0.4.0');
+  });
+
+  it('rejects an empty or partial fixed group', () => {
+    assert.throws(() => versionFromPlans([]), /no pending Version Plan/u);
+    assert.throws(() => versionFromPlans(['0.4.0', undefined, '0.4.0', '0.4.0']), /no pending Version Plan/u);
+  });
+
+  it('rejects plans that disagree on the version', () => {
+    assert.throws(
+      () => versionFromPlans(['0.4.0', '0.5.0', '0.4.0', '0.4.0']),
+      /did not produce one fixed version/u,
+    );
+  });
+
+  it('rejects a derived prerelease through the shared validation', () => {
+    const planned = Array(4).fill('0.4.0-rc.1');
+    assert.throws(
+      () =>
+        validateRequestedVersion({
+          currentVersions: Array(4).fill('0.3.0'),
+          optionalDependencyVersions: Array(3).fill('0.3.0'),
+          plannedVersions: planned,
+          requestedVersion: versionFromPlans(planned),
+        }),
+      /stable SemVer/u,
     );
   });
 });
