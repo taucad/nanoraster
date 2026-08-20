@@ -89,6 +89,11 @@ export const validateRequestedVersion = ({
 };
 
 const prepare = async ({ dryRun, requestedVersion }) => {
+  // Asserted on entry: the quality gate `preVersionCommand` runs regenerates
+  // committed artifacts (docs-site/lib/sizes.json), so the tree cannot stay
+  // clean once preparation starts. Release-commit purity is enforced by the
+  // caller staging only release files, and by the CI release policy.
+  if (!dryRun) assertClean();
   const currentVersions = packageVersions();
   const rootManifest = JSON.parse(readFileSync(PACKAGE_PATHS[0], 'utf8'));
   const optionalDependencyVersions = PLATFORM_PACKAGES.map((name) => rootManifest.optionalDependencies[name]);
@@ -117,7 +122,6 @@ const prepare = async ({ dryRun, requestedVersion }) => {
   });
   if (dryRun) return version;
 
-  assertClean();
   await releaseVersion({
     ...GIT_OPTIONS,
     deleteVersionPlans: true,

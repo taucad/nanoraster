@@ -97,7 +97,11 @@ jobs:
           # the fixed group, so every plan is consumed by every release.
           git rm --quiet --force '.nx/version-plans/*.md'
 
-          git add --all
+          # Stage the release files explicitly: the quality gate inside
+          # release:prepare regenerates committed artifacts (sizes.json) that
+          # must stay out of the release commit.
+          git add CHANGELOG.md package.json pnpm-lock.yaml \
+            npm/darwin-arm64/package.json npm/linux-x64-gnu/package.json npm/win32-x64-msvc/package.json
           staged=$(git diff --cached --name-only)
           allowed='^(CHANGELOG\.md|package\.json|pnpm-lock\.yaml|npm/(darwin-arm64|linux-x64-gnu|win32-x64-msvc)/package\.json|\.nx/version-plans/.+\.md)$'
           unexpected=$(grep -Ev "$allowed" <<< "$staged" || true)
