@@ -123,10 +123,10 @@ Below that, drop the annotations.
 
 **Smallest useful thumbnail.** WebP at `quality: 0.9` with `width: 256` is
 around 60 percent smaller than the lossless default and a third the size of
-the equivalent PNG, while keeping transparency — shaded and flat-colour
-models alike. The one exception is tiny images whose lossless encoding is
-already under a kilobyte: the lossy container has a fixed floor, so measure
-both when every byte matters.
+the equivalent PNG, while keeping transparency — for shaded and filled
+flat-colour models alike. Sparse line art on an empty canvas — wireframes,
+schematics, near-blank drawings — can still encode smaller lossless than
+lossy, so measure both there and when every byte matters.
 
 **Byte-exact comparison.** Use PNG. Lossy encoders are
 [deterministic](../how-it-works#determinism) for a fixed request, but a format
