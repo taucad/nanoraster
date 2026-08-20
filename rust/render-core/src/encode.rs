@@ -211,15 +211,17 @@ mod tests {
             image_webp::WebPDecoder::new(std::io::Cursor::new(&bytes)).expect("decoder");
         let mut pixels = vec![0u8; decoder.output_buffer_size().expect("size")];
         decoder.read_image(&mut pixels).expect("decode");
-        for (index, pixel) in pixels.chunks_exact(4).enumerate() {
-            let (x, y) = (index as u32 % width, index as u32 / width);
-            for (channel, &expected) in pixel[..3].iter().zip(&[200u8, 40, 40]) {
-                assert!(
-                    channel.abs_diff(expected) < 32,
-                    "pixel ({x},{y}) drifted to {pixel:?}"
-                );
-            }
-        }
+        let worst_drift = pixels
+            .chunks_exact(4)
+            .flat_map(|pixel| {
+                pixel[..3]
+                    .iter()
+                    .zip(&[200u8, 40, 40])
+                    .map(|(channel, &expected)| channel.abs_diff(expected))
+            })
+            .max()
+            .expect("pixels");
+        assert!(worst_drift < 32, "worst channel drift {worst_drift}");
     }
 
     #[test]
