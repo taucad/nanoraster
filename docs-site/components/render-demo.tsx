@@ -77,10 +77,14 @@ export const RenderDemo = ({
   const [srcs, setSrcs] = useState<readonly string[]>([]);
   const [evidence, setEvidence] = useState<Evidence | undefined>();
   const urlsRef = useRef<readonly string[]>([]);
-  // Renders are not cancellable, so overlapping ones race: only the latest
-  // ticket may revoke URLs and commit state, or an older render finishing
-  // last would display stale output over the newer one.
-  const generation = useRef(0);
+  // At most one render is in flight; the newest values always render last.
+  // Renders are not cancellable, so without the guard a drag would stack
+  // concurrent renders and the intermediate frames would waste GPU time the
+  // final frame is waiting on. The pending slot coalesces every value change
+  // that arrives mid-render into one trailing rerun (last writer wins), which
+  // also serializes access to the shared renderer handle.
+  const inFlightRef = useRef(false);
+  const pendingRef = useRef<Record<string, DemoValue> | null>(null);
 
   const draw = useCallback(
     async (current: Record<string, DemoValue>): Promise<void> => {
@@ -88,33 +92,48 @@ export const RenderDemo = ({
         setState('unsupported');
         return;
       }
+      if (inFlightRef.current) {
+        pendingRef.current = current;
+        return;
+      }
 
-      const ticket = ++generation.current;
-      setState('rendering');
+      const render = async (values: Record<string, DemoValue>): Promise<void> => {
+        setState('rendering');
+        try {
+          const [renderer, source] = await Promise.all([loadWasmRenderer(), loadDemoModel()]);
+
+          const { material, request } = buildDemoRequest(values, { lights, size: RENDER_SIZE, views });
+          const glb = Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
+
+          const json = JSON.stringify(request);
+          const started = performance.now();
+          const bytes = batch
+            ? (await renderer.render_glb_to_images(glb, json)).images
+            : [await renderer.render_glb_to_image(glb, json)];
+          const ms = Math.round(performance.now() - started);
+
+          for (const url of urlsRef.current) URL.revokeObjectURL(url);
+          const type = mimeTypes[String(request['format'])] ?? 'image/png';
+          urlsRef.current = bytes.map((part) => URL.createObjectURL(new Blob([part], { type })));
+          setSrcs(urlsRef.current);
+          setEvidence({ mime: type, ms, sizes: bytes.map((part) => part.byteLength) });
+          setState('idle');
+        } catch (error) {
+          setMessage(error instanceof Error ? error.message : String(error));
+          setState('failed');
+        }
+      };
+
+      inFlightRef.current = true;
       try {
-        const [renderer, source] = await Promise.all([loadWasmRenderer(), loadDemoModel()]);
-
-        const { material, request } = buildDemoRequest(current, { lights, size: RENDER_SIZE, views });
-        const glb = Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
-
-        const json = JSON.stringify(request);
-        const started = performance.now();
-        const bytes = batch
-          ? await renderer.render_glb_to_images(glb, json)
-          : [await renderer.render_glb_to_image(glb, json)];
-        const ms = Math.round(performance.now() - started);
-        if (ticket !== generation.current) return;
-
-        for (const url of urlsRef.current) URL.revokeObjectURL(url);
-        const type = mimeTypes[String(request['format'])] ?? 'image/png';
-        urlsRef.current = bytes.map((part) => URL.createObjectURL(new Blob([part], { type })));
-        setSrcs(urlsRef.current);
-        setEvidence({ mime: type, ms, sizes: bytes.map((part) => part.byteLength) });
-        setState('idle');
-      } catch (error) {
-        if (ticket !== generation.current) return;
-        setMessage(error instanceof Error ? error.message : String(error));
-        setState('failed');
+        let values: Record<string, DemoValue> | null = current;
+        while (values !== null) {
+          await render(values);
+          values = pendingRef.current;
+          pendingRef.current = null;
+        }
+      } finally {
+        inFlightRef.current = false;
       }
     },
     [batch, lights, views],

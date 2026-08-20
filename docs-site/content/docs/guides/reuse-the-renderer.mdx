@@ -1,0 +1,109 @@
+---
+title: Reuse the renderer
+description: Keep one GPU device alive across renders with createRenderer, dispose it deliberately, and know when a single plan call is the better tool.
+---
+
+Every one-shot call brings up a GPU device — instance, adapter, device, shader,
+pipelines — and tears it all down again. That setup is most of the call:
+measured on an Apple M2 Pro, six one-shot renders take 4.4× as long as the
+same six views through one warm device. A persistent renderer pays the
+bring-up once.
+
+### 1. Decide which tool fits the shape of the work
+
+Two different things amortize the device, and they compose:
+
+- **One `renderGlbToImages` call** shares the device across every view _within
+  the call_. If you can write the full list of images down — a contact sheet,
+  a resolution ladder, a turntable — make one call and stop here;
+  [Render multiple views](render-multiple-views) is that guide.
+- **`createRenderer`** shares the device across _calls over time_ — a
+  thumbnail service rendering whatever arrives next, a file watcher, an
+  interactive demo. When the render set is not knowable upfront, hold a
+  renderer.
+
+The rule that falls out: if you know the full set of images, make one plan
+call on whichever layer you hold — never loop over single renders.
+
+Live orbiting belongs to a canvas renderer such as three.js: 60 frames per
+second with no readback. nanoraster's job is stills whose _bytes_ are the
+product — thumbnails, CI baselines, publications, agent captures.
+
+### 2. Create once, render many
+
+`createRenderer` resolves to a handle whose render methods mirror the
+module-level functions exactly — same options, same results, byte-identical
+pixels on the same adapter.
+
+```typescript
+import { createRenderer } from 'nanoraster';
+
+const renderer = await createRenderer({ powerPreference: 'low-power' });
+
+for await (const model of modelsAsTheyArrive) {
+  const image = await renderer.renderGlbToImage(model.glb, { format: 'webp', width: 512 });
+  await store(model.id, image);
+}
+```
+
+`powerPreference: 'low-power'` keeps thumbnail-class work off the discrete GPU
+on dual-GPU machines; output bytes are identical either way on a given
+adapter. Calls on one renderer run in sequence, so concurrent callers can
+share a handle without interleaving GPU state.
+
+### 3. Dispose deliberately
+
+The renderer holds a real GPU device until you release it. Tie its lifetime to
+the worker or process that owns it — dispose on shutdown, or on an idle timer
+if the host keeps workers warm.
+
+```typescript
+using renderer = await createRenderer();
+
+const image = await renderer.renderGlbToImage(glb, { format: 'png' });
+// renderer.dispose() runs automatically at scope exit.
+```
+
+`dispose()` waits for in-flight calls to settle, then destroys the device.
+Every later call rejects with a `RenderError` whose code is `'gpu'` — that
+state is permanent, so recreate the renderer rather than retrying the call.
+Without an explicit dispose the device lingers until garbage collection, which
+browsers in particular take their time over.
+
+### 4. Let device loss stay invisible
+
+A driver reset or a browser reclaiming the GPU invalidates the device. A
+persistent renderer recovers on its own: the call that hits the loss fails
+with a [GPU-class code](handle-render-failures), and the next call rebuilds
+the device and re-uploads transparently. Keep the last good image, retry on
+the same handle — there is nothing to recreate yourself.
+
+### 5. Verify the reuse when it matters
+
+`profile: true` on a plan call attaches stage timings and lets you confirm the
+device actually carried over: a warm renderer reports the parse and per-view
+work, while setup stays near zero after the first call.
+
+```typescript
+const results = await renderer.renderGlbToImages(glb, {
+  format: 'webp',
+  profile: true,
+  views: [{ id: 'iso', phi: 60, theta: -45 }],
+});
+
+console.log(results.profile.setupMs, results.profile.views[0].renderMs);
+```
+
+## Variations
+
+**One renderer per worker.** A renderer is single-realm: create it inside the
+worker that uses it and post bytes out, never the handle;
+[Render in the browser](render-in-the-browser) shows the worker shape.
+
+**One-shot scripts.** A CLI that renders once and exits gains nothing from a
+handle; the module-level functions are the same pathway with the lifetime
+folded in.
+
+**Servers.** The Node addon renders on a worker thread either way, so the
+event loop stays free; the renderer saves the per-call device bring-up, which
+matters at request rates, not for a nightly job.

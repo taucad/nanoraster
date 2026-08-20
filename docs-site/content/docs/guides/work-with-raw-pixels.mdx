@@ -1,0 +1,95 @@
+---
+title: Work with raw pixels
+description: Skip the encode with renderGlbToPixels, paint straight into a canvas, and compare renders pixel by pixel.
+---
+
+The fourth output format is none. `renderGlbToPixels` stops the pipeline after
+readback and hands you the pixels themselves — for canvas display, custom
+encoding pipelines, and pixel-level comparison in tests.
+
+### 1. Know when pixels beat a file
+
+An encoded file exists to be stored or transmitted. When the next step is a
+canvas, an encoder of your own, or a diff, encoding is pure overhead — and in
+a browser the file is _decoded again_ before it can be shown. At 960×720 the
+encode plus decode round trip costs roughly 20 ms per frame that the pixels
+path simply does not spend.
+
+```typescript
+import { renderGlbToPixels } from 'nanoraster';
+
+const { rgba, width, height } = await renderGlbToPixels(glb, {
+  width: 640,
+  height: 480,
+  phi: 60,
+  theta: -45,
+});
+```
+
+The options are [`RenderImageOptions`](../api#renderimageoptions) minus
+`format` and `quality`; camera, background, lighting, and annotations all
+apply.
+
+### 2. Paint to a canvas
+
+The rows are straight-alpha, sRGB-encoded, and tightly packed — exactly what
+`putImageData` expects, with no premultiply step.
+
+```typescript
+const imageData = new ImageData(new Uint8ClampedArray(rgba.buffer), width, height);
+
+const canvas = document.querySelector('canvas');
+canvas.width = width;
+canvas.height = height;
+canvas.getContext('2d')?.putImageData(imageData, 0, 0);
+```
+
+For scaled display, build an `ImageBitmap` instead and let the browser resample:
+
+```typescript
+const bitmap = await createImageBitmap(imageData, { resizeQuality: 'high' });
+```
+
+### 3. Know the shape
+
+`rgba` is `width * height * 4` bytes: row-major, top row first, four bytes per
+pixel, no padding. A 640×480 render is exactly 1,228,800 bytes. The pixels are
+identical to what the encoded paths compress — the same determinism rules from
+[How it works](../how-it-works) apply, so two renders of one request on one
+host are byte-equal before any encoder gets involved.
+
+### 4. Compare renders perceptually
+
+[How it works](../how-it-works#determinism) advises comparing renders
+perceptually across hosts rather than by hash; raw pixels are the tooling path
+for that advice. A channel-wise diff needs no decoder:
+
+```typescript
+const difference = (a: Uint8Array, b: Uint8Array): number => {
+  let total = 0;
+  for (let index = 0; index < a.length; index += 1) {
+    total += Math.abs((a[index] ?? 0) - (b[index] ?? 0));
+  }
+  return total / a.length;
+};
+
+const before = await renderGlbToPixels(previousGlb, { width: 512 });
+const after = await renderGlbToPixels(currentGlb, { width: 512 });
+
+console.log(`mean channel delta: ${difference(before.rgba, after.rgba).toFixed(3)}`);
+```
+
+## Variations
+
+**On a warm renderer.** `Renderer.renderGlbToPixels` is the same call on a
+reused device; [Reuse the renderer](reuse-the-renderer) covers when to hold
+one.
+
+**Workers.** Pixels transfer well: `postMessage(rgba, [rgba.buffer])` moves
+the frame without a copy; [Render in the browser](render-in-the-browser) shows
+the worker shape.
+
+**When you do want a file.** Use the encoded paths;
+[Format and annotate](format-and-annotate) picks the format. Re-encoding the
+pixels yourself with another library forfeits the byte-identity the built-in
+encoders guarantee across artifacts.

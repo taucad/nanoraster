@@ -1,6 +1,9 @@
 // @ts-nocheck
-import * as __fd_glob_12 from "../content/docs/guides/render-multiple-views.mdx?collection=docs"
-import * as __fd_glob_11 from "../content/docs/guides/render-in-the-browser.mdx?collection=docs"
+import * as __fd_glob_15 from "../content/docs/guides/work-with-raw-pixels.mdx?collection=docs"
+import * as __fd_glob_14 from "../content/docs/guides/reuse-the-renderer.mdx?collection=docs"
+import * as __fd_glob_13 from "../content/docs/guides/render-multiple-views.mdx?collection=docs"
+import * as __fd_glob_12 from "../content/docs/guides/render-in-the-browser.mdx?collection=docs"
+import * as __fd_glob_11 from "../content/docs/guides/render-for-llms.mdx?collection=docs"
 import * as __fd_glob_10 from "../content/docs/guides/light-the-subject.mdx?collection=docs"
 import * as __fd_glob_9 from "../content/docs/guides/handle-render-failures.mdx?collection=docs"
 import * as __fd_glob_8 from "../content/docs/guides/frame-the-model.mdx?collection=docs"
@@ -20,4 +23,4 @@ const create = server<typeof Config, import("fumadocs-mdx/runtime/types").Intern
   }
 }>({"doc":{"passthroughs":["extractedReferences"]}});
 
-export const docs = await create.docs("docs", "content/docs", {"meta.json": __fd_glob_0, "guides/meta.json": __fd_glob_1, }, {"api.mdx": __fd_glob_2, "how-it-works.mdx": __fd_glob_3, "index.mdx": __fd_glob_4, "install.mdx": __fd_glob_5, "tutorial.mdx": __fd_glob_6, "guides/format-and-annotate.mdx": __fd_glob_7, "guides/frame-the-model.mdx": __fd_glob_8, "guides/handle-render-failures.mdx": __fd_glob_9, "guides/light-the-subject.mdx": __fd_glob_10, "guides/render-in-the-browser.mdx": __fd_glob_11, "guides/render-multiple-views.mdx": __fd_glob_12, });
+export const docs = await create.docs("docs", "content/docs", {"meta.json": __fd_glob_0, "guides/meta.json": __fd_glob_1, }, {"api.mdx": __fd_glob_2, "how-it-works.mdx": __fd_glob_3, "index.mdx": __fd_glob_4, "install.mdx": __fd_glob_5, "tutorial.mdx": __fd_glob_6, "guides/format-and-annotate.mdx": __fd_glob_7, "guides/frame-the-model.mdx": __fd_glob_8, "guides/handle-render-failures.mdx": __fd_glob_9, "guides/light-the-subject.mdx": __fd_glob_10, "guides/render-for-llms.mdx": __fd_glob_11, "guides/render-in-the-browser.mdx": __fd_glob_12, "guides/render-multiple-views.mdx": __fd_glob_13, "guides/reuse-the-renderer.mdx": __fd_glob_14, "guides/work-with-raw-pixels.mdx": __fd_glob_15, });

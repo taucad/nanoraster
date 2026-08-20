@@ -76,10 +76,34 @@ try {
 }
 ```
 
+### 5. Tell a missing GPU from a slow one
+
+`adapter-unavailable` means no adapter at all. A host can also succeed with a
+_software_ adapter — SwiftShader, lavapipe, WARP — that renders correctly but
+an order of magnitude slower. `describeAdapter` is the preflight that
+separates the two before you commit to a workload:
+
+```typescript
+import { describeAdapter } from 'nanoraster';
+
+const adapter = await describeAdapter().catch(() => undefined);
+
+if (adapter === undefined) {
+  // adapter-unavailable: fall back now, nothing will render.
+} else if (adapter.includes('(Cpu)')) {
+  // Renders work; budget ~10x the usual latency or reduce sizes.
+}
+```
+
 ## Variations
 
 **Distinguishing bad GLB from bad options.** Both surface as `parse`, since
 both violate the input contract; `message` names which.
+
+**A disposed renderer.** Calls on a disposed [`Renderer`](reuse-the-renderer)
+reject with code `gpu` and the message `gpu: renderer disposed`. Unlike other
+GPU-class faults this one is permanent: recreate the renderer, do not retry
+the call.
 
 **JPEG with a transparent background.** Fails as `encode`, not `parse`: the
 request is well-formed but the encoder cannot represent it; see

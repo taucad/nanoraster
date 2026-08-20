@@ -31,7 +31,11 @@ const image = await renderGlbToImage(glb, {
 ```
 
 `renderGlbToImages` takes the same shared keys, minus `phi`, `theta` and `label`,
-plus `views: [{ id, label?, phi, theta }]`: one entry per image, in result order.
+plus `views: [{ id, label?, phi, theta, width?, height?, format?, quality? }]`:
+one entry per image, in result order, where each view may override the shared
+output settings. It also accepts `profile: true` to attach stage timings to the
+result. `renderGlbToPixels` takes the singular keys minus `format` and
+`quality` — nothing is encoded.
 
 ## Render
 
@@ -59,21 +63,26 @@ const image = await renderGlbToImage(glb, { format: 'png', width: 512 });
 
 ### `renderGlbToImages`
 
-Parse and upload a GLB once, then render an ordered set of identified views.
+Parse and upload a GLB once, then render an ordered set of identified views —
+the plan call. Each view may override the shared `width`, `height`, `format`,
+and `quality`, so one call renders a whole resolution or format ladder.
 
 ```typescript
 export declare const renderGlbToImages: <const Options extends RenderImagesOptions>(
   glb: Uint8Array<ArrayBuffer>,
   options: StrictRenderImagesOptions<Options>,
-) => Promise<RenderedImages<Options['views']>>;
+) => Promise<RenderedImages<Options['views'], Options['format']>>;
 ```
 
 `StrictRenderImagesOptions` is the package's internal exactness check: callers
 pass `RenderImagesOptions`, while TypeScript rejects extra keys, empty view
-tuples, and misplaced per-view settings.
+tuples, and misplaced per-view settings. With `profile: true` in the options,
+the resolved tuple additionally carries a [`RenderProfile`](#renderprofile) as
+its `profile` property.
 
 - **Parameters:** owned GLB bytes and shared settings with a non-empty view tuple.
-- **Returns:** a tuple with the input view IDs and order preserved.
+- **Returns:** a tuple with the input view IDs and order preserved; each
+  entry's MIME type follows its own `format` override when one is set.
 - **Throws:** as above, plus a mismatch between the views requested and the
   images the renderer returned.
 
@@ -88,6 +97,115 @@ const [iso, front] = await renderGlbToImages(glb, {
   ],
 });
 ```
+
+### `renderGlbToPixels`
+
+Render one view to raw straight-alpha, sRGB-encoded RGBA8 pixels, skipping the
+encode entirely. [Work with raw pixels](guides/work-with-raw-pixels) shows the
+canvas, custom-encoder, and pixel-comparison uses.
+
+```typescript
+export declare const renderGlbToPixels: (
+  glb: Uint8Array<ArrayBuffer>,
+  options: RenderPixelsOptions,
+) => Promise<RenderedPixels>;
+```
+
+- **Parameters:** owned GLB bytes and the singular camera and annotation
+  settings, without `format` or `quality`.
+- **Returns:** tightly packed RGBA rows and their dimensions.
+- **Throws:** `RenderError` for invalid requests, malformed GLB data, or GPU
+  faults; there is no encode step to fail.
+
+```typescript
+import { renderGlbToPixels } from 'nanoraster';
+
+const { rgba, width, height } = await renderGlbToPixels(glb, { width: 512 });
+```
+
+## Renderer reuse
+
+Every one-shot function above creates and destroys a GPU device per call. A
+persistent renderer amortizes that bring-up across calls —
+[Reuse the renderer](guides/reuse-the-renderer) covers when and how.
+
+### `createRenderer`
+
+Create a renderer that keeps the GPU device, shader, and pipelines alive
+across calls.
+
+```typescript
+export declare const createRenderer: (options?: CreateRendererOptions) => Promise<Renderer>;
+```
+
+- **Parameters:** optional GPU selection hints.
+- **Returns:** a [`Renderer`](#renderer) bound to one warm device.
+- **Throws:** `RenderError` with code `adapter-unavailable` when no compatible
+  adapter exists, or `parse` for invalid options.
+
+```typescript
+import { createRenderer } from 'nanoraster';
+
+using renderer = await createRenderer({ powerPreference: 'low-power' });
+const image = await renderer.renderGlbToImage(glb, { format: 'png' });
+```
+
+### `Renderer`
+
+The persistent handle returned by [`createRenderer`](#createrenderer). Its
+three render methods mirror the module-level functions exactly — same options,
+same results, byte-identical pixels on the same adapter — but reuse one device.
+
+```typescript
+export type Renderer = {
+  readonly renderGlbToImage: (
+    glb: Uint8Array<ArrayBuffer>,
+    options: RenderImageOptions,
+  ) => Promise<RenderedImageFile>;
+  readonly renderGlbToImages: <const Options extends RenderImagesOptions>(
+    glb: Uint8Array<ArrayBuffer>,
+    options: StrictRenderImagesOptions<Options>,
+  ) => Promise<RenderedImages<Options['views'], Options['format']>>;
+  readonly renderGlbToPixels: (
+    glb: Uint8Array<ArrayBuffer>,
+    options: RenderPixelsOptions,
+  ) => Promise<RenderedPixels>;
+  readonly dispose: () => void;
+  readonly [Symbol.dispose]: () => void;
+};
+```
+
+Contract points:
+
+- A renderer is **single-realm**: create it inside the worker that uses it.
+  Handles cannot cross `postMessage`; bytes can.
+- Calls on one renderer run **in sequence**; a declared set of images should
+  always go through one `renderGlbToImages` call, never a loop.
+- **Device loss is recovered transparently** on the next call; the renderer
+  rebuilds its device and re-uploads on demand.
+- After `dispose()`, every call rejects with `RenderError` code `'gpu'` —
+  recreate the renderer rather than retrying the call. `dispose` waits for
+  in-flight calls to settle, is idempotent, and backs `using` declarations
+  through `Symbol.dispose`.
+
+### `CreateRendererOptions`
+
+<auto-type-table path="./props.ts" name="CreateRendererOptions" caption="CreateRendererOptions properties" />
+
+### `describeAdapter`
+
+Report the backend and device name of the adapter the environment selects,
+e.g. `"Metal / Apple M2 Pro (IntegratedGpu)"`.
+
+```typescript
+export declare const describeAdapter: () => Promise<string>;
+```
+
+A `(Cpu)` device type means software rasterization (SwiftShader, lavapipe,
+WARP): renders work but run an order of magnitude slower. `navigator.gpu`
+existing does not rule this out, so use this as the preflight when performance
+matters — [Handle render failures](guides/handle-render-failures) shows the
+pattern.
 
 ## Option helpers
 
@@ -162,10 +280,18 @@ export type RenderImageView<Id extends string = string> = {
   readonly label?: string;
   readonly phi: number;
   readonly theta: number;
+  readonly width?: number;
+  readonly height?: number;
+  readonly format?: 'png' | 'webp' | 'jpeg' | 'jpg';
+  readonly quality?: number;
 };
 ```
 
-IDs must be unique within a request.
+IDs must be unique within a request. The four output fields are per-view
+overrides: each defaults to the shared call-level value, follows the same
+validation (including the annotated minimum and WebP's
+lossless-at-exactly-1 rule), and flows into that entry's filename and MIME
+type.
 
 <auto-type-table path="./props.ts" name="RenderImageView" caption="RenderImageView properties" />
 
@@ -183,8 +309,25 @@ export type RenderImagesOptions<Views extends readonly RenderImageView[] = reado
 `views` must be a non-empty ordered tuple with unique IDs. When `includeLabel`
 is `true`, every view must carry a label. `LabeledViews` is the internal mapped
 tuple that enforces that relationship without losing IDs or order.
+`profile: true` attaches a [`RenderProfile`](#renderprofile) to the result
+without changing what is rendered.
 
 <auto-type-table path="./props.ts" name="RenderImagesOptions" caption="RenderImagesOptions properties" />
+
+### `RenderPixelsOptions`
+
+```typescript
+export type RenderPixelsOptions = Omit<RenderImageSharedOptions, 'format' | 'quality'> &
+  RenderLabelOptions & {
+    readonly phi?: number;
+    readonly theta?: number;
+  };
+```
+
+Exactly [`RenderImageOptions`](#renderimageoptions) minus `format` and
+`quality`: the raw-pixels path encodes nothing, so an encoder pair is rejected
+rather than ignored. Camera, background, lighting, and annotation fields keep
+their documented defaults.
 
 ### `RenderLighting`
 
@@ -242,13 +385,21 @@ the matching view.
 The tuple returned by [`renderGlbToImages`](#renderglbtoimages).
 
 ```typescript
-export type RenderedImages<Views extends readonly RenderImageView[]> = {
-  readonly [Index in keyof Views]: Views[Index] extends RenderImageView<infer Id> ? RenderedImage<Id> : never;
+export type RenderedImages<
+  Views extends readonly RenderImageView[],
+  SharedFormat extends ImageFormat = ImageFormat,
+> = {
+  readonly [Index in keyof Views]: Views[Index] extends RenderImageView<infer Id>
+    ? RenderedImage<Id, ViewOutputFormat<Views[Index], SharedFormat>>
+    : never;
 };
 ```
 
 This mapped tuple preserves each input view's literal ID, position, and tuple
-length. It does not expose `Array` prototype members as result fields.
+length, and narrows each entry's MIME type through its view's `format`
+override (falling back to the shared format). It does not expose `Array`
+prototype members as result fields. `ViewOutputFormat` is the internal
+conditional that picks the override when one exists.
 
 ```typescript
 import { renderGlbToImages } from 'nanoraster';
@@ -264,6 +415,31 @@ const [iso, top] = await renderGlbToImages(glb, {
 console.log(iso.id, iso.file.name); // 'iso' 'thumbnail-iso.png'
 console.log(top.id, top.file.name); // 'top' 'thumbnail-top.png'
 ```
+
+### `RenderedPixels`
+
+Returned by [`renderGlbToPixels`](#renderglbtopixels) and
+`Renderer.renderGlbToPixels`. The rows are straight-alpha, sRGB-encoded, and
+tightly packed (`width * height * 4` bytes) — exactly what a canvas
+`ImageData` expects after a `Uint8ClampedArray` wrap.
+
+<auto-type-table path="./props.ts" name="RenderedPixels" caption="RenderedPixels properties" />
+
+### `RenderProfile`
+
+Attached to a plan call's result when the options set `profile: true`. The
+fields map onto the pipeline stages [How it works](how-it-works) documents:
+parse, setup (device acquisition plus geometry upload), then per-view
+rasterise and encode. Timings are milliseconds on the host's clock.
+
+<auto-type-table path="./props.ts" name="RenderProfile" caption="RenderProfile properties" />
+
+### `RenderViewProfile`
+
+One view's stage timings within a [`RenderProfile`](#renderprofile), in plan
+order.
+
+<auto-type-table path="./props.ts" name="RenderViewProfile" caption="RenderViewProfile properties" />
 
 ### `imageMimeTypes`
 

@@ -19,21 +19,19 @@ if (nativePackage === undefined)
   throw new Error(`unsupported native target: ${process.platform}-${process.arch}`);
 const native =
   /**
- * @type {{
- *   renderGlbToImage: (glb: Buffer, optionsJson: string) => Promise<Buffer>,
- *   renderGlbToImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], profile?: string }>,
- *   renderGlbToPixels: (glb: Buffer, optionsJson: string) => Promise<{ rgba: Buffer, width: number, height: number }>,
- *   createRenderer: (optionsJson?: string) => Promise<{
- *     renderGlbToImage: (glb: Buffer, optionsJson: string) => Promise<Buffer>,
- *     renderGlbToImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], profile?: string }>,
- *     renderGlbToPixels: (glb: Buffer, optionsJson: string) => Promise<{ rgba: Buffer, width: number, height: number }>,
- *     dispose: () => void,
- *   }>,
- *   describeAdapter: () => string,
- * }}
- */ (
-    requireNative(nativePackage)
-  );
+   * @type {{
+   *   renderGlbToImage: (glb: Buffer, optionsJson: string) => Promise<Buffer>,
+   *   renderGlbToImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], profile?: string }>,
+   *   renderGlbToPixels: (glb: Buffer, optionsJson: string) => Promise<{ rgba: Buffer, width: number, height: number }>,
+   *   createRenderer: (optionsJson?: string) => Promise<{
+   *     renderGlbToImage: (glb: Buffer, optionsJson: string) => Promise<Buffer>,
+   *     renderGlbToImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], profile?: string }>,
+   *     renderGlbToPixels: (glb: Buffer, optionsJson: string) => Promise<{ rgba: Buffer, width: number, height: number }>,
+   *     dispose: () => void,
+   *   }>,
+   *   describeAdapter: () => string,
+   * }}
+   */ (requireNative(nativePackage));
 
 console.log('adapter:', native.describeAdapter());
 
@@ -259,14 +257,14 @@ const canonicalVisuals = (
   await native.renderGlbToImages(
     glb,
     JSON.stringify({
-    width: 800,
-    height: 800,
-    format: 'png',
-    projection: 'orthographic',
-    background: [0.94, 0.97, 0.96, 1],
-    includeAxes: true,
-    includeLabel: true,
-    includeScale: true,
+      width: 800,
+      height: 800,
+      format: 'png',
+      projection: 'orthographic',
+      background: [0.94, 0.97, 0.96, 1],
+      includeAxes: true,
+      includeLabel: true,
+      includeScale: true,
       views: parityViews.slice(1),
     }),
   )
@@ -314,7 +312,13 @@ const renderLitBatch = async (lighting) =>
   (
     await native.renderGlbToImages(
       glb,
-      JSON.stringify({ ...lightingBase, phi: undefined, theta: undefined, ...lighting, views: lightingViews }),
+      JSON.stringify({
+        ...lightingBase,
+        phi: undefined,
+        theta: undefined,
+        ...lighting,
+        views: lightingViews,
+      }),
     )
   ).images;
 
@@ -416,10 +420,7 @@ const renderer = await native.createRenderer();
 const warmPng = await renderer.renderGlbToImage(glb, JSON.stringify({ ...shared }));
 if (!warmPng.equals(png)) throw new Error('warm renderer bytes differ from one-shot bytes');
 const warmBatch = (await renderer.renderGlbToImages(glb, JSON.stringify({ ...shared, views }))).images;
-if (
-  warmBatch.length !== views.length ||
-  warmBatch.some((image, index) => !image.equals(batch[index]))
-) {
+if (warmBatch.length !== views.length || warmBatch.some((image, index) => !image.equals(batch[index]))) {
   throw new Error('warm batch bytes differ from one-shot batch bytes');
 }
 // R15: per-view output overrides equal their singular equivalents.

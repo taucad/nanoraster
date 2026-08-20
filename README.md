@@ -45,6 +45,35 @@ Same request, same pixels: the camera, lighting and encoder are fixed for a
 given request, so a render can serve as evidence. Continue with the
 [tutorial and guides](https://nanoraster.xyz/docs).
 
+## Reuse the renderer
+
+Each one-shot call brings up and tears down a GPU device — about 75–80% of the
+call. For many renders over time, hold a renderer instead (measured 4.4×
+faster across six views on an Apple M2 Pro), and declare a known set of
+outputs as one call — per-view `width`, `height`, `format` and `quality`
+overrides turn a resolution ladder into a single crossing:
+
+```typescript
+import { createRenderer } from 'nanoraster';
+
+using renderer = await createRenderer({ powerPreference: 'low-power' });
+
+const [card, og, print] = await renderer.renderGlbToImages(glb, {
+  format: 'webp',
+  width: 768,
+  height: 576,
+  views: [
+    { id: 'card', phi: 60, theta: -45 },
+    { id: 'og', phi: 60, theta: -45, width: 1536, height: 804 },
+    { id: 'print', phi: 60, theta: -45, width: 1536, height: 804, format: 'png' },
+  ],
+});
+// renderer.dispose() runs automatically at scope exit via `using`.
+```
+
+Pixels are byte-identical to the one-shot calls on the same adapter. See
+[Reuse the renderer](https://nanoraster.xyz/docs/guides/reuse-the-renderer).
+
 ## Compatibility
 
 See [compatibility.md](compatibility.md). Every check mark in that table maps

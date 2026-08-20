@@ -47,13 +47,41 @@ code names the stage that rejected the work, the
 guess.
 
 [`renderGlbToImages`](api#renderglbtoimages) parses and uploads once, then fits,
-rasterises and encodes once per view.
+rasterises and encodes once per view. A profiled call's
+[`RenderProfile`](api#renderprofile) fields map one-to-one onto these stages —
+`parseMs` for parse and fit, `setupMs` for device acquisition and upload, then
+per-view `renderMs` and `encodeMs` — so the stage narrative above doubles as
+the profile-field reference.
 
 [Both hosts](install), Node.js native and
 [browser WebGPU](guides/render-in-the-browser), wrap the same Rust core and
 codecs. The stages are identical; only GPU rasterisation differs between hosts,
 so bytes may differ by a shade (see [Determinism](#determinism)) but any
 structural difference between hosts is a bug, not a configuration difference.
+
+## Device lifetime
+
+The design model is one sentence: **state crosses the boundary as handles;
+work crosses as plans.** A [`Renderer`](api#renderer) is the state — the GPU
+device, compiled shader, pipelines, and render targets, everything whose
+natural lifetime is "the process or worker". A `views` plan is the work — the
+whole set of requested images in one value, which is what lets the core
+schedule the next view's GPU pass while the previous one is still encoding. A
+JavaScript loop over single renders can never grant that, because the core
+only ever sees one image at a time.
+
+What a renderer keeps between calls: the device and queue, the shader module,
+one pipeline set per stroke width it has seen, and the render targets for the
+last output size. What stays per call: parsing, camera fitting, and the
+geometry upload — each call brings its own GLB. The one-shot functions are the
+same pathway with the lifetime folded in: create, render, destroy.
+
+Reuse changes no pixels. Device and target reuse skip re-creation, not
+arithmetic, so a warm renderer's output is byte-identical to the one-shot
+functions on the same adapter — the conformance suite pins this. If the
+device is lost between calls (driver reset, browser reclaim), the renderer
+rebuilds it and re-uploads on the next call; the loss surfaces once, as a
+GPU-class failure on the call that hit it.
 
 ## Determinism
 

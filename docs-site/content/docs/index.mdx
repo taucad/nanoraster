@@ -17,6 +17,10 @@ pnpm add nanoraster
 Save this as `render.mjs` and run it with `node render.mjs`. The camera angles
 are written out here so you can drag them, but `phi: 60` and `theta: -45` are
 the defaults. The live tile renders at 960×720, so its byte count differs.
+Dragging reuses a single renderer — the GPU device comes up once and each tick
+pays only render and encode, which is why the badge's milliseconds drop after
+the first frame; [Reuse the renderer](/docs/guides/reuse-the-renderer) is the
+same move in your own code.
 
 <RenderDemo>
 

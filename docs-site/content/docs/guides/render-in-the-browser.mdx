@@ -24,8 +24,19 @@ if (!supported) {
 ```
 
 `navigator.gpu` is necessary but not sufficient: a browser can expose the API
-and still fail to produce an adapter on a particular machine. Handle
-[`adapter-unavailable`](handle-render-failures) too.
+and still fail to produce an adapter on a particular machine — or hand you a
+software one. `describeAdapter()` names what you actually got; a `(Cpu)`
+device type means SwiftShader-class rasterization, roughly an order of
+magnitude slower. Handle [`adapter-unavailable`](handle-render-failures) too.
+
+```typescript
+import { describeAdapter } from 'nanoraster';
+
+const adapter = await describeAdapter();
+if (adapter.includes('(Cpu)')) {
+  console.warn(`software rasterizer: ${adapter}`);
+}
+```
 
 ### 2. Render from bytes you already hold
 
@@ -62,28 +73,46 @@ stays resident for the life of the document.
 ### 4. Keep the render off the main thread
 
 Rendering occupies the GPU queue and spends CPU time encoding the result. In
-a worker, neither blocks input handling.
+a worker, neither blocks input handling. Create the renderer once when the
+worker starts and dispose it when the worker closes — one renderer per worker,
+its whole life.
 
 ```typescript
 // render.worker.ts
-import { renderGlbToImage } from 'nanoraster';
+import { createRenderer, type Renderer } from 'nanoraster';
+
+let renderer: Promise<Renderer> | undefined;
 
 self.addEventListener('message', async ({ data }: MessageEvent<Uint8Array>) => {
   try {
-    const image = await renderGlbToImage(data, { format: 'webp' });
+    renderer ??= createRenderer();
+    const image = await (await renderer).renderGlbToImage(data, { format: 'webp' });
     self.postMessage(image.bytes, [image.bytes.buffer]);
   } catch (error) {
     self.postMessage({ error: error instanceof Error ? error.message : String(error) });
   }
 });
+
+self.addEventListener('close', () => {
+  void renderer?.then((handle) => {
+    handle.dispose();
+  });
+});
 ```
 
-Transferring `image.bytes.buffer` moves the memory instead of copying it; the
-worker cannot use it afterwards, and does not need to. The catch matters: a
-rejection inside the listener would otherwise vanish as an unhandled rejection
-and the caller would wait forever, so a failure is posted back as its own
-message shape — bytes mean success, `{ error }` means the render failed.
-[Handle render failures](handle-render-failures) covers classifying the error.
+A renderer is single-realm: bytes cross `postMessage`, handles never do, so
+the worker owns the renderer and posts results out. Transferring
+`image.bytes.buffer` moves the memory instead of copying it; the worker cannot
+use it afterwards, and does not need to.
+
+The catch matters: a rejection inside the listener would otherwise vanish as
+an unhandled rejection and the caller would wait forever, so a failure is
+posted back as its own message shape — bytes mean success, `{ error }` means
+the render failed. [Handle render failures](handle-render-failures) covers
+classifying the error, and [Reuse the renderer](reuse-the-renderer) covers the
+lifetime in depth. On the main thread the one-shot functions still work — the
+price is adapter requests, readback, and encode all competing with input
+handling.
 
 ## Variations
 

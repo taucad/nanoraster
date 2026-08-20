@@ -30,15 +30,20 @@ const generator = createGenerator({ tsconfigPath: resolve(import.meta.dirname, '
 const tableNames = [
   'RenderedImageFile',
   'RenderedImage',
+  'RenderedPixels',
   'RenderImageOptions',
   'RenderImagesOptions',
   'RenderImageView',
   'RenderLightingRig',
   'RenderLight',
+  'CreateRendererOptions',
+  'RenderProfile',
+  'RenderViewProfile',
 ] as const;
 const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
   RenderedImageFile: ['name', 'bytes', 'mimeType'],
   RenderedImage: ['id', 'file'],
+  RenderedPixels: ['rgba', 'width', 'height'],
   RenderImageOptions: [
     'format',
     'width',
@@ -69,11 +74,15 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'includeLabel',
     'includeScale',
     'lighting',
+    'profile',
     'views',
   ],
-  RenderImageView: ['id', 'label', 'phi', 'theta'],
+  RenderImageView: ['id', 'label', 'phi', 'theta', 'width', 'height', 'format', 'quality'],
   RenderLightingRig: ['lights', 'ambient', 'environment', 'space', 'exposure'],
   RenderLight: ['direction', 'color'],
+  CreateRendererOptions: ['powerPreference'],
+  RenderProfile: ['parseMs', 'setupMs', 'views'],
+  RenderViewProfile: ['id', 'renderMs', 'overlayMs', 'encodeMs'],
 };
 const defaults = {
   width: '768',

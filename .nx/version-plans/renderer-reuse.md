@@ -1,0 +1,5 @@
+---
+nanoraster: minor
+---
+
+Add a handles-first renderer surface. `createRenderer` returns a persistent `Renderer` that keeps the GPU device, shader, and pipelines alive across calls (with `dispose()` and `using` support, transparent device-loss recovery, and byte-identical output to the one-shot functions, which remain unchanged as sugar). Plan entries in `renderGlbToImages` gain per-view `width`, `height`, `format`, and `quality` overrides that flow into per-entry filenames and literal MIME types, and `profile: true` attaches typed stage timings to the result. New `renderGlbToPixels` returns raw straight-alpha RGBA without an encode, and `describeAdapter` names the selected backend and device so software adapters are detectable. Internally the core executes each plan in one pipelined pass — the next view's GPU work is submitted while the previous view encodes, with parallel encodes on native — and the Node addon now renders on the libuv thread pool, so every native render entry point returns a Promise instead of blocking the event loop (breaking for direct addon consumers under the prerelease policy; the `nanoraster` package API was already Promise-based).

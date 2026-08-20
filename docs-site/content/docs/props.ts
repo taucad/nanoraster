@@ -1,6 +1,10 @@
 export { RenderError } from 'nanoraster';
 export type {
+  CreateRendererOptions,
   RenderedImageFile,
+  RenderedPixels,
+  RenderProfile,
+  RenderViewProfile,
   RenderFailureCode,
   RenderImageOptions,
   RenderImagesOptions,
