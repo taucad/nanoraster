@@ -35,6 +35,16 @@ const native =
 
 console.log('adapter:', native.describeAdapter());
 
+const logCase = async (name, promise) => {
+  console.log(`phase: visual ${name} start`);
+  const bytes = await promise;
+  console.log(`phase: visual ${name} done, ${bytes.length} bytes`);
+  return bytes;
+};
+const phase = (name) => {
+  console.log(`phase: ${name} at ${Date.now() - started}ms`);
+};
+
 const glb = readFileSync(join(here, 'fixtures', 'gear-12.glb'));
 const interleavedGlb = readFileSync(join(here, 'fixtures', 'interleaved-instanced-lines.glb'));
 const started = Date.now();
@@ -49,6 +59,7 @@ const height = png.readUInt32BE(20);
 if (width !== 768 || height !== 432) {
   throw new Error(`expected 768x432, got ${width}x${height}`);
 }
+phase('pbr block');
 const pbrOptions = JSON.stringify({ width: 192, height: 192, format: 'png' });
 const matteGlb = Buffer.from(withPbrFactors(glb, { metallic: 0, roughness: 0.85 }));
 const metalGlb = Buffer.from(withPbrFactors(glb, { metallic: 1, roughness: 0.05 }));
@@ -73,6 +84,7 @@ if (
 ) {
   throw new Error('interleaved/instanced fixture did not produce a 768x576 PNG');
 }
+phase('encoders');
 const webp = await native.renderGlbToImage(glb, JSON.stringify({ width: 768, height: 432, format: 'webp' }));
 if (webp.toString('latin1', 0, 4) !== 'RIFF' || webp.toString('latin1', 8, 12) !== 'WEBP') {
   throw new Error('webp output is not a WebP');
@@ -97,6 +109,7 @@ if (!transparentJpegError.startsWith('encode:')) {
   throw new Error(`expected encode: error for transparent jpeg, got: ${transparentJpegError || 'no error'}`);
 }
 
+phase('batch');
 const shared = { width: 768, height: 432, format: 'png' };
 const views = [
   { id: 'front', phi: 90, theta: 0 },
@@ -115,6 +128,7 @@ for (const [index, view] of views.entries()) {
     throw new Error(`batch view ${view.id} differs from singular bytes`);
   }
 }
+phase('axes');
 const axesRequest = { ...shared, phi: 60, theta: -45, includeAxes: true };
 const explicitAxesOff = await native.renderGlbToImage(
   glb,
@@ -161,6 +175,7 @@ const annotations = await native.renderGlbToImage(
     includeScale: true,
   }),
 );
+phase('visual cases');
 const visualCases = [
   { name: '192', width: 192, height: 192, label: 'Isometric', phi: 60, theta: -45 },
   { name: '800', width: 800, height: 800, label: 'Front — View From +Z', phi: 90, theta: 270 },
@@ -169,7 +184,9 @@ const visualCases = [
   { name: '4096', width: 4096, height: 4096, label: 'Front — View From +Z', phi: 90, theta: 270 },
 ].map(async (view) => ({
   ...view,
-  bytes: await native.renderGlbToImage(
+  bytes: await logCase(
+    view.name,
+    native.renderGlbToImage(
     glb,
     JSON.stringify({
       width: view.width,
@@ -184,10 +201,13 @@ const visualCases = [
       includeLabel: true,
       includeScale: true,
     }),
+    ),
   ),
 }));
 const resolvedVisualCases = await Promise.all(visualCases);
+console.log('phase: visual cases resolved');
 
+phase('parity sweep');
 const parityViews = [
   { id: 'isometric', label: 'Isometric', phi: 60, theta: -45 },
   { id: 'front', label: 'Front — View From +Z', phi: 90, theta: 270 },
@@ -242,6 +262,7 @@ for (const { format, projection, includeAxes, includeLabel, includeScale } of pa
     }
     parityCases += 1;
   }
+  if (parityCases % 42 === 0) phase(`sweep ${parityCases}`);
   const reordered = [
     { ...parityViews[3], id: 'right-first' },
     parityViews[0],
@@ -253,6 +274,7 @@ for (const { format, projection, includeAxes, includeLabel, includeScale } of pa
     throw new Error(`${format}/${projection} repeated annotated view differs`);
   }
 }
+phase('canonical visuals');
 const canonicalVisuals = (
   await native.renderGlbToImages(
     glb,

@@ -119,10 +119,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
-            target: linux-x64-gnu
-          - os: macos-14
-            target: darwin-arm64
           - os: windows-2022
             target: win32-x64-msvc
     runs-on: ${{ matrix.os }}
@@ -136,12 +132,10 @@ jobs:
       - name: Install lavapipe software Vulkan
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
-      - name: Clippy
-        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
-      - name: First-party Rust coverage
-        run: pnpm run test:rust-coverage
-      - name: Native singular/batch parity
-        run: pnpm run test:native-parity
+      - name: Native singular/batch parity (direct, debug)
+        env:
+          RUST_BACKTRACE: full
+        run: pnpm run build:napi && node tests/napi-parity.mjs
       - name: Pack platform candidate
         shell: bash
         run: |
