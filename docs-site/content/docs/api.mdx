@@ -342,7 +342,9 @@ With `format: 'raw'`, `bytes` is the frame rather than an encoded file:
 straight-alpha, sRGB-encoded RGBA8, exactly `width * height * 4` bytes,
 row-major with the top row first, four bytes per pixel and no padding — the
 layout a canvas `ImageData` expects after a `Uint8ClampedArray` wrap, and
-`mimeType` is `application/octet-stream`.
+`mimeType` is `application/octet-stream`. Neighbouring libraries make other
+choices, so [Work with raw pixels](guides/work-with-raw-pixels) sets this
+layout against them.
 
 <auto-type-table path="./props.ts" name="RenderedImageFile" caption="RenderedImageFile properties" />
 

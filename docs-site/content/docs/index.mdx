@@ -51,13 +51,17 @@ console.log(`wrote ${image.name} (${image.bytes.length} bytes, ${image.mimeType}
 wrote render.webp (26628 bytes, image/webp)
 ```
 
-The result is a plain object with three fields: `name`, `bytes` and
-`mimeType`. nanoraster never writes to disk, so the bytes are yours to save,
-upload or hand to another process. Run the script again and the bytes are
-identical: camera, lighting and encoder are fixed for a given request.
+The result is a plain object: `name`, `bytes`, `mimeType`, and the `width` and
+`height` the request resolved to. nanoraster never writes to disk, so the bytes
+are yours to save, upload or hand to another process. Run the script again and
+the bytes are identical: camera, lighting and encoder are fixed for a given
+request.
 
 The same call produces PNG, WebP or JPEG (`jpg` is an alias); see
-[Format and annotate](/docs/guides/format-and-annotate). Every rejection is a
+[Format and annotate](/docs/guides/format-and-annotate). It also produces the
+unencoded frame with `format: 'raw'`, for a pixel diff, a video frame or a
+texture upload; see
+[Work with raw pixels](/docs/guides/work-with-raw-pixels). Every rejection is a
 `RenderError` with a stable machine-readable code, so you can classify failures
 without string matching; see
 [Handle render failures](/docs/guides/handle-render-failures).

@@ -8,7 +8,7 @@
   <a href="https://tau.new"><img src="https://img.shields.io/badge/Tau-ecosystem-6d28d9" alt="Part of the Tau ecosystem"></a>
 </p>
 
-Tiny headless WebGPU glTF renderer for deterministic PNG, WebP, and JPEG output.
+Tiny headless WebGPU glTF renderer for deterministic PNG, WebP, JPEG, and raw RGBA output.
 Runs on a native binary in Node.js and on WebGPU in the browser, from one Rust
 render core.
 
@@ -44,6 +44,12 @@ await writeFile(image.name, image.bytes);
 Same request, same pixels: the camera, lighting and encoder are fixed for a
 given request, so a render can serve as evidence. Continue with the
 [tutorial and guides](https://nanoraster.xyz/docs).
+
+`format: 'raw'` skips the encoder and returns the frame — straight-alpha sRGB
+RGBA8 with its `width` and `height` — for a pixel diff, a video frame, or a
+texture upload, in a Node process that has no image decoder to undo an encode
+with. See
+[Work with raw pixels](https://nanoraster.xyz/docs/guides/work-with-raw-pixels).
 
 ## Reuse the renderer
 

@@ -171,11 +171,10 @@ canvas.getContext('2d').putImageData(frame, 0, 0);
 </RenderDemo>
 
 That tile is the render itself, painted from the bytes with nothing decoding
-them on the way in — the transparent background is the stage's checker showing
-through the alpha channel. None of this makes nanoraster a three.js
-alternative: it ships roughly twice the bytes of three.js's WebGPU build,
-renders stills, and reads every frame back through the CPU. Live interaction
-belongs to a canvas renderer.
+them on the way in, and the badge counts the frame the call returned. None of
+this makes nanoraster a three.js alternative: it ships roughly twice the bytes
+of three.js's WebGPU build, renders stills, and reads every frame back through
+the CPU. Live interaction belongs to a canvas renderer.
 
 ### 6. Hand the buffer to a library
 

@@ -27,13 +27,17 @@ const image = await renderImage(glb, {
 | `webp` | Yes   | Only when `quality` is below 1 | Web delivery; lossless by default, optionally lossy      |
 | `jpeg` | No    | Yes                            | Interop with tools that accept nothing else              |
 | `jpg`  | No    | Yes                            | Alias for `jpeg`; the filename keeps the `jpg` extension |
+| `raw`  | Yes   | No                             | The frame itself, for a diff, a video frame or a texture |
 
 `mimeType` reflects the true type, so `jpg` and `jpeg` both report `image/jpeg`;
-the full [MIME map](../api#imagemimetypes) is in the reference.
+the full [MIME map](../api#imagemimetypes) is in the reference. `raw` runs no
+encoder at all — [Work with raw pixels](work-with-raw-pixels) is when that is
+the output you want.
 
 ### 2. Decide on a background
 
-The default background is transparent, which only PNG and WebP can represent. A
+The default background is transparent, which PNG, WebP and `raw` carry but
+JPEG cannot represent. A
 JPEG request must set an opaque background; omitting it fails with an
 [`encode` failure](handle-render-failures) rather than silently flattening onto
 an arbitrary colour.
@@ -60,7 +64,8 @@ const image = await renderImage(glb, {
   high quality. The switch happens because lossy WebP is a different codec
   (VP8, with chroma subsampling) than lossless WebP (VP8L), so no lossy
   quality reaches exact pixels.
-- **PNG** is always lossless and ignores `quality`.
+- **PNG** is always lossless and ignores `quality`, and so does `raw`, which
+  runs no encoder to tune.
 
 Drag `quality` here and watch the badge under the image: the encoder switches
 at `1`, and below it the file shrinks while the pixels stop being exact.
@@ -142,9 +147,12 @@ flat-colour models alike. Sparse line art on an empty canvas — wireframes,
 schematics, near-blank drawings — can still encode smaller lossless than
 lossy, so measure both there and when every byte matters.
 
-**Byte-exact comparison.** Use PNG. Lossy encoders are
-[deterministic](../how-it-works#determinism) for a fixed request, but a format
-that discards information makes a poor diffing baseline.
+**Byte-exact comparison.** Any lossless format works — PNG, or WebP at the
+default `quality: 1`, which decode to the same pixels. Lossy encoders are
+[deterministic](../how-it-works#determinism) for a fixed request, but a lossy
+baseline diffs the encoder's concessions along with the render.
+[`format: 'raw'`](work-with-raw-pixels) takes the encoder out of the
+comparison entirely.
 
 **Alpha over an unknown page background.** Use PNG or WebP and leave the
 background transparent, then let the page composite it.

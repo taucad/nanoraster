@@ -26,11 +26,11 @@ const Page = (): React.JSX.Element => (
   <main className={styles.page}>
     <header className={styles.hero}>
       <div className={styles.heroCopy}>
-        <p className={styles.kicker}>GLB → WebP / PNG / JPEG · WebGPU</p>
+        <p className={styles.kicker}>GLB → WebP / PNG / JPEG / raw · WebGPU</p>
         <h1>GLB in, image out.</h1>
         <p className={styles.lede}>
-          A tiny headless renderer that turns a GLB into PNG, WebP or JPEG bytes. Same request, same pixels,
-          every time. Runs in Node.js and the browser.
+          A tiny headless renderer that turns a GLB into PNG, WebP or JPEG bytes — or the raw RGBA frame, for
+          a diff or a texture. Same request, same pixels, every time. Runs in Node.js and the browser.
         </p>
         <div className={styles.heroActions}>
           <a href="#live-demo">Try the live camera</a>

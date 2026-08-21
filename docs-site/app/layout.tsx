@@ -5,7 +5,7 @@ import { RootProvider } from 'fumadocs-ui/provider/next';
 import './global.css';
 
 export const metadata: Metadata = {
-  description: 'Tiny headless WebGPU glTF renderer for deterministic PNG, WebP, and JPEG output.',
+  description: 'Tiny headless WebGPU glTF renderer for deterministic PNG, WebP, JPEG, and raw RGBA output.',
   icons: {
     // iOS masks the icon itself, so this one is full-bleed and opaque
     // rather than the rounded, transparent-cornered tile.
