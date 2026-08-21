@@ -21,6 +21,15 @@ The package has no compatibility commitments before its first stable release.
 - `createRenderImageOptions` and `createRenderImagesOptions` are deleted. Write
   `{ ... } as const satisfies RenderImageOptions` (or `RenderImagesOptions`) on
   the variable instead: same literal preservation and key checking, no import.
+- `includeLabel` is deleted. A `label`'s presence is now the switch: set one and
+  it is drawn, omit it and it is not. Drop the flag and keep the label. On a
+  batch call this is per view — labelling every view is no longer required, so
+  a sheet can label some views and not others. Direct consumers of the native
+  addon or the wasm class drop the wire field too.
+- `includeAxes` and `includeScale` are now `axes` and `scaleBar` (`axes` and
+  `scaleBar` on the wire as well). Same booleans, same `false` defaults;
+  `scaleBar` rather than `scale` because a bare `scale` beside `width` and
+  `height` reads as image scaling.
 - The `RenderImageFormat`, `RenderUpAxis` and `RenderProjection` type aliases are
   no longer exported. Name the literal unions they stood for:
   `'png' | 'webp' | 'jpeg' | 'jpg'`, `'x' | 'y' | 'z'` and
