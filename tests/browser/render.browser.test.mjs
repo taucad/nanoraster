@@ -91,10 +91,27 @@ test('a warm renderer produces byte-identical output and disposes cleanly', asyn
   renderer.trim_targets();
   expect(await renderer.render_image(glb, options)).toEqual(oneShot);
 
-  const pixels = await renderer.render_pixels(glb, JSON.stringify({ width: 64, height: 48 }));
-  expect(pixels.width).toBe(64);
-  expect(pixels.height).toBe(48);
-  expect(pixels.rgba.byteLength).toBe(64 * 48 * 4);
+  // `format: 'raw'` is the fourth output format rather than a separate entry
+  // point: the bytes are the frame itself, so their length is the shape times
+  // four channels, and a mixed plan carries one of each kind.
+  const raw = await renderer.render_image(glb, JSON.stringify({ width: 64, height: 48, format: 'raw' }));
+  expect(raw.byteLength).toBe(64 * 48 * 4);
+  const mixed = await renderer.render_images(
+    glb,
+    JSON.stringify({
+      width: 64,
+      height: 48,
+      format: 'webp',
+      quality: 1,
+      views: [
+        { id: 'thumb', phi: 60, theta: -45 },
+        { id: 'frame', phi: 60, theta: -45, format: 'raw' },
+      ],
+    }),
+  );
+  expect(mixed.images).toHaveLength(2);
+  expect([...mixed.images[0].subarray(0, 4)]).toEqual([...new TextEncoder().encode('RIFF')]);
+  expect(mixed.images[1]).toEqual(raw);
 
   renderer.dispose();
   await expect(renderer.render_image(glb, options)).rejects.toThrow('gpu: renderer disposed');

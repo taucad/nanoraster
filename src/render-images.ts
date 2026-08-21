@@ -71,8 +71,14 @@ export const assembleRenderedImages = <const Options extends RenderImagesOptions
     const format = view.format ?? options.format;
     return {
       id: view.id,
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Output cardinality is checked above.
-      file: createRenderedImageFile(format, imageViewFileName(view.id, format), raw.images[index]!),
+      file: createRenderedImageFile(
+        format,
+        imageViewFileName(view.id, format),
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Output cardinality is checked above.
+        raw.images[index]!,
+        view.width ?? options.width,
+        view.height ?? options.height,
+      ),
     };
   });
   const result =

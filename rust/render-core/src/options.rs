@@ -59,9 +59,9 @@ impl<'de> Deserialize<'de> for LightingRequest {
     }
 }
 
-/// Wire shape for one image. `format` is optional here only because the same
-/// shape carries the raw-pixels request, which encodes nothing; an image
-/// request without one is rejected at resolution.
+/// Wire shape for one image. `format` is optional here only so an absent one
+/// is reported as the caller mistake it is (`format is required`) rather than
+/// as a serde field error; every request is rejected without one.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields, default)]
 pub struct RenderRequest {
@@ -176,14 +176,13 @@ impl RenderRequest {
     }
 
     pub fn resolve(&self) -> Result<(RenderOptions, ImageFormat), RenderError> {
-        let options = self.resolve_pixels()?;
+        let options = self.resolve_options()?;
         let (_, format) = resolve_required_format(self.format.as_deref(), self.quality)?;
         Ok((options, format))
     }
 
-    /// The camera and annotation settings alone, for the raw-pixels path:
-    /// nothing is encoded there, so the request carries no format to resolve.
-    pub fn resolve_pixels(&self) -> Result<RenderOptions, RenderError> {
+    /// The camera and annotation settings alone, with no encoder chosen yet.
+    pub fn resolve_options(&self) -> Result<RenderOptions, RenderError> {
         let mut options = resolve_common(self.common())?;
         validate_optional_label(self.label.as_deref(), "label")?;
         options.label.clone_from(&self.label);
@@ -398,10 +397,10 @@ fn resolve_required_format(
     Ok((name, format))
 }
 
-/// Resolve a format name plus 0..=1 quality into the encoder format, applying
+/// Resolve a format name plus 0..=1 quality into the output format, applying
 /// the per-format quality default and the lossless-only-at-exactly-1 WebP
 /// rule. WebP defaults to 1 (lossless, matching earlier lossless-only
-/// releases); JPEG keeps 0.92. PNG ignores quality entirely.
+/// releases); JPEG keeps 0.92. PNG and raw ignore quality entirely.
 fn resolve_format(name: &str, quality: Option<f32>) -> Result<ImageFormat, String> {
     let default_quality = if name == "webp" { 1.0 } else { 0.92 };
     let quality = quality.unwrap_or(default_quality);
@@ -416,7 +415,7 @@ fn resolve_format(name: &str, quality: Option<f32>) -> Result<ImageFormat, Strin
         rounded => rounded,
     };
     ImageFormat::from_name(name, encoder_quality)
-        .map_err(|_| format!("format {name:?} not png/webp/jpeg/jpg"))
+        .map_err(|_| format!("format {name:?} not png/webp/jpeg/jpg/raw"))
 }
 
 /// `'studio'`, omitted, and the studio values spelled out all resolve to the
@@ -615,12 +614,36 @@ mod tests {
                 .to_string(),
             "parse: format is required"
         );
-        // The raw-pixels path encodes nothing, so it still takes no format.
+        // The format-free resolution still answers, because it chooses no
+        // encoder: it is what `resolve` layers the required format onto.
         let options = RenderRequest::from_json(r#"{"width":256}"#)
             .expect("parse")
-            .resolve_pixels()
+            .resolve_options()
             .expect("resolve");
         assert_eq!(options.width, 256);
+    }
+
+    #[test]
+    fn raw_resolves_as_a_format_and_ignores_quality() {
+        for json in [r#"{"format":"raw"}"#, r#"{"format":"raw","quality":0.5}"#] {
+            let (options, format) = RenderRequest::from_json(json)
+                .expect("parse")
+                .resolve()
+                .expect("resolve");
+            assert_eq!(format, ImageFormat::Raw, "{json}");
+            assert_eq!((options.width, options.height), (768, 432));
+        }
+        // A per-view override picks it up through the same resolution, so one
+        // plan can mix an encoded view with an unencoded one.
+        let (_, shared, views, _) = RenderImagesRequest::from_json(
+            r#"{"format":"webp","views":[{"id":"thumb","phi":60,"theta":-45},{"id":"frame","phi":60,"theta":-45,"format":"raw"}]}"#,
+        )
+        .expect("parse")
+        .resolve()
+        .expect("resolve");
+        assert_eq!(shared, ImageFormat::WebP { quality: 100 });
+        assert_eq!(views[0].format, None);
+        assert_eq!(views[1].format, Some(ImageFormat::Raw));
     }
 
     #[test]
@@ -748,7 +771,7 @@ mod tests {
             ),
             (
                 r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"format":"gif"}]}"#,
-                "parse: views[0]: format \"gif\" not png/webp/jpeg/jpg",
+                "parse: views[0]: format \"gif\" not png/webp/jpeg/jpg/raw",
             ),
             (
                 r#"{"format":"png","axes":true,"views":[{"id":"front","phi":90,"theta":0,"width":191}]}"#,
@@ -824,10 +847,10 @@ mod tests {
     }
 
     /// Lighting is settled before any encoder is chosen, so these cases go
-    /// through the format-free raw-pixels resolution.
+    /// through the format-free resolution.
     fn lighting_of(json: &str) -> Result<ResolvedLighting, RenderError> {
         RenderRequest::from_json(json)
-            .and_then(|request| request.resolve_pixels())
+            .and_then(|request| request.resolve_options())
             .map(|options| options.lighting)
     }
 

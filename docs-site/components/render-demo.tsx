@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   demoControls,
-  isPixelsDemo,
+  isRawDemo,
   readDemoLights,
   readDemoLabel,
   readDemoOptions,
@@ -74,7 +74,7 @@ export const RenderDemo = ({
   const lights = useMemo(() => readDemoLights(code), [code]);
   const label = useMemo(() => readDemoLabel(code), [code]);
   const batch = views.length > 0;
-  const pixels = isPixelsDemo(code);
+  const raw = isRawDemo(code);
   const controls = demoControls(code).filter((control) => !batch || !angleKeys.has(control.key));
   const [values, setValues] = useState<Record<string, DemoValue>>(() => readDemoOptions(code));
   const [state, setState] = useState<State>('idle');
@@ -115,14 +115,14 @@ export const RenderDemo = ({
           const json = JSON.stringify(request);
           const started = performance.now();
 
-          // The pixels entry resolves the shared request and encodes nothing,
-          // so the `format` the demo always sends is read and ignored there —
-          // the timing below is render and readback with no encoder in it.
-          if (pixels) {
-            const raw = await renderer.render_pixels(glb, json);
+          // `format: 'raw'` runs the same request through the same entry point
+          // and stops before the encoder, so the timing below is render and
+          // readback with no encoder in it.
+          if (raw) {
+            const rgba = await renderer.render_image(glb, json);
             const ms = Math.round(performance.now() - started);
-            setFrame(falseColour(raw));
-            setEvidence({ mime: 'raw rgba', ms, sizes: [raw.rgba.byteLength] });
+            setFrame(falseColour({ rgba, ...RENDER_SIZE }));
+            setEvidence({ mime: 'raw rgba', ms, sizes: [rgba.byteLength] });
             setState('idle');
             return;
           }
@@ -156,7 +156,7 @@ export const RenderDemo = ({
         inFlightRef.current = false;
       }
     },
-    [batch, label, lights, pixels, views],
+    [batch, label, lights, raw, views],
   );
 
   // The canvas only exists once there is a frame to paint, so the paint waits
@@ -247,7 +247,7 @@ export const RenderDemo = ({
             </p>
           ) : state === 'failed' ? (
             <p className={styles.notice}>Render failed: {message}</p>
-          ) : pixels ? (
+          ) : raw ? (
             frame === undefined ? (
               <p className={styles.notice}>Rendering…</p>
             ) : (

@@ -11,13 +11,6 @@ export type RawImagesResult = {
   readonly timings?: string;
 };
 
-/** Raw pixels result shared by both bindings. @internal */
-export type RawPixelsResult = {
-  readonly rgba: Uint8Array<ArrayBuffer>;
-  readonly width: number;
-  readonly height: number;
-};
-
 /** One persistent binding-level renderer handle. @internal */
 export type RawRendererHandle = {
   readonly renderImage: (
@@ -25,7 +18,6 @@ export type RawRendererHandle = {
     optionsJson: string,
   ) => Promise<Uint8Array<ArrayBuffer>>;
   readonly renderImages: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawImagesResult>;
-  readonly renderPixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawPixelsResult>;
   /** Drop retained targets above the core's retention budget (one-shot guard). */
   readonly trimTargets: () => void;
   readonly dispose: () => void;
@@ -43,7 +35,6 @@ type WasmImagesResult = {
 type WasmRenderer = {
   render_image: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<Uint8Array<ArrayBuffer>>;
   render_images: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<WasmImagesResult>;
-  render_pixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawPixelsResult>;
   trim_targets: () => void;
   dispose: () => void;
 };
@@ -63,7 +54,6 @@ type NapiImagesResult = {
 type NapiRenderer = {
   renderImage: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<Uint8Array<ArrayBuffer>>;
   renderImages: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<NapiImagesResult>;
-  renderPixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawPixelsResult>;
   trimTargets: () => void;
   dispose: () => void;
 };
@@ -112,7 +102,6 @@ const loadWasmBindings = async (): Promise<RendererBindings> => {
       return {
         renderImage: async (glb, json) => renderer.render_image(glb, json),
         renderImages: async (glb, json) => normalizeImagesResult(await renderer.render_images(glb, json)),
-        renderPixels: async (glb, json) => renderer.render_pixels(glb, json),
         trimTargets: () => {
           renderer.trim_targets();
         },
@@ -159,7 +148,6 @@ const loadNapiBindings = async (): Promise<RendererBindings> => {
       return {
         renderImage: async (glb, json) => renderer.renderImage(glb, json),
         renderImages: async (glb, json) => normalizeImagesResult(await renderer.renderImages(glb, json)),
-        renderPixels: async (glb, json) => renderer.renderPixels(glb, json),
         trimTargets: () => {
           renderer.trimTargets();
         },
@@ -217,11 +205,6 @@ export const renderRaw = (
 
 export const renderManyRaw = (glb: Uint8Array<ArrayBuffer>, optionsJson: string): Promise<RawImagesResult> =>
   oneShot(async (handle) => handle.renderImages(glb, optionsJson));
-
-export const renderPixelsRaw = (
-  glb: Uint8Array<ArrayBuffer>,
-  optionsJson: string,
-): Promise<RawPixelsResult> => oneShot(async (handle) => handle.renderPixels(glb, optionsJson));
 
 export const createRendererRaw = async (optionsJson: string | undefined): Promise<RawRendererHandle> => {
   const renderer = await bindings();

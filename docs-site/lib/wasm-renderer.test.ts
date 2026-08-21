@@ -23,7 +23,6 @@ const busyHandle = (): WasmRendererHandle => {
   return {
     render_image: () => run(new Uint8Array([1])),
     render_images: () => run({ images: [new Uint8Array([2])] }),
-    render_pixels: () => run({ rgba: new Uint8Array([3, 3, 3, 255]), width: 1, height: 1 }),
   };
 };
 
@@ -41,21 +40,6 @@ describe('serializeRenders', () => {
     ]);
 
     expect(results).toHaveLength(4);
-  });
-
-  it('serializes an unencoded tile against the encoded ones', async () => {
-    // The raw-pixels guide puts a canvas tile on a page beside image tiles;
-    // its call shares the one handle and must queue with the rest.
-    const handle = serializeRenders(busyHandle());
-    const glb = new Uint8Array([0]);
-
-    const [pixels] = await Promise.all([
-      handle.render_pixels(glb, '{}'),
-      handle.render_image(glb, '{}'),
-      handle.render_pixels(glb, '{}'),
-    ]);
-
-    expect(pixels).toEqual({ rgba: new Uint8Array([3, 3, 3, 255]), width: 1, height: 1 });
   });
 
   it('keeps rendering after one call fails', async () => {

@@ -2,7 +2,8 @@ import path from 'node:path';
 
 // Initial 0.1.0 package contract measured on 2026-08-15; changes require
 // explicit admission. 2026-08-20: +6 for the handles-first surface
-// (create-renderer, render-pixels, describe-adapter modules).
+// (create-renderer, raw-pixels, describe-adapter modules). 2026-08-22: -2 as
+// `format: 'raw'` folded the raw-pixels module into the image paths.
 const PACKAGE_FILE_COUNT_CEILING = 32;
 
 export const PACKAGE_FILES = [
@@ -29,8 +30,6 @@ export const PACKAGE_FILES = [
   'dist/render-image.mjs',
   'dist/render-images.d.mts',
   'dist/render-images.mjs',
-  'dist/render-pixels.d.mts',
-  'dist/render-pixels.mjs',
   'dist/renderer.mjs',
   'dist/wasm/render_wasm.d.ts',
   'dist/wasm/render_wasm.js',

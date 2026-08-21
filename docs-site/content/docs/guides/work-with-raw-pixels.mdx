@@ -1,9 +1,9 @@
 ---
 title: Work with raw pixels
-description: Skip the encode with renderPixels, paint straight into a canvas, and compare renders pixel by pixel.
+description: Skip the encode with format raw, paint straight into a canvas, and compare renders pixel by pixel.
 ---
 
-The fourth output format is none. `renderPixels` stops the pipeline after
+The fourth output format is none. `format: 'raw'` stops the pipeline after
 readback and hands you the pixels themselves — for canvas display, custom
 encoding pipelines, and pixel-level comparison in tests.
 
@@ -16,9 +16,10 @@ encode plus decode round trip costs roughly 20 ms per frame that the pixels
 path never spends.
 
 ```typescript
-import { renderPixels } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
-const { rgba, width, height } = await renderPixels(glb, {
+const { bytes, width, height } = await renderImage(glb, {
+  format: 'raw',
   width: 640,
   height: 480,
   phi: 60,
@@ -26,9 +27,12 @@ const { rgba, width, height } = await renderPixels(glb, {
 });
 ```
 
-The options are [`RenderImageOptions`](../api#renderimageoptions) minus
-`format` and `quality`; camera, background, lighting, and annotations all
-apply.
+The options are [`RenderImageOptions`](../api#renderimageoptions) unchanged —
+camera, background, lighting, and annotations all apply, and `quality` is
+ignored exactly as PNG ignores it. The result is a
+[`RenderedImageFile`](../api#renderedimagefile) like any other: `bytes` are the
+frame, `width` and `height` are the shape to read them at, `name` is
+`render.raw`, and `mimeType` is `application/octet-stream`.
 
 ### 2. Paint to a canvas
 
@@ -36,7 +40,7 @@ The rows are straight-alpha, sRGB-encoded, and tightly packed — exactly what
 `putImageData` expects, with no premultiply step.
 
 ```typescript
-const imageData = new ImageData(new Uint8ClampedArray(rgba.buffer), width, height);
+const imageData = new ImageData(new Uint8ClampedArray(bytes.buffer), width, height);
 
 const canvas = document.querySelector('canvas');
 canvas.width = width;
@@ -63,16 +67,17 @@ runs again on the new frame.
 <RenderDemo>
 
 ```typescript
-import { renderPixels } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
-const { rgba, width, height } = await renderPixels(glb, {
+const { bytes, width, height } = await renderImage(glb, {
+  format: 'raw',
   phi: 62,
   theta: -38,
   margin: 0.08,
 });
 
 // No copy and no decode: the ImageData reads the bytes the renderer wrote.
-const frame = new ImageData(new Uint8ClampedArray(rgba.buffer), width, height);
+const frame = new ImageData(new Uint8ClampedArray(bytes.buffer), width, height);
 const { data } = frame;
 
 // One pass over that same memory: luma per pixel, then a heat ramp.
@@ -97,8 +102,9 @@ call alone — no encoder is in that number.
 
 ### 4. Know the shape
 
-`rgba` is `width * height * 4` bytes: row-major, top row first, four bytes per
-pixel, no padding. A 640×480 render is exactly 1,228,800 bytes. The pixels are
+`bytes` is `width * height * 4`: row-major, top row first, four bytes per
+pixel, no padding, straight alpha in sRGB. A 640×480 render is exactly
+1,228,800 bytes. The pixels are
 identical to what the encoded paths compress — the same determinism rules from
 [How it works](../how-it-works) apply, so two renders of one request on one
 host are byte-equal before any encoder gets involved.
@@ -118,21 +124,22 @@ const difference = (a: Uint8Array, b: Uint8Array): number => {
   return total / a.length;
 };
 
-const before = await renderPixels(previousGlb, { width: 512 });
-const after = await renderPixels(currentGlb, { width: 512 });
+const before = await renderImage(previousGlb, { format: 'raw', width: 512 });
+const after = await renderImage(currentGlb, { format: 'raw', width: 512 });
 
-console.log(`mean channel delta: ${difference(before.rgba, after.rgba).toFixed(3)}`);
+console.log(`mean channel delta: ${difference(before.bytes, after.bytes).toFixed(3)}`);
 ```
 
 ## Variations
 
-**On a warm renderer.** `Renderer.renderPixels` is the same call on a
-reused device; [Reuse the renderer](reuse-the-renderer) covers when to hold
-one.
+**On a warm renderer.** `Renderer.renderImage` takes the same request on a
+reused device, and a whole turntable is one `renderImages` plan of raw views —
+which may sit beside encoded ones in the same call;
+[Reuse the renderer](reuse-the-renderer) covers when to hold one.
 
-**Workers.** Pixels transfer well: `postMessage(rgba, [rgba.buffer])` moves
-the frame without a copy; [Render in the browser](render-in-the-browser) shows
-the worker shape.
+**Workers.** Frames transfer well: `postMessage(bytes, [bytes.buffer])` moves
+one without a copy; [Render in the browser](render-in-the-browser) shows the
+worker shape.
 
 **When you do want a file.** Use the encoded paths;
 [Format and annotate](format-and-annotate) picks the format. Re-encoding the

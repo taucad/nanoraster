@@ -3,7 +3,6 @@ export type {
   AdapterInfo,
   CreateRendererOptions,
   RenderedImageFile,
-  RenderedPixels,
   RenderTimings,
   RenderViewTimings,
   RenderFailureCode,

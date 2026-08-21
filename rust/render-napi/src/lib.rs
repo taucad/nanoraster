@@ -32,28 +32,12 @@ pub struct RenderImagesResult {
     pub timings: Option<String>,
 }
 
-/// Straight-alpha sRGB RGBA8 rows, tightly packed.
-#[napi(object)]
-pub struct RenderPixelsResult {
-    pub rgba: Buffer,
-    pub width: u32,
-    pub height: u32,
-}
-
 fn images_result(
     (images, timings): (Vec<Vec<u8>>, Option<render_core::RenderBatchTimings>),
 ) -> RenderImagesResult {
     RenderImagesResult {
         images: images.into_iter().map(Into::into).collect(),
         timings: timings.map(|timings| timings.to_json()),
-    }
-}
-
-fn pixels_result(rendered: render_core::Rendered) -> RenderPixelsResult {
-    RenderPixelsResult {
-        rgba: rendered.rgba.into(),
-        width: rendered.width,
-        height: rendered.height,
     }
 }
 
@@ -121,37 +105,6 @@ impl Task for RenderImagesTask {
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
         Ok(images_result(output))
-    }
-}
-
-pub struct RenderPixelsTask {
-    renderer: Option<SharedRenderer>,
-    glb: Uint8Array,
-    options_json: String,
-}
-
-impl Task for RenderPixelsTask {
-    type Output = render_core::Rendered;
-    type JsValue = RenderPixelsResult;
-
-    fn compute(&mut self) -> Result<Self::Output> {
-        match &self.renderer {
-            None => pollster::block_on(render_core::render_pixels_request(
-                &self.glb,
-                &self.options_json,
-            ))
-            .map_err(map_error),
-            Some(inner) => {
-                let mut guard = lock_renderer(inner);
-                let renderer = guard.as_mut().ok_or_else(disposed)?;
-                pollster::block_on(renderer.render_pixels_request(&self.glb, &self.options_json))
-                    .map_err(map_error)
-            }
-        }
-    }
-
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(pixels_result(output))
     }
 }
 
@@ -223,20 +176,6 @@ impl Renderer {
         })
     }
 
-    /// Render one view to raw RGBA pixels (no encode) on the warm device.
-    #[napi]
-    pub fn render_pixels(
-        &self,
-        glb: Uint8Array,
-        options_json: String,
-    ) -> AsyncTask<RenderPixelsTask> {
-        AsyncTask::new(RenderPixelsTask {
-            renderer: Some(self.inner.clone()),
-            glb,
-            options_json,
-        })
-    }
-
     /// Drop retained render targets above the core's retention budget. The
     /// one-shot façade calls this after every render so a single huge render
     /// cannot pin GPU memory for the process lifetime; it never blocks,
@@ -257,9 +196,10 @@ impl Renderer {
     }
 }
 
-/// Render a kernel GLB to encoded image bytes. `options_json` is the shared
+/// Render a kernel GLB to image bytes — encoded, or the raw frame itself for
+/// `"raw"`. `options_json` is the shared
 /// render-request contract (`render_core::RenderRequest`): a required
-/// format `"png" | "webp" | "jpeg" | "jpg"`, width/height, quality 0..=1,
+/// format `"png" | "webp" | "jpeg" | "jpg" | "raw"`, width/height, quality 0..=1,
 /// phi/theta degrees, margin 0..=0.5, up `"x" | "y" | "z"`, background
 /// `[r, g, b, a]` in 0..=1.
 /// One-shot sugar: creates and destroys a device per call — hold a
@@ -277,16 +217,6 @@ pub fn render_image(glb: Uint8Array, options_json: String) -> AsyncTask<RenderIm
 #[napi]
 pub fn render_images(glb: Uint8Array, options_json: String) -> AsyncTask<RenderImagesTask> {
     AsyncTask::new(RenderImagesTask {
-        renderer: None,
-        glb,
-        options_json,
-    })
-}
-
-/// Render a kernel GLB to raw straight-alpha RGBA8 pixels (no encode).
-#[napi]
-pub fn render_pixels(glb: Uint8Array, options_json: String) -> AsyncTask<RenderPixelsTask> {
-    AsyncTask::new(RenderPixelsTask {
         renderer: None,
         glb,
         options_json,

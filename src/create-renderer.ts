@@ -1,18 +1,15 @@
 /** Persistent renderer façade: one GPU device reused across calls. */
 
-import { createRenderedImageFile, type RenderedImageFile, type RenderedPixels } from '#image-file.js';
+import type { RenderedImageFile } from '#image-file.js';
 import { RenderError } from '#render-error.js';
 import type {
   RenderImageOptions,
   RenderImagesOptions,
-  RenderPixelsOptions,
   RenderedImagesResult,
   StrictRenderImagesOptions,
 } from '#options.js';
-import { imageFileName } from '#options.js';
-import { serializeImageOptions } from '#render-image.js';
+import { serializeImageOptions, toRenderedImageFile } from '#render-image.js';
 import { assembleRenderedImages, serializeImagesOptions } from '#render-images.js';
-import { serializePixelsOptions, toRenderedPixels } from '#render-pixels.js';
 import type { RawRendererHandle } from '#renderer.js';
 import { createRendererRaw } from '#renderer.js';
 
@@ -53,11 +50,6 @@ export type Renderer = {
     glb: Uint8Array<ArrayBuffer>,
     options: StrictRenderImagesOptions<Options>,
   ) => Promise<RenderedImagesResult<Options>>;
-  /** Render one view to raw straight-alpha RGBA8 pixels — no encode. */
-  readonly renderPixels: (
-    glb: Uint8Array<ArrayBuffer>,
-    options: RenderPixelsOptions,
-  ) => Promise<RenderedPixels>;
   /**
    * Destroy the GPU device once in-flight calls settle. Later calls reject
    * with a {@link RenderError} whose code is `'gpu'` — recreate the renderer
@@ -150,22 +142,13 @@ export const createRenderer = async (options?: CreateRendererOptions): Promise<R
         } catch (error) {
           throw RenderError.from(error);
         }
-        return createRenderedImageFile(renderOptions.format, imageFileName(renderOptions.format), bytes);
+        return toRenderedImageFile(renderOptions, bytes);
       }),
     renderImages: (glb, renderOptions) =>
       enqueue(async () => {
         const request = serializeImagesOptions(renderOptions);
         try {
           return assembleRenderedImages(renderOptions, await handle.renderImages(glb, request));
-        } catch (error) {
-          throw RenderError.from(error);
-        }
-      }),
-    renderPixels: (glb, renderOptions) =>
-      enqueue(async () => {
-        const request = serializePixelsOptions(renderOptions);
-        try {
-          return toRenderedPixels(await handle.renderPixels(glb, request));
         } catch (error) {
           throw RenderError.from(error);
         }

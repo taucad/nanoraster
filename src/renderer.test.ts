@@ -43,7 +43,6 @@ describe('renderer binding selection', () => {
     const nativeRenderer = {
       renderImage: vi.fn(() => Promise.resolve(new Uint8Array([21]))),
       renderImages: vi.fn(() => Promise.resolve({ images: [new Uint8Array([22])], timings: null })),
-      renderPixels: vi.fn(() => Promise.resolve({ rgba: new Uint8Array([23]), width: 1, height: 1 })),
       trimTargets: vi.fn(),
       dispose: vi.fn(),
     };
@@ -65,11 +64,6 @@ describe('renderer binding selection', () => {
     expect(native.createRenderer).toHaveBeenCalledWith('{"powerPreference":"low-power"}');
     await expect(handle.renderImage(glb, '{}')).resolves.toEqual(new Uint8Array([21]));
     await expect(handle.renderImages(glb, '{}')).resolves.toEqual({ images: [new Uint8Array([22])] });
-    await expect(handle.renderPixels(glb, '{}')).resolves.toEqual({
-      rgba: new Uint8Array([23]),
-      width: 1,
-      height: 1,
-    });
     handle.trimTargets();
     expect(nativeRenderer.trimTargets).toHaveBeenCalledOnce();
     handle.dispose();
@@ -86,7 +80,6 @@ describe('renderer binding selection', () => {
       render_images: vi.fn(() =>
         Promise.resolve({ images: [new Uint8Array([32])], timings: 'timings-json' }),
       ),
-      render_pixels: vi.fn(() => Promise.resolve({ rgba: new Uint8Array([33]), width: 1, height: 1 })),
       trim_targets: vi.fn(),
       dispose: vi.fn(),
     };
@@ -95,8 +88,7 @@ describe('renderer binding selection', () => {
       default: initialize,
       Renderer: { create },
     }));
-    const { createRendererRaw, isNodeRuntime, renderManyRaw, renderPixelsRaw, renderRaw } =
-      await import('#renderer.js');
+    const { createRendererRaw, isNodeRuntime, renderManyRaw, renderRaw } = await import('#renderer.js');
     const glb = new Uint8Array([9]);
 
     // The browser artifact shares one renderer for one-shot calls too.
@@ -105,13 +97,8 @@ describe('renderer binding selection', () => {
       images: [new Uint8Array([32])],
       timings: 'timings-json',
     });
-    await expect(renderPixelsRaw(glb, '{}')).resolves.toEqual({
-      rgba: new Uint8Array([33]),
-      width: 1,
-      height: 1,
-    });
     expect(create).toHaveBeenCalledOnce();
-    expect(wasmRenderer.trim_targets).toHaveBeenCalledTimes(3);
+    expect(wasmRenderer.trim_targets).toHaveBeenCalledTimes(2);
     // The adapter probe never reaches this artifact: browsers read
     // `navigator.gpu` in TypeScript instead.
     expect(isNodeRuntime()).toBe(false);
@@ -122,11 +109,6 @@ describe('renderer binding selection', () => {
     await expect(handle.renderImages(glb, '{}')).resolves.toEqual({
       images: [new Uint8Array([32])],
       timings: 'timings-json',
-    });
-    await expect(handle.renderPixels(glb, '{}')).resolves.toEqual({
-      rgba: new Uint8Array([33]),
-      width: 1,
-      height: 1,
     });
     handle.dispose();
     expect(wasmRenderer.dispose).toHaveBeenCalledOnce();
@@ -154,32 +136,30 @@ describe('renderer binding selection', () => {
     const nativeRenderer = {
       renderImage: vi.fn(() => serialized(new Uint8Array([21]))),
       renderImages: vi.fn(() => serialized({ images: [new Uint8Array([22])], timings: null })),
-      renderPixels: vi.fn(() => serialized({ rgba: new Uint8Array([23]), width: 1, height: 1 })),
       trimTargets: vi.fn(),
       dispose: vi.fn(),
     };
     const native = {
       renderImage: vi.fn(() => Promise.resolve(new Uint8Array([1]))),
       renderImages: vi.fn(() => Promise.resolve({ images: [new Uint8Array([2])], timings: null })),
-      renderPixels: vi.fn(() => Promise.resolve({ rgba: new Uint8Array([3]), width: 9, height: 9 })),
       createRenderer: vi.fn(() => Promise.resolve(nativeRenderer)),
       describeAdapter: vi.fn(() => 'Metal / Test (IntegratedGpu)'),
     };
     vi.doMock('node:module', () => ({ createRequire: vi.fn(() => vi.fn(() => native)) }));
-    const { renderManyRaw, renderPixelsRaw, renderRaw } = await import('#renderer.js');
+    const { renderManyRaw, renderRaw } = await import('#renderer.js');
     const glb = new Uint8Array([9]);
 
     await expect(
       Promise.all([
         renderRaw(glb, '{}'),
         renderManyRaw(glb, '{"views":[]}'),
-        renderPixelsRaw(glb, '{}'),
+        renderRaw(glb, '{"format":"raw"}'),
         renderRaw(glb, '{}'),
       ]),
     ).resolves.toEqual([
       new Uint8Array([21]),
       { images: [new Uint8Array([22])] },
-      { rgba: new Uint8Array([23]), width: 1, height: 1 },
+      new Uint8Array([21]),
       new Uint8Array([21]),
     ]);
     expect(native.createRenderer).toHaveBeenCalledOnce();
@@ -196,7 +176,6 @@ describe('renderer binding selection', () => {
     const nativeRenderer = {
       renderImage: vi.fn(() => Promise.resolve(new Uint8Array([21]))),
       renderImages: vi.fn(),
-      renderPixels: vi.fn(),
       trimTargets: vi.fn(),
       dispose: vi.fn(),
     };

@@ -1,6 +1,7 @@
 /** Consumer options and strict wire serialization for image rendering. */
 
 import type { ImageFormat, RenderedImageFile } from '#image-file.js';
+import { defaultHeight, defaultWidth } from '#image-file.js';
 
 /**
  * One directional light.
@@ -53,16 +54,21 @@ export type RenderLightingRig = {
 export type RenderLighting = 'studio' | RenderLightingRig;
 
 type RenderImageSharedOptions = {
-  /** Required output encoder. `jpg` is an alias for `jpeg`. */
-  readonly format: 'png' | 'webp' | 'jpeg' | 'jpg';
+  /**
+   * Required output format. `jpg` is an alias for `jpeg`. `'raw'` skips the
+   * encoder and returns the frame itself: straight-alpha, sRGB-encoded RGBA8,
+   * exactly `width * height * 4` bytes, row-major with the top row first, four
+   * bytes per pixel and no padding, owned by the caller.
+   */
+  readonly format: 'png' | 'webp' | 'jpeg' | 'jpg' | 'raw';
   /** Output width in pixels, inclusive range 16–4096. @default 768 */
   readonly width?: number;
   /** Output height in pixels, inclusive range 16–4096. @default 432 */
   readonly height?: number;
   /**
    * Encoder quality from 0 to 1. For WebP, 1 is lossless and anything lower
-   * encodes lossy, following Chrome's canvas `toBlob` semantics. PNG ignores
-   * quality.
+   * encodes lossy, following Chrome's canvas `toBlob` semantics. PNG and raw
+   * ignore quality.
    *
    * @default 0.92 (jpeg), 1 (webp)
    */
@@ -133,8 +139,8 @@ export type RenderImageView<Id extends string = string> = {
   readonly width?: number;
   /** Output height override for this view, inclusive range 16–4096. @default the shared `height` */
   readonly height?: number;
-  /** Output encoder override for this view. @default the shared `format` */
-  readonly format?: 'png' | 'webp' | 'jpeg' | 'jpg';
+  /** Output format override for this view, `'raw'` included. @default the shared `format` */
+  readonly format?: 'png' | 'webp' | 'jpeg' | 'jpg' | 'raw';
   /** Encoder quality override for this view with the shared semantics (WebP: 1 is lossless, below 1 is lossy). @default the shared `quality` */
   readonly quality?: number;
 };
@@ -158,14 +164,6 @@ export type RenderImagesOptions<Views extends readonly RenderImageView[] = reado
   };
 
 /**
- * Options for one raw-pixels render: the singular camera and annotation
- * settings minus `format` and `quality` (nothing is encoded).
- *
- * @public
- */
-export type RenderPixelsOptions = Omit<RenderImageSharedOptions, 'format' | 'quality'> & RenderCameraOptions;
-
-/**
  * One identified rendered file.
  *
  * @public
@@ -173,7 +171,7 @@ export type RenderPixelsOptions = Omit<RenderImageSharedOptions, 'format' | 'qua
 export type RenderedImage<Id extends string = string, Format extends ImageFormat = ImageFormat> = {
   /** Stable identity copied from the corresponding input view. */
   readonly id: Id;
-  /** Owned encoded image file for this view. */
+  /** Owned output file for this view. */
   readonly file: RenderedImageFile<Format>;
 };
 
@@ -308,8 +306,6 @@ const pluralKeys = new Set([
   'views',
 ]);
 
-const pixelsKeys = new Set([...singularKeys].filter((key) => key !== 'format' && key !== 'quality'));
-
 const viewKeys = new Set(['id', 'label', 'phi', 'theta', 'width', 'height', 'format', 'quality']);
 
 const lightingKeys = new Set(['lights', 'ambient', 'environment', 'space', 'exposure']);
@@ -353,8 +349,6 @@ export const renderImageViewIdPattern = /^[\dA-Za-z][\w-]{0,63}$/u;
 export const renderImageBackgroundPattern = /^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u;
 
 const viewIdDescription = '[A-Za-z0-9][A-Za-z0-9_-]{0,63}';
-const defaultWidth = 768;
-const defaultHeight = 432;
 const minimumLightDirectionLength = 1e-6;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -534,8 +528,8 @@ const validateBackground = (background: unknown): void => {
 };
 
 const validateCommon = (options: Omit<RenderImageOptions, 'phi' | 'theta'>): void => {
-  if (!['png', 'webp', 'jpeg', 'jpg'].includes(options.format)) {
-    throw new TypeError('format must be png, webp, jpeg, or jpg');
+  if (!['png', 'webp', 'jpeg', 'jpg', 'raw'].includes(options.format)) {
+    throw new TypeError('format must be png, webp, jpeg, jpg, or raw');
   }
   if (options.quality !== undefined) {
     assertRange(options.quality, 'quality', renderImageQualityRange);
@@ -651,8 +645,8 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     if (height !== undefined) {
       assertRange(height, `views[${index}].height`, renderImageDimensionRange);
     }
-    if (format !== undefined && !['png', 'webp', 'jpeg', 'jpg'].some((name) => name === format)) {
-      throw new TypeError(`views[${index}].format must be png, webp, jpeg, or jpg`);
+    if (format !== undefined && !['png', 'webp', 'jpeg', 'jpg', 'raw'].some((name) => name === format)) {
+      throw new TypeError(`views[${index}].format must be png, webp, jpeg, jpg, or raw`);
     }
     if (quality !== undefined) {
       assertRange(quality, `views[${index}].quality`, renderImageQualityRange);
@@ -699,55 +693,20 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
 };
 
 /**
- * Validate and serialize one raw-pixels request for render-core.
+ * Derive the singular output filename (`render.raw` for the raw format).
  *
  * @internal
- * @param options - Singular camera and annotation settings, no encoder pair
- * @returns The validated JSON request
- */
-export const toPixelsRequestJson = (options: RenderPixelsOptions): string => {
-  const input: unknown = options;
-  if (!isRecord(input)) {
-    throw new TypeError('options must be an object');
-  }
-  assertKnownKeys(input, pixelsKeys, 'options');
-  validateCameraCommon(options);
-  if (options.label !== undefined) {
-    assertLabel(options.label, 'label');
-  }
-  assertOptionalFinite(options.phi, 'phi');
-  assertOptionalFinite(options.theta, 'theta');
-  return JSON.stringify({
-    width: options.width,
-    height: options.height,
-    phi: options.phi,
-    theta: options.theta,
-    margin: options.margin,
-    up: options.up,
-    projection: options.projection,
-    background: normalizedBackground(options.background),
-    label: options.label,
-    axes: options.axes,
-    scaleBar: options.scaleBar,
-    lighting: options.lighting,
-  });
-};
-
-/**
- * Derive the singular output filename.
- *
- * @internal
- * @param format - Encoded image format
+ * @param format - Output image format
  * @returns The singular output filename
  */
 export const imageFileName = (format: ImageFormat): string => `render.${format}`;
 
 /**
- * Derive an identified-view output filename.
+ * Derive an identified-view output filename (`render-<id>.raw` for raw).
  *
  * @internal
  * @param id - Validated view identifier
- * @param format - Encoded image format
+ * @param format - Output image format
  * @returns The identified output filename
  */
 export const imageViewFileName = (id: string, format: ImageFormat): string => `render-${id}.${format}`;

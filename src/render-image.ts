@@ -24,12 +24,33 @@ export const serializeImageOptions = (options: RenderImageOptions): string => {
 };
 
 /**
- * Render a kernel GLB to one owned `render.<format>` image.
+ * Name the singular result and attach the dimensions the request resolved to.
+ *
+ * @internal
+ * @param options - The validated singular options the bytes answer
+ * @param bytes - Binding-level output bytes
+ * @returns The named result file
+ */
+export const toRenderedImageFile = (
+  options: RenderImageOptions,
+  bytes: Uint8Array<ArrayBuffer>,
+): RenderedImageFile =>
+  createRenderedImageFile(
+    options.format,
+    imageFileName(options.format),
+    bytes,
+    options.width,
+    options.height,
+  );
+
+/**
+ * Render a kernel GLB to one owned `render.<format>` image, or to the raw
+ * frame itself with `format: 'raw'`.
  *
  * @public
  * @param glb - Binary glTF bytes with owned `ArrayBuffer` storage
  * @param options - Camera, format, background, and optional axis-indicator settings
- * @returns The encoded image file
+ * @returns The output file: encoded bytes, or straight-alpha RGBA8 for `'raw'`
  */
 export const renderImage = async (
   glb: Uint8Array<ArrayBuffer>,
@@ -41,5 +62,5 @@ export const renderImage = async (
   } catch (error) {
     throw RenderError.from(error);
   }
-  return createRenderedImageFile(options.format, imageFileName(options.format), bytes);
+  return toRenderedImageFile(options, bytes);
 };

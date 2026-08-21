@@ -10,7 +10,6 @@
 
 export { renderImage } from '#render-image.js';
 export { renderImages } from '#render-images.js';
-export { renderPixels } from '#render-pixels.js';
 export { createRenderer } from '#create-renderer.js';
 export type { CreateRendererOptions, Renderer } from '#create-renderer.js';
 export { describeAdapter } from '#describe-adapter.js';
@@ -18,7 +17,7 @@ export type { AdapterInfo } from '#describe-adapter.js';
 export { RenderError } from '#render-error.js';
 export type { RenderFailureCode } from '#render-error.js';
 export { imageMimeTypes } from '#image-file.js';
-export type { RenderedImageFile, RenderedPixels } from '#image-file.js';
+export type { RenderedImageFile } from '#image-file.js';
 export {
   renderImageAmbientRange,
   renderImageAnnotatedMinDimension,
@@ -37,7 +36,6 @@ export type {
   RenderImageOptions,
   RenderImagesOptions,
   RenderImageView,
-  RenderPixelsOptions,
   RenderTimings,
   RenderViewTimings,
   RenderedImage,

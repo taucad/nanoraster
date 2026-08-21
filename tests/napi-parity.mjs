@@ -27,11 +27,9 @@ const native =
    * @type {{
    *   renderImage: (glb: Buffer, optionsJson: string) => Promise<Buffer>,
    *   renderImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], timings?: string }>,
-   *   renderPixels: (glb: Buffer, optionsJson: string) => Promise<{ rgba: Buffer, width: number, height: number }>,
    *   createRenderer: (optionsJson?: string) => Promise<{
    *     renderImage: (glb: Buffer, optionsJson: string) => Promise<Buffer>,
    *     renderImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], timings?: string }>,
-   *     renderPixels: (glb: Buffer, optionsJson: string) => Promise<{ rgba: Buffer, width: number, height: number }>,
    *     dispose: () => void,
    *   }>,
    *   describeAdapter: (optionsJson?: string) => string,
@@ -495,11 +493,39 @@ if (timed.images.some((image, index) => !image.equals(batch[index]))) {
 if (typeof timings.views[0].encode !== 'number' || typeof timings.parse !== 'number') {
   throw new Error(`timings fields must be suffix-less durations: ${timed.timings}`);
 }
-// R11: raw pixels stop before encode.
-const pixelsOut = await renderer.renderPixels(glb, JSON.stringify({ width: 192, height: 192 }));
-if (pixelsOut.width !== 192 || pixelsOut.height !== 192 || pixelsOut.rgba.length !== 192 * 192 * 4) {
-  throw new Error('pixels output has the wrong shape');
+// X1: `format: "raw"` is the fourth output format, not a separate entry point.
+// Its bytes are the frame the encoders compress, so they must be exactly
+// `width * height * 4`, repeatable, and identical whether they arrive from a
+// singular call or from a raw view inside a mixed plan.
+const rawRequest = JSON.stringify({ format: 'raw', width: 192, height: 192 });
+const rawOut = await renderer.renderImage(glb, rawRequest);
+if (rawOut.length !== 192 * 192 * 4) {
+  throw new Error(`raw output has the wrong shape: ${rawOut.length}`);
 }
+if (!rawOut.equals(await native.renderImage(glb, rawRequest))) {
+  throw new Error('warm raw bytes differ from a cold addon raw render');
+}
+// One plan, two output kinds: the encoded thumbnail and the frame beside it.
+const rawPlan = await renderer.renderImages(
+  glb,
+  JSON.stringify({
+    format: 'webp',
+    quality: 1,
+    width: 192,
+    height: 192,
+    views: [
+      { id: 'thumb', phi: 60, theta: -45 },
+      { id: 'frame', phi: 60, theta: -45, format: 'raw' },
+    ],
+  }),
+);
+if (rawPlan.images.length !== 2 || rawPlan.images[0].toString('latin1', 0, 4) !== 'RIFF') {
+  throw new Error('mixed plan did not encode its webp view');
+}
+if (!rawPlan.images[1].equals(rawOut)) {
+  throw new Error('mixed-plan raw view differs from the singular raw bytes');
+}
+console.log(`raw ${rawOut.length}B matches a cold render and the mixed-plan raw view`);
 // Dispose contract: later calls reject with the stable gpu taxonomy.
 renderer.dispose();
 let disposedError = '';
@@ -511,7 +537,7 @@ try {
 if (!disposedError.startsWith('gpu: renderer disposed')) {
   throw new Error(`expected a disposed rejection, got: ${disposedError || 'no error'}`);
 }
-console.log('warm renderer: byte parity, ladder overrides, zero-device-request timings, pixels, dispose');
+console.log('warm renderer: byte parity, ladder overrides, zero-device-request timings, raw, dispose');
 
 mkdirSync(join(here, 'out'), { recursive: true });
 writeFileSync(join(here, 'out', 'napi.png'), png);

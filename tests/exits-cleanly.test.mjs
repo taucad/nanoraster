@@ -10,12 +10,12 @@ import { expect, test } from 'vitest';
 
 const script = `
 import { readFileSync } from 'node:fs';
-const { renderImage, renderPixels } = await import('./src/index.ts');
+const { renderImage } = await import('./src/index.ts');
 const glb = Uint8Array.from(readFileSync('tests/fixtures/gear-12.glb'));
 const options = { width: 192, height: 192 };
 const [image] = await Promise.all([
   renderImage(glb, { ...options, format: 'png' }),
-  renderPixels(glb, options),
+  renderImage(glb, { ...options, format: 'raw' }),
 ]);
 console.log(image.name);
 `;

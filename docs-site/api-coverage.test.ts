@@ -30,7 +30,6 @@ const generator = createGenerator({ tsconfigPath: resolve(import.meta.dirname, '
 const tableNames = [
   'RenderedImageFile',
   'RenderedImage',
-  'RenderedPixels',
   'RenderImageOptions',
   'RenderImagesOptions',
   'RenderImageView',
@@ -42,9 +41,8 @@ const tableNames = [
   'RenderViewTimings',
 ] as const;
 const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
-  RenderedImageFile: ['name', 'bytes', 'mimeType'],
+  RenderedImageFile: ['name', 'bytes', 'mimeType', 'width', 'height'],
   RenderedImage: ['id', 'file'],
-  RenderedPixels: ['rgba', 'width', 'height'],
   RenderImageOptions: [
     'format',
     'width',

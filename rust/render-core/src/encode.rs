@@ -19,6 +19,10 @@ pub enum ImageFormat {
     Jpeg {
         quality: u8,
     },
+    /// No encoder at all: the rendered frame itself. Straight-alpha,
+    /// sRGB-encoded RGBA8, `width * height * 4` bytes, row-major with the top
+    /// row first, four bytes per pixel and no padding.
+    Raw,
 }
 
 impl ImageFormat {
@@ -26,6 +30,7 @@ impl ImageFormat {
     pub fn from_name(name: &str, quality: u8) -> Result<Self, RenderError> {
         match name {
             "png" => Ok(Self::Png),
+            "raw" => Ok(Self::Raw),
             "webp" => Ok(Self::WebP { quality }),
             "jpeg" | "jpg" => Ok(Self::Jpeg { quality }),
             other => Err(RenderError::Encode(format!(
@@ -35,12 +40,17 @@ impl ImageFormat {
     }
 }
 
-/// Encode rendered RGBA pixels in the requested format.
+/// Encode rendered RGBA pixels in the requested format. `Raw` is the identity
+/// arm: the caller owns the bytes, so the frame is copied rather than encoded.
 pub fn encode(rendered: &Rendered, format: ImageFormat) -> Result<Vec<u8>, RenderError> {
     match format {
         ImageFormat::Png => encode_png(rendered),
         ImageFormat::WebP { quality } => encode_webp(rendered, quality),
         ImageFormat::Jpeg { quality } => encode_jpeg(rendered, quality),
+        ImageFormat::Raw => {
+            validate_rendered(rendered)?;
+            Ok(rendered.rgba.clone())
+        }
     }
 }
 
@@ -330,7 +340,19 @@ mod tests {
     }
 
     #[test]
+    fn raw_hands_back_the_rendered_pixels_unchanged() {
+        let rendered = gradient(200);
+        let bytes = encode(&rendered, ImageFormat::Raw).expect("encode");
+        assert_eq!(bytes, rendered.rgba);
+        assert_eq!(bytes.len(), (rendered.width * rendered.height * 4) as usize);
+    }
+
+    #[test]
     fn parses_format_names() {
+        assert!(matches!(
+            ImageFormat::from_name("raw", 85),
+            Ok(ImageFormat::Raw)
+        ));
         assert!(matches!(
             ImageFormat::from_name("png", 85),
             Ok(ImageFormat::Png)
@@ -353,6 +375,7 @@ mod tests {
             width: 1,
             height: 1,
         };
+        assert!(encode(&empty, ImageFormat::Raw).is_err());
         assert!(encode_png(&empty).is_err());
         assert!(encode_webp(&empty, 100).is_err());
         assert!(encode_webp(&empty, 75).is_err());

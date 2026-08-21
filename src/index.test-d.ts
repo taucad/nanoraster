@@ -14,7 +14,6 @@ expectTypeOf<
     | 'RenderDeps'
     | 'RawRenderer'
     | 'RawImagesResult'
-    | 'RawPixelsResult'
     | 'RawRendererHandle'
     | 'assembleRenderedImages'
     | 'createRendererRaw'
@@ -22,16 +21,13 @@ expectTypeOf<
     | 'imageFileName'
     | 'isNodeRuntime'
     | 'renderManyRaw'
-    | 'renderPixelsRaw'
     | 'renderRaw'
     | 'serializeCreateOptions'
     | 'serializeImageOptions'
     | 'serializeImagesOptions'
-    | 'serializePixelsOptions'
     | 'toImageRequestJson'
     | 'toImagesRequestJson'
-    | 'toPixelsRequestJson'
-    | 'toRenderedPixels'
+    | 'toRenderedImageFile'
   >
 >().toEqualTypeOf<never>();
 
@@ -54,7 +50,7 @@ expectTypeOf(renderImage(glb, singular)).toEqualTypeOf<Promise<renderModule.Rend
 type TauExportFileShape = {
   name: string;
   bytes: Uint8Array<ArrayBuffer>;
-  mimeType: 'image/png' | 'image/webp' | 'image/jpeg' | 'model/gltf-binary';
+  mimeType: 'image/png' | 'image/webp' | 'image/jpeg' | 'application/octet-stream' | 'model/gltf-binary';
 };
 expectTypeOf<renderModule.RenderedImageFile>().toExtend<TauExportFileShape>();
 
@@ -93,6 +89,38 @@ expectTypeOf(cardFile.mimeType).toEqualTypeOf<'image/webp'>();
 declare const heroFile: Awaited<typeof ladder>[1]['file'];
 expectTypeOf(heroFile.mimeType).toEqualTypeOf<'image/png'>();
 
+// `format: 'raw'` narrows to the octet-stream MIME type on the shared option
+// and on a per-view override, so a mixed plan types each entry by its own kind.
+void renderImage(glb, { format: 'raw', width: 640, height: 480 });
+const mixed = renderImages(glb, {
+  format: 'webp',
+  views: [
+    { id: 'thumb', phi: 60, theta: -45 },
+    { id: 'frame', phi: 60, theta: -45, format: 'raw' },
+  ],
+});
+expectTypeOf(mixed).toEqualTypeOf<
+  Promise<readonly [renderModule.RenderedImage<'thumb', 'webp'>, renderModule.RenderedImage<'frame', 'raw'>]>
+>();
+declare const thumbFile: Awaited<typeof mixed>[0]['file'];
+expectTypeOf(thumbFile.mimeType).toEqualTypeOf<'image/webp'>();
+declare const frameFile: Awaited<typeof mixed>[1]['file'];
+expectTypeOf(frameFile.mimeType).toEqualTypeOf<'application/octet-stream'>();
+expectTypeOf(frameFile.width).toEqualTypeOf<number>();
+expectTypeOf(frameFile.height).toEqualTypeOf<number>();
+const allRaw = renderImages(glb, {
+  format: 'raw',
+  views: [{ id: 'frame', phi: 60, theta: -45 }],
+});
+expectTypeOf(allRaw).toEqualTypeOf<Promise<readonly [renderModule.RenderedImage<'frame', 'raw'>]>>();
+declare const sharedRawFile: Awaited<typeof allRaw>[0]['file'];
+expectTypeOf(sharedRawFile.mimeType).toEqualTypeOf<'application/octet-stream'>();
+
+// The deleted raw-pixels surface is gone from the module, not renamed.
+expectTypeOf<
+  Extract<keyof RenderModule, 'renderPixels' | 'RenderedPixels' | 'RenderPixelsOptions'>
+>().toEqualTypeOf<never>();
+
 const timed = renderImages(glb, {
   format: 'png',
   timings: true,
@@ -110,15 +138,12 @@ void untimed.timings;
 declare const renderer: renderModule.Renderer;
 expectTypeOf(renderer.renderImage(glb, singular)).toEqualTypeOf<Promise<renderModule.RenderedImageFile>>();
 expectTypeOf(renderer.renderImages(glb, options)).toEqualTypeOf<typeof rendered>();
-expectTypeOf(renderer.renderPixels(glb, {})).toEqualTypeOf<Promise<renderModule.RenderedPixels>>();
 expectTypeOf(renderer.dispose).toEqualTypeOf<() => void>();
 expectTypeOf(renderer[Symbol.dispose]).toEqualTypeOf<() => void>();
 expectTypeOf(renderModule.createRenderer()).toEqualTypeOf<Promise<renderModule.Renderer>>();
 expectTypeOf(renderModule.createRenderer({ powerPreference: 'low-power' })).toEqualTypeOf<
   Promise<renderModule.Renderer>
 >();
-// @ts-expect-error pixels options carry no encoder pair
-void renderer.renderPixels(glb, { format: 'png' });
 // @ts-expect-error unknown power preference
 void renderModule.createRenderer({ powerPreference: 'turbo' });
 

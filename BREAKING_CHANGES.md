@@ -65,5 +65,21 @@ The package has no compatibility commitments before its first stable release.
 - `format` is required on every image request at the wire, not only in
   TypeScript. The render core's `"png"` fallback is deleted, so a request to
   the native addon or the wasm module that names no format fails with
-  `parse: format is required` instead of producing a PNG. Raw-pixels requests
-  are unaffected: they encode nothing and carry no format.
+  `parse: format is required` instead of producing a PNG.
+- `renderPixels` is deleted, and with it `Renderer.renderPixels`,
+  `RenderPixelsOptions` and `RenderedPixels`. Raw output is now the fourth
+  value of `format`: `renderImage(glb, { format: 'raw', ... })` replaces the
+  singular call, `renderImages` with a raw view replaces it in a plan, and a
+  view may set `format: 'raw'` beside encoded ones. The result is an ordinary
+  `RenderedImageFile` — `bytes` instead of `rgba`, `render.raw` /
+  `render-<id>.raw` as the name, `application/octet-stream` as the MIME type
+  (`imageMimeTypes.raw`) — with the same straight-alpha, sRGB, tightly packed
+  `width * height * 4` layout as before.
+- `quality` is ignored for raw exactly as PNG ignores it, so no new validation
+  rule applies. Direct consumers of the native addon or the wasm class drop
+  `renderPixels` / `render_pixels` too and pass `"format":"raw"` to
+  `renderImage` / `render_image` instead. Rendered bytes are unchanged.
+- `RenderedImageFile` gains `width` and `height` for every format. They are
+  resolved from the request (a per-view override, else the shared value, else
+  the 768×432 defaults), so nothing on the wire changed; code that spread a
+  result into a fixed object literal now carries two more properties.

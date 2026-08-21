@@ -34,26 +34,6 @@ fn images_result(
     Ok(result.into())
 }
 
-fn pixels_result(rendered: render_core::Rendered) -> Result<JsValue, JsValue> {
-    let result = js_sys::Object::new();
-    reflect_set(
-        &result,
-        "rgba",
-        &js_sys::Uint8Array::from(rendered.rgba.as_slice()).into(),
-    )?;
-    reflect_set(
-        &result,
-        "width",
-        &JsValue::from_f64(f64::from(rendered.width)),
-    )?;
-    reflect_set(
-        &result,
-        "height",
-        &JsValue::from_f64(f64::from(rendered.height)),
-    )?;
-    Ok(result.into())
-}
-
 /// Renderer state shared with in-flight call futures. The renderer moves out
 /// of the cell while a call runs (single-threaded: overlapping calls see
 /// `busy`), and `dispose()` during a call defers the destroy to the call's
@@ -149,18 +129,6 @@ impl Renderer {
         })
     }
 
-    /// Render one view to raw RGBA pixels (no encode) on the warm device.
-    #[wasm_bindgen(skip_typescript)]
-    pub fn render_pixels(&self, glb: Vec<u8>, options_json: String) -> js_sys::Promise {
-        let shared = self.shared.clone();
-        wasm_bindgen_futures::future_to_promise(async move {
-            let mut renderer = shared.checkout()?;
-            let outcome = renderer.render_pixels_request(&glb, &options_json).await;
-            shared.check_in(renderer);
-            pixels_result(outcome.map_err(to_js_error)?)
-        })
-    }
-
     /// Drop retained render targets above the core's retention budget. The
     /// one-shot façade calls this after every render so a single huge render
     /// cannot pin GPU memory for the worker's lifetime. A no-op while a call
@@ -190,8 +158,6 @@ impl Renderer {
 const RENDERER_TYPES: &str = r#"
 /** Ordered encoded images plus the optional JSON timings from `timings: true`. */
 export type RenderImagesResult = { images: Array<Uint8Array>; timings?: string };
-/** Straight-alpha sRGB RGBA8 rows, tightly packed. */
-export type RenderPixelsResult = { rgba: Uint8Array; width: number; height: number };
 /**
  * Persistent GPU renderer: one adapter/device/pipeline set reused across
  * calls in this worker. Calls must be awaited in sequence; after dispose()
@@ -203,15 +169,15 @@ export class Renderer {
   static create(options_json?: string): Promise<Renderer>;
   render_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
   render_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
-  render_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
   trim_targets(): void;
   dispose(): void;
 }
 "#;
 
-/// Render a kernel GLB to encoded image bytes. `options_json` is the shared
+/// Render a kernel GLB to image bytes — encoded, or the raw frame itself for
+/// `"raw"`. `options_json` is the shared
 /// render-request contract (`render_core::RenderRequest`): a required
-/// format `"png" | "webp" | "jpeg" | "jpg"`, width/height, quality 0..=1,
+/// format `"png" | "webp" | "jpeg" | "jpg" | "raw"`, width/height, quality 0..=1,
 /// phi/theta degrees, margin 0..=0.5, up `"x" | "y" | "z"`, background
 /// `[r, g, b, a]` in 0..=1.
 /// One-shot sugar: creates and destroys a device per call — hold a `Renderer`
@@ -233,21 +199,10 @@ pub async fn render_images(glb: Vec<u8>, options_json: String) -> Result<JsValue
     images_result(images, timings)
 }
 
-/// Render a kernel GLB to raw straight-alpha RGBA8 pixels (no encode).
-#[wasm_bindgen(skip_typescript)]
-pub async fn render_pixels(glb: Vec<u8>, options_json: String) -> Result<JsValue, JsValue> {
-    let rendered = render_core::render_pixels_request(&glb, &options_json)
-        .await
-        .map_err(to_js_error)?;
-    pixels_result(rendered)
-}
-
 #[wasm_bindgen(typescript_custom_section)]
 const FREE_FUNCTION_TYPES: &str = r#"
 /** Render ordered identified views through one batch-scoped plan call. */
 export function render_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
-/** Render a kernel GLB to raw straight-alpha RGBA8 pixels (no encode). */
-export function render_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
 "#;
 
 /// Benchmark the codec encoders over one render (white background so JPEG

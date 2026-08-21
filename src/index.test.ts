@@ -1,27 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RenderImageOptions } from '#options.js';
 import type { RawRendererHandle } from '#renderer.js';
-import {
-  createRendererRaw,
-  describeAdapterRaw,
-  isNodeRuntime,
-  renderManyRaw,
-  renderPixelsRaw,
-  renderRaw,
-} from '#renderer.js';
-import {
-  RenderError,
-  createRenderer,
-  describeAdapter,
-  renderImage,
-  renderImages,
-  renderPixels,
-} from '#index.js';
+import { createRendererRaw, describeAdapterRaw, isNodeRuntime, renderManyRaw, renderRaw } from '#renderer.js';
+import { RenderError, createRenderer, describeAdapter, renderImage, renderImages } from '#index.js';
 
 vi.mock('#renderer.js', () => ({
   renderRaw: vi.fn(),
   renderManyRaw: vi.fn(),
-  renderPixelsRaw: vi.fn(),
   createRendererRaw: vi.fn(),
   describeAdapterRaw: vi.fn(),
   isNodeRuntime: vi.fn(),
@@ -29,7 +14,6 @@ vi.mock('#renderer.js', () => ({
 
 const singular = vi.mocked(renderRaw);
 const plural = vi.mocked(renderManyRaw);
-const pixels = vi.mocked(renderPixelsRaw);
 const createRaw = vi.mocked(createRendererRaw);
 const adapter = vi.mocked(describeAdapterRaw);
 const node = vi.mocked(isNodeRuntime);
@@ -39,7 +23,6 @@ const glb = new Uint8Array([1, 2, 3]);
 beforeEach(() => {
   singular.mockReset();
   plural.mockReset();
-  pixels.mockReset();
   createRaw.mockReset();
   adapter.mockReset();
   node.mockReset();
@@ -63,7 +46,47 @@ describe('renderImage', () => {
     expect(file).toEqual(expect.objectContaining({ name: 'render.webp', mimeType: 'image/webp' }));
     // The binding allocates fresh bytes per call; the façade adds no copy.
     expect(file.bytes).toBe(output);
+    // Dimensions are resolved from the request, so the height falls back to
+    // the documented default the renderer would have used.
+    expect(file.width).toBe(800);
+    expect(file.height).toBe(432);
     expect(singular).toHaveBeenCalledWith(glb, JSON.stringify({ format: 'webp', width: 800 }));
+  });
+
+  it('should report the default dimensions when the request states none', async () => {
+    singular.mockResolvedValue(new Uint8Array([0x89, 0x50]));
+
+    const file = await renderImage(glb, { format: 'png' });
+
+    expect(file.width).toBe(768);
+    expect(file.height).toBe(432);
+  });
+
+  it('should hand back the frame itself for the raw format', async () => {
+    // `format: 'raw'` is the singular raw path: the bytes are the frame, so
+    // their length is exactly the resolved shape times four channels.
+    const rgba = new Uint8Array(64 * 48 * 4);
+    singular.mockResolvedValue(rgba);
+
+    const file = await renderImage(glb, { format: 'raw', width: 64, height: 48 });
+
+    expect(file.name).toBe('render.raw');
+    expect(file.mimeType).toBe('application/octet-stream');
+    expect(file.bytes).toBe(rgba);
+    expect(file.bytes.length).toBe(file.width * file.height * 4);
+    expect(singular).toHaveBeenCalledWith(glb, JSON.stringify({ format: 'raw', width: 64, height: 48 }));
+  });
+
+  it('should ignore quality on a raw request exactly as png does', async () => {
+    singular.mockResolvedValue(new Uint8Array(16 * 16 * 4));
+
+    await expect(
+      renderImage(glb, { format: 'raw', width: 16, height: 16, quality: 0.5 }),
+    ).resolves.toBeDefined();
+    expect(singular).toHaveBeenCalledWith(
+      glb,
+      JSON.stringify({ format: 'raw', width: 16, height: 16, quality: 0.5 }),
+    );
   });
 
   it('should resolve the jpeg mime type for the jpg alias', async () => {
@@ -125,6 +148,7 @@ describe('renderImage', () => {
 describe('renderImages', () => {
   const options = {
     format: 'png',
+    width: 1024,
     axes: true,
     scaleBar: true,
     views: [
@@ -144,6 +168,11 @@ describe('renderImages', () => {
     expect(results.map(({ file }) => file.name)).toEqual(['render-front.png', 'render-top.png']);
     expect(results[0].file.bytes).toBe(front);
     expect(results[1].file.bytes).toBe(top);
+    // No per-view override: every entry reports the shared request's shape.
+    expect(results.map(({ file }) => [file.width, file.height])).toEqual([
+      [1024, 432],
+      [1024, 432],
+    ]);
     expect('timings' in results).toBe(false);
     expect(plural).toHaveBeenCalledOnce();
   });
@@ -161,6 +190,12 @@ describe('renderImages', () => {
 
     expect(results.map(({ file }) => file.name)).toEqual(['render-card.webp', 'render-hero.png']);
     expect(results.map(({ file }) => file.mimeType)).toEqual(['image/webp', 'image/png']);
+    // Per-view dimensions override the shared pair; an absent one falls back
+    // through the shared value to the default.
+    expect(results.map(({ file }) => [file.width, file.height])).toEqual([
+      [768, 432],
+      [1536, 432],
+    ]);
     expect(plural).toHaveBeenCalledWith(
       glb,
       JSON.stringify({
@@ -171,6 +206,28 @@ describe('renderImages', () => {
         ],
       }),
     );
+  });
+
+  it('should render a mixed plan of encoded and raw views', async () => {
+    // One plan, two output kinds: the thumbnail is encoded and the frame beside
+    // it is not, which is the capability collapsing pixels into `format` buys.
+    const thumb = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+    const frame = new Uint8Array(32 * 24 * 4);
+    plural.mockResolvedValue({ images: [thumb, frame] });
+
+    const results = await renderImages(glb, {
+      format: 'webp',
+      width: 32,
+      height: 24,
+      views: [
+        { id: 'thumb', phi: 60, theta: -45 },
+        { id: 'frame', phi: 60, theta: -45, format: 'raw' },
+      ],
+    });
+
+    expect(results.map(({ file }) => file.name)).toEqual(['render-thumb.webp', 'render-frame.raw']);
+    expect(results.map(({ file }) => file.mimeType)).toEqual(['image/webp', 'application/octet-stream']);
+    expect(results[1].file.bytes.length).toBe(results[1].file.width * results[1].file.height * 4);
   });
 
   it('should attach the parsed timings when the call requested them', async () => {
@@ -250,47 +307,6 @@ describe('renderImages', () => {
     await expect(renderImages(glb, trapped)).rejects.toMatchObject({
       code: 'parse',
       message: 'parse: batch trap',
-    });
-  });
-});
-
-describe('renderPixels', () => {
-  it('should return the raw pixels and reject encoder options', async () => {
-    const rgba = new Uint8Array([1, 2, 3, 4]);
-    pixels.mockResolvedValue({ rgba, width: 1, height: 1 });
-
-    const result = await renderPixels(glb, { width: 640, phi: 45 });
-
-    expect(result).toEqual({ rgba, width: 1, height: 1 });
-    expect(pixels).toHaveBeenCalledWith(glb, JSON.stringify({ width: 640, phi: 45 }));
-
-    await expect(renderPixels(glb, { format: 'png' } as never)).rejects.toMatchObject({
-      code: 'parse',
-      message: 'parse: options contains unknown property "format"',
-    });
-  });
-
-  it('should preserve tagged renderer failures', async () => {
-    pixels.mockRejectedValue(new Error('adapter-unavailable: no adapter'));
-
-    await expect(renderPixels(glb, {})).rejects.toMatchObject({
-      code: 'adapter-unavailable',
-    });
-  });
-
-  it('should contain a non-Error option validation failure', async () => {
-    const options = new Proxy(
-      {},
-      {
-        ownKeys: () => {
-          throw 'pixels trap';
-        },
-      },
-    );
-
-    await expect(renderPixels(glb, options)).rejects.toMatchObject({
-      code: 'parse',
-      message: 'parse: pixels trap',
     });
   });
 });
@@ -420,7 +436,6 @@ describe('createRenderer', () => {
   const makeHandle = () => ({
     renderImage: vi.fn<RawRendererHandle['renderImage']>(),
     renderImages: vi.fn<RawRendererHandle['renderImages']>(),
-    renderPixels: vi.fn<RawRendererHandle['renderPixels']>(),
     trimTargets: vi.fn<RawRendererHandle['trimTargets']>(),
     dispose: vi.fn<RawRendererHandle['dispose']>(),
   });
@@ -429,21 +444,20 @@ describe('createRenderer', () => {
     const handle = makeHandle();
     handle.renderImage.mockResolvedValue(new Uint8Array([7]));
     handle.renderImages.mockResolvedValue({ images: [new Uint8Array([8])] });
-    handle.renderPixels.mockResolvedValue({ rgba: new Uint8Array([9]), width: 1, height: 1 });
     createRaw.mockResolvedValue(handle);
 
     const renderer = await createRenderer({ powerPreference: 'low-power' });
     expect(createRaw).toHaveBeenCalledWith(JSON.stringify({ powerPreference: 'low-power' }));
 
-    const file = await renderer.renderImage(glb, { format: 'png' });
+    const file = await renderer.renderImage(glb, { format: 'png', height: 256 });
     expect(file.name).toBe('render.png');
+    expect([file.width, file.height]).toEqual([768, 256]);
     const images = await renderer.renderImages(glb, {
       format: 'webp',
-      views: [{ id: 'front', phi: 90, theta: 0 }],
+      views: [{ id: 'front', phi: 90, theta: 0, height: 300 }],
     });
     expect(images[0].file.name).toBe('render-front.webp');
-    const raw = await renderer.renderPixels(glb, {});
-    expect(raw.width).toBe(1);
+    expect([images[0].file.width, images[0].file.height]).toEqual([768, 300]);
     expect(singular).not.toHaveBeenCalled();
     expect(plural).not.toHaveBeenCalled();
   });
@@ -531,17 +545,15 @@ describe('createRenderer', () => {
     });
   });
 
-  it('should wrap plan and pixels failures in the taxonomy', async () => {
+  it('should wrap plan failures in the taxonomy', async () => {
     const handle = makeHandle();
     handle.renderImages.mockRejectedValue(new Error('gpu: device lost'));
-    handle.renderPixels.mockRejectedValue(new Error('parse: unexpected glb magic'));
     createRaw.mockResolvedValue(handle);
 
     const renderer = await createRenderer();
     await expect(
       renderer.renderImages(glb, { format: 'png', views: [{ id: 'front', phi: 90, theta: 0 }] }),
     ).rejects.toMatchObject({ code: 'device-lost' });
-    await expect(renderer.renderPixels(glb, {})).rejects.toMatchObject({ code: 'parse' });
   });
 
   it('should dispose after in-flight calls settle and reject later calls', async () => {

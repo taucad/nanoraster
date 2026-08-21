@@ -463,29 +463,6 @@ impl Renderer {
         run_plan(self, counters_start, scene, plan, now, parse, setup_started).await
     }
 
-    /// Render one view on this renderer's warm device straight to
-    /// straight-alpha RGBA8 pixels (overlay stamped, no encode).
-    pub async fn render_rgba(
-        &mut self,
-        glb: &[u8],
-        options: &RenderOptions,
-    ) -> Result<Rendered, RenderError> {
-        validate_options(options)?;
-        self.recover_if_lost().await?;
-        let scene = parse_glb(glb).map_err(RenderError::Parse)?;
-        let prepared = capture_overlay::prepare_view(&scene, options)?;
-        let entry = render::PlanEntry {
-            id: String::new(),
-            options: options.clone(),
-            // Unused: the RGBA path stops before encode.
-            format: ImageFormat::Png,
-            prepared,
-        };
-        let mut scene = render::Scene::new(scene);
-        let buffers = self.ensure_uploaded(&mut scene)?;
-        self.render_entry_to_rgba(buffers, &entry).await
-    }
-
     /// Binding surface: singular render-request JSON on a warm renderer.
     pub async fn render_image_request(
         &mut self,
@@ -531,18 +508,6 @@ impl Renderer {
         self.render_images(glb, &options, format, &views, stage_clock)
             .await
     }
-
-    /// Binding surface: singular render-request JSON to raw pixels on a warm
-    /// renderer. The request carries no `format`/`quality` — nothing is
-    /// encoded.
-    pub async fn render_pixels_request(
-        &mut self,
-        glb: &[u8],
-        options_json: &str,
-    ) -> Result<Rendered, RenderError> {
-        let options = RenderRequest::from_json(options_json)?.resolve_pixels()?;
-        self.render_rgba(glb, &options).await
-    }
 }
 
 fn singular_view(options: &RenderOptions) -> RenderView {
@@ -563,7 +528,8 @@ fn instant_clock() -> impl Fn() -> f64 + Sync {
     move || epoch.elapsed().as_secs_f64() * 1000.0
 }
 
-/// Render a kernel GLB to straight-alpha RGBA8 (sRGB-encoded) pixels.
+/// Render a kernel GLB to straight-alpha RGBA8 (sRGB-encoded) pixels — the
+/// encoders' own input, which `ImageFormat::Raw` hands back verbatim.
 pub async fn render_rgba(glb: &[u8], options: &RenderOptions) -> Result<Rendered, RenderError> {
     validate_options(options)?;
     // Reject before any GPU work: parse and prepare precede device creation.
@@ -657,16 +623,6 @@ pub async fn render_images_request(
         None
     };
     render_once(glb, &options, format, &views, stage_clock).await
-}
-
-/// Binding surface for a singular raw-pixels request. The request carries no
-/// `format`/`quality` — nothing is encoded.
-pub async fn render_pixels_request(
-    glb: &[u8],
-    options_json: &str,
-) -> Result<Rendered, RenderError> {
-    let options = RenderRequest::from_json(options_json)?.resolve_pixels()?;
-    render_rgba(glb, &options).await
 }
 
 /// Describe the adapter a [`Renderer`] built from `options_json` would bind,
@@ -930,7 +886,6 @@ mod tests {
             ))
             .is_err()
         );
-        assert!(pollster::block_on(render_pixels_request(FIXTURE, r#"{"width":1}"#)).is_err());
         assert!(
             pollster::block_on(Renderer::from_request(Some(
                 r#"{"powerPreference":"turbo"}"#
@@ -1048,13 +1003,12 @@ mod tests {
         assert!(pollster::block_on(render_image_request(FIXTURE, request)).is_ok());
         let plural = r#"{"format":"png","width":192,"height":192,"background":[1,1,1,1],"views":[{"id":"front","phi":90,"theta":0}]}"#;
         assert!(pollster::block_on(render_images_request(FIXTURE, plural, None)).is_ok());
-        let pixels = pollster::block_on(render_pixels_request(
+        let raw = pollster::block_on(render_image_request(
             FIXTURE,
-            r#"{"width":192,"height":192}"#,
+            r#"{"format":"raw","width":192,"height":192}"#,
         ))
-        .expect("pixels request");
-        assert_eq!(pixels.width, 192);
-        assert_eq!(pixels.rgba.len(), 192 * 192 * 4);
+        .expect("raw request");
+        assert_eq!(raw.len(), 192 * 192 * 4);
         let adapter: serde_json::Value = serde_json::from_str(
             &pollster::block_on(describe_adapter(Some(r#"{"powerPreference":"low-power"}"#)))
                 .expect("adapter description"),
@@ -1210,13 +1164,35 @@ mod tests {
         assert_eq!(ladder_images[2], hero_singular);
         assert_eq!(&ladder_images[2][..4], b"RIFF");
 
-        // Raw pixels come from the same pathway, stopping before encode.
-        let pixels = pollster::block_on(
-            renderer.render_pixels_request(FIXTURE, r#"{"width":192,"height":192}"#),
+        // `format: "raw"` is the same pathway with the encoder replaced by a
+        // copy: its bytes are exactly the pixels a lossless encoder compresses.
+        let raw = pollster::block_on(
+            renderer.render_image_request(FIXTURE, r#"{"format":"raw","width":192,"height":192}"#),
         )
-        .expect("pixels");
-        assert_eq!((pixels.width, pixels.height), (192, 192));
-        assert_eq!(pixels.rgba.len(), 192 * 192 * 4);
+        .expect("raw");
+        assert_eq!(raw.len(), 192 * 192 * 4);
+        let lossless = pollster::block_on(renderer.render_image_request(
+            FIXTURE,
+            r#"{"format":"webp","quality":1,"width":192,"height":192}"#,
+        ))
+        .expect("lossless webp");
+        let mut decoder =
+            image_webp::WebPDecoder::new(std::io::Cursor::new(&lossless)).expect("decoder");
+        assert_eq!(decoder.dimensions(), (192, 192));
+        let mut decoded = vec![0u8; decoder.output_buffer_size().expect("size")];
+        decoder.read_image(&mut decoded).expect("decode");
+        assert_eq!(decoded, raw);
+        // A mixed plan carries both kinds in one crossing, and the raw entry
+        // matches the singular raw call byte for byte.
+        let (mixed, _) = pollster::block_on(renderer.render_images_request(
+            FIXTURE,
+            r#"{"format":"webp","quality":1,"width":192,"height":192,"views":[{"id":"thumb","phi":60,"theta":-45},{"id":"frame","phi":60,"theta":-45,"format":"raw"}]}"#,
+            None,
+        ))
+        .expect("mixed plan");
+        assert_eq!(&mixed[0][..4], b"RIFF");
+        assert_eq!(mixed[0], lossless);
+        assert_eq!(mixed[1], raw);
 
         // A caller-supplied clock takes precedence over the native fallback,
         // on both the warm-renderer and one-shot request paths.

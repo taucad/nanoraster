@@ -9,11 +9,9 @@ export type WasmRendererHandle = {
     glb: Uint8Array<ArrayBuffer>,
     optionsJson: string,
   ) => Promise<{ readonly images: Uint8Array<ArrayBuffer>[]; readonly timings?: string }>;
-  /** Straight-alpha sRGB RGBA8 rows, tightly packed: nothing is encoded. */
-  readonly render_pixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<WasmPixels>;
 };
 
-/** What the raw-pixels call hands back: the frame and the shape to read it at. */
+/** A `format: 'raw'` result read at the shape the request asked for. */
 export type WasmPixels = {
   readonly rgba: Uint8Array<ArrayBuffer>;
   readonly width: number;
@@ -42,7 +40,6 @@ export const serializeRenders = (handle: WasmRendererHandle): WasmRendererHandle
   return {
     render_image: (glb, optionsJson) => enqueue(() => handle.render_image(glb, optionsJson)),
     render_images: (glb, optionsJson) => enqueue(() => handle.render_images(glb, optionsJson)),
-    render_pixels: (glb, optionsJson) => enqueue(() => handle.render_pixels(glb, optionsJson)),
   };
 };
 

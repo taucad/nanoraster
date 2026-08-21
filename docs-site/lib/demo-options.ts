@@ -126,12 +126,12 @@ export const demoControls = (code: string): readonly DemoControl[] => {
 };
 
 /**
- * True when an example renders raw pixels rather than an encoded file, which
- * is what the example itself calls. The demo reads its mode out of the code
- * the same way it reads a batch out of a `views: [ … ]` literal: nothing about
- * a tile is declared twice.
+ * True when an example asks for the raw frame rather than an encoded file,
+ * which is what the example itself states. The demo reads its mode out of the
+ * code the same way it reads a batch out of a `views: [ … ]` literal: nothing
+ * about a tile is declared twice.
  */
-export const isPixelsDemo = (code: string): boolean => /\brenderPixels\b/u.test(code);
+export const isRawDemo = (code: string): boolean => /\bformat\s*:\s*['"]raw['"]/u.test(code);
 
 /** True when a value belongs in the model rather than in the render request. */
 export const isMaterialKey = (key: string): boolean =>

@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RenderImageOptions, RenderImagesOptions } from '#options.js';
-import {
-  imageFileName,
-  imageViewFileName,
-  toImageRequestJson,
-  toImagesRequestJson,
-  toPixelsRequestJson,
-} from '#options.js';
+import { imageFileName, imageViewFileName, toImageRequestJson, toImagesRequestJson } from '#options.js';
 
 const parse = (json: string): Record<string, unknown> => JSON.parse(json) as Record<string, unknown>;
 
@@ -273,7 +267,10 @@ describe('image request serialization', () => {
     const cases: readonly (readonly [Record<string, unknown>, string])[] = [
       [{ id: 'front', phi: 90, theta: 0, width: 15 }, 'views[0].width must be between 16 and 4096'],
       [{ id: 'front', phi: 90, theta: 0, height: 4097 }, 'views[0].height must be between 16 and 4096'],
-      [{ id: 'front', phi: 90, theta: 0, format: 'gif' }, 'views[0].format must be png, webp, jpeg, or jpg'],
+      [
+        { id: 'front', phi: 90, theta: 0, format: 'gif' },
+        'views[0].format must be png, webp, jpeg, jpg, or raw',
+      ],
       [{ id: 'front', phi: 90, theta: 0, quality: 1.5 }, 'views[0].quality must be between 0 and 1'],
     ];
     for (const [view, message] of cases) {
@@ -304,41 +301,26 @@ describe('image request serialization', () => {
     ).toThrow('options contains unknown property "profile"');
   });
 
-  it('should serialize pixels requests without an encoder pair', () => {
-    expect(
-      parse(
-        toPixelsRequestJson({
-          width: 640,
-          height: 480,
-          phi: 45,
-          theta: 90,
-          background: '#0080FF',
-          label: 'Front',
-        }),
-      ),
-    ).toEqual({
+  it('should serialize a raw request and a raw per-view override', () => {
+    expect(parse(toImageRequestJson({ format: 'raw', width: 640, height: 480 }))).toEqual({
+      format: 'raw',
       width: 640,
       height: 480,
-      phi: 45,
-      theta: 90,
-      background: [0, 128 / 255, 1, 1],
-      label: 'Front',
     });
-    expect(parse(toPixelsRequestJson({}))).toEqual({});
-  });
-
-  it('should reject encoder options and invalid values on pixels requests', () => {
-    const invalid: readonly (readonly [unknown, string])[] = [
-      [null, 'options must be an object'],
-      [{ format: 'png' }, 'options contains unknown property "format"'],
-      [{ quality: 0.9 }, 'options contains unknown property "quality"'],
-      [{ width: 15 }, 'width must be between 16 and 4096'],
-      [{ label: 'Front', width: 191 }, 'annotated images must be at least 192x192'],
-      [{ phi: Number.NaN }, 'phi must be a finite number'],
-    ];
-    for (const [options, message] of invalid) {
-      expect(() => toPixelsRequestJson(options as never)).toThrow(message);
-    }
+    expect(
+      parse(
+        toImagesRequestJson({
+          format: 'webp',
+          views: [
+            { id: 'thumb', phi: 60, theta: -45 },
+            { id: 'frame', phi: 60, theta: -45, format: 'raw' },
+          ],
+        }),
+      )['views'],
+    ).toEqual([
+      { id: 'thumb', phi: 60, theta: -45 },
+      { id: 'frame', phi: 60, theta: -45, format: 'raw' },
+    ]);
   });
 });
 
@@ -348,7 +330,6 @@ describe('label presence as the annotation switch', () => {
       format: 'png',
       label: 'gear',
     });
-    expect(parse(toPixelsRequestJson({ label: 'gear' }))).toEqual({ label: 'gear' });
     expect(() => toImageRequestJson({ format: 'png', label: 'gear', width: 191 })).toThrow(
       'annotated images must be at least 192x192',
     );
@@ -382,5 +363,10 @@ describe('image filenames', () => {
   it('should derive singular and identified names', () => {
     expect(imageFileName('webp')).toBe('render.webp');
     expect(imageViewFileName('front', 'png')).toBe('render-front.png');
+  });
+
+  it('should name raw output by the same rule', () => {
+    expect(imageFileName('raw')).toBe('render.raw');
+    expect(imageViewFileName('frame', 'raw')).toBe('render-frame.raw');
   });
 });
