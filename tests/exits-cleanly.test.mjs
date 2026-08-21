@@ -42,5 +42,5 @@ test('a process rendering through the one-shot API exits on its own', async () =
     );
   });
 
-  expect(stdout.trim()).toBe('thumbnail.png');
+  expect(stdout.trim()).toBe('render.png');
 });

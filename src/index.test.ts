@@ -47,7 +47,7 @@ describe('renderGlbToImage', () => {
 
     const file = await renderGlbToImage(glb, { format: 'webp', width: 800 });
 
-    expect(file).toEqual(expect.objectContaining({ name: 'thumbnail.webp', mimeType: 'image/webp' }));
+    expect(file).toEqual(expect.objectContaining({ name: 'render.webp', mimeType: 'image/webp' }));
     // The binding allocates fresh bytes per call; the façade adds no copy.
     expect(file.bytes).toBe(output);
     expect(singular).toHaveBeenCalledWith(glb, JSON.stringify({ format: 'webp', width: 800 }));
@@ -59,7 +59,7 @@ describe('renderGlbToImage', () => {
     const file = await renderGlbToImage(glb, { format: 'jpg' });
 
     expect(file.mimeType).toBe('image/jpeg');
-    expect(file.name).toBe('thumbnail.jpg');
+    expect(file.name).toBe('render.jpg');
   });
 
   it('should reject invalid options before invoking the renderer', async () => {
@@ -129,7 +129,7 @@ describe('renderGlbToImages', () => {
     const results = await renderGlbToImages(glb, options);
 
     expect(results.map(({ id }) => id)).toEqual(['front', 'top']);
-    expect(results.map(({ file }) => file.name)).toEqual(['thumbnail-front.png', 'thumbnail-top.png']);
+    expect(results.map(({ file }) => file.name)).toEqual(['render-front.png', 'render-top.png']);
     expect(results[0].file.bytes).toBe(front);
     expect(results[1].file.bytes).toBe(top);
     expect('profile' in results).toBe(false);
@@ -147,7 +147,7 @@ describe('renderGlbToImages', () => {
       ],
     });
 
-    expect(results.map(({ file }) => file.name)).toEqual(['thumbnail-card.webp', 'thumbnail-hero.png']);
+    expect(results.map(({ file }) => file.name)).toEqual(['render-card.webp', 'render-hero.png']);
     expect(results.map(({ file }) => file.mimeType)).toEqual(['image/webp', 'image/png']);
     expect(plural).toHaveBeenCalledWith(
       glb,
@@ -183,7 +183,7 @@ describe('renderGlbToImages', () => {
       setupMs: 2,
       views: [{ id: 'front', renderMs: 1, overlayMs: 0, encodeMs: 3 }],
     });
-    expect(results[0].file.name).toBe('thumbnail-front.png');
+    expect(results[0].file.name).toBe('render-front.png');
   });
 
   it('should reject cardinality mismatches atomically', async () => {
@@ -313,12 +313,12 @@ describe('createRenderer', () => {
     expect(createRaw).toHaveBeenCalledWith(JSON.stringify({ powerPreference: 'low-power' }));
 
     const file = await renderer.renderGlbToImage(glb, { format: 'png' });
-    expect(file.name).toBe('thumbnail.png');
+    expect(file.name).toBe('render.png');
     const images = await renderer.renderGlbToImages(glb, {
       format: 'webp',
       views: [{ id: 'front', phi: 90, theta: 0 }],
     });
-    expect(images[0].file.name).toBe('thumbnail-front.webp');
+    expect(images[0].file.name).toBe('render-front.webp');
     const raw = await renderer.renderGlbToPixels(glb, {});
     expect(raw.width).toBe(1);
     expect(singular).not.toHaveBeenCalled();
@@ -404,7 +404,7 @@ describe('createRenderer', () => {
       code: 'encode',
     });
     await expect(renderer.renderGlbToImage(glb, { format: 'png' })).resolves.toMatchObject({
-      name: 'thumbnail.png',
+      name: 'render.png',
     });
   });
 

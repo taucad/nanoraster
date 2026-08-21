@@ -372,7 +372,7 @@ describe('image request serialization', () => {
 
 describe('image filenames', () => {
   it('should derive singular and identified names', () => {
-    expect(imageFileName('webp')).toBe('thumbnail.webp');
-    expect(imageViewFileName('front', 'png')).toBe('thumbnail-front.png');
+    expect(imageFileName('webp')).toBe('render.webp');
+    expect(imageViewFileName('front', 'png')).toBe('render-front.png');
   });
 });
