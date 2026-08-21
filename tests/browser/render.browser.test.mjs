@@ -71,6 +71,21 @@ test('a warm renderer produces byte-identical output and disposes cleanly', asyn
   await expect(renderer.render_glb_to_image(glb, options)).rejects.toThrow('gpu: renderer disposed');
 });
 
+test('overlapping calls on one raw renderer reject busy', async () => {
+  // The contract the docs demo queue exists for: the raw wasm class refuses
+  // concurrency outright, so anything sharing one handle must serialize.
+  const options = JSON.stringify({ width: 192, height: 192, format: 'png' });
+  const renderer = await Renderer.create();
+  const settled = await Promise.allSettled([
+    renderer.render_glb_to_image(glb, options),
+    renderer.render_glb_to_image(glb, options),
+  ]);
+  expect(settled[0].status).toBe('fulfilled');
+  expect(settled[1].status).toBe('rejected');
+  expect(String(settled[1].reason)).toContain('gpu: renderer busy');
+  renderer.dispose();
+});
+
 test('PBR factors produce deterministic and distinguishable renders', async () => {
   const options = JSON.stringify({ width: 192, height: 192, format: 'png' });
   const matte = withPbrFactors(glb, { metallic: 0, roughness: 0.85 });

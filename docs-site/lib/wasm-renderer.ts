@@ -16,6 +16,26 @@ type WasmModule = {
   readonly Renderer: { readonly create: (optionsJson?: string) => Promise<WasmRendererHandle> };
 };
 
+/**
+ * Serialize calls on one shared handle. The wasm renderer rejects overlapping
+ * calls outright, and the per-tile guards in the demo component cannot see
+ * each other — several tiles on one page would otherwise race the handle.
+ */
+export const serializeRenders = (handle: WasmRendererHandle): WasmRendererHandle => {
+  // Same idiom as the package façade (src/create-renderer.ts): the chain keeps
+  // ordering while the catch keeps one failed render from wedging later calls.
+  let queue: Promise<unknown> = Promise.resolve();
+  const enqueue = <Value>(job: () => Promise<Value>): Promise<Value> => {
+    const next = queue.then(job);
+    queue = next.catch(() => undefined);
+    return next;
+  };
+  return {
+    render_glb_to_image: (glb, optionsJson) => enqueue(() => handle.render_glb_to_image(glb, optionsJson)),
+    render_glb_to_images: (glb, optionsJson) => enqueue(() => handle.render_glb_to_images(glb, optionsJson)),
+  };
+};
+
 let renderer: Promise<WasmRendererHandle> | undefined;
 let model: Promise<Uint8Array<ArrayBuffer>> | undefined;
 
@@ -36,7 +56,7 @@ export const loadWasmRenderer = async (): Promise<WasmRendererHandle> => {
     await module.default({
       module_or_path: new URL('/demo/render_wasm_bg.wasm', window.location.href),
     });
-    return module.Renderer.create();
+    return serializeRenders(await module.Renderer.create());
   })().catch((error: unknown) => {
     renderer = undefined;
     throw error;
