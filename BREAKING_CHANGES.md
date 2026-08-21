@@ -58,3 +58,8 @@ The package has no compatibility commitments before its first stable release.
   are development instrumentation, never part of the package API. Build the
   crates yourself with `--features bench` if you need them. Rendered bytes are
   unchanged.
+- `format` is required on every image request at the wire, not only in
+  TypeScript. The render core's `"png"` fallback is deleted, so a request to
+  the native addon or the wasm module that names no format fails with
+  `parse: format is required` instead of producing a PNG. Raw-pixels requests
+  are unaffected: they encode nothing and carry no format.

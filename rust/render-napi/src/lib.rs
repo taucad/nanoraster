@@ -258,9 +258,10 @@ impl Renderer {
 }
 
 /// Render a kernel GLB to encoded image bytes. `options_json` is the shared
-/// render-request contract (`render_core::RenderRequest`): width/height,
-/// format `"png" | "webp" | "jpeg" | "jpg"`, quality 0..=1, phi/theta degrees,
-/// margin 0..=0.5, up `"x" | "y" | "z"`, background `[r, g, b, a]` in 0..=1.
+/// render-request contract (`render_core::RenderRequest`): a required
+/// format `"png" | "webp" | "jpeg" | "jpg"`, width/height, quality 0..=1,
+/// phi/theta degrees, margin 0..=0.5, up `"x" | "y" | "z"`, background
+/// `[r, g, b, a]` in 0..=1.
 /// One-shot sugar: creates and destroys a device per call — hold a
 /// [`Renderer`] to amortize that across calls.
 #[napi]

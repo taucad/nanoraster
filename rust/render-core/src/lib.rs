@@ -533,14 +533,14 @@ impl Renderer {
     }
 
     /// Binding surface: singular render-request JSON to raw pixels on a warm
-    /// renderer (`format`/`quality` in the request are ignored — nothing is
-    /// encoded).
+    /// renderer. The request carries no `format`/`quality` — nothing is
+    /// encoded.
     pub async fn render_pixels_request(
         &mut self,
         glb: &[u8],
         options_json: &str,
     ) -> Result<Rendered, RenderError> {
-        let (options, _format) = RenderRequest::from_json(options_json)?.resolve()?;
+        let options = RenderRequest::from_json(options_json)?.resolve_pixels()?;
         self.render_rgba(glb, &options).await
     }
 }
@@ -659,13 +659,13 @@ pub async fn render_images_request(
     render_once(glb, &options, format, &views, stage_clock).await
 }
 
-/// Binding surface for a singular raw-pixels request (`format`/`quality` in
-/// the request are ignored — nothing is encoded).
+/// Binding surface for a singular raw-pixels request. The request carries no
+/// `format`/`quality` — nothing is encoded.
 pub async fn render_pixels_request(
     glb: &[u8],
     options_json: &str,
 ) -> Result<Rendered, RenderError> {
-    let (options, _format) = RenderRequest::from_json(options_json)?.resolve()?;
+    let options = RenderRequest::from_json(options_json)?.resolve_pixels()?;
     render_rgba(glb, &options).await
 }
 

@@ -59,7 +59,9 @@ impl<'de> Deserialize<'de> for LightingRequest {
     }
 }
 
-/// Wire shape for one image.
+/// Wire shape for one image. `format` is optional here only because the same
+/// shape carries the raw-pixels request, which encodes nothing; an image
+/// request without one is rejected at resolution.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields, default)]
 pub struct RenderRequest {
@@ -156,8 +158,6 @@ impl CreateRendererRequest {
 struct CommonRequest<'a> {
     width: Option<u32>,
     height: Option<u32>,
-    format: Option<&'a str>,
-    quality: Option<f32>,
     margin: Option<f32>,
     up: Option<&'a str>,
     projection: Option<&'a str>,
@@ -176,20 +176,26 @@ impl RenderRequest {
     }
 
     pub fn resolve(&self) -> Result<(RenderOptions, ImageFormat), RenderError> {
-        let (mut options, format) = resolve_common(self.common())?;
+        let options = self.resolve_pixels()?;
+        let (_, format) = resolve_required_format(self.format.as_deref(), self.quality)?;
+        Ok((options, format))
+    }
+
+    /// The camera and annotation settings alone, for the raw-pixels path:
+    /// nothing is encoded there, so the request carries no format to resolve.
+    pub fn resolve_pixels(&self) -> Result<RenderOptions, RenderError> {
+        let mut options = resolve_common(self.common())?;
         validate_optional_label(self.label.as_deref(), "label")?;
         options.label.clone_from(&self.label);
         options.phi_deg = finite_or_default(self.phi, options.phi_deg, "phi")?;
         options.theta_deg = finite_or_default(self.theta, options.theta_deg, "theta")?;
-        Ok((options, format))
+        Ok(options)
     }
 
     fn common(&self) -> CommonRequest<'_> {
         CommonRequest {
             width: self.width,
             height: self.height,
-            format: self.format.as_deref(),
-            quality: self.quality,
             margin: self.margin,
             up: self.up.as_deref(),
             projection: self.projection.as_deref(),
@@ -210,13 +216,14 @@ impl RenderImagesRequest {
     pub fn resolve(
         &self,
     ) -> Result<(RenderOptions, ImageFormat, Vec<RenderView>, bool), RenderError> {
-        let (options, format) = resolve_common(self.common())?;
+        let options = resolve_common(self.common())?;
+        let (shared_format_name, format) =
+            resolve_required_format(self.format.as_deref(), self.quality)?;
         if self.views.is_empty() {
             return Err(RenderError::Parse(
                 "views must contain at least one view".into(),
             ));
         }
-        let shared_format_name = self.format.as_deref().unwrap_or("png");
         let shared_annotated = options.axes || options.scale_bar;
         let mut ids = HashSet::with_capacity(self.views.len());
         let mut views = Vec::with_capacity(self.views.len());
@@ -295,8 +302,6 @@ impl RenderImagesRequest {
         CommonRequest {
             width: self.width,
             height: self.height,
-            format: self.format.as_deref(),
-            quality: self.quality,
             margin: self.margin,
             up: self.up.as_deref(),
             projection: self.projection.as_deref(),
@@ -309,7 +314,7 @@ impl RenderImagesRequest {
     }
 }
 
-fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFormat), RenderError> {
+fn resolve_common(request: CommonRequest<'_>) -> Result<RenderOptions, RenderError> {
     let defaults = RenderOptions::default();
     let width = request.width.unwrap_or(defaults.width);
     let height = request.height.unwrap_or(defaults.height);
@@ -364,25 +369,33 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
 
     let lighting = resolve_lighting(request.lighting)?;
 
-    let format = resolve_format(request.format.unwrap_or("png"), request.quality)
-        .map_err(RenderError::Parse)?;
+    Ok(RenderOptions {
+        width,
+        height,
+        padding_factor: 1.0 - margin,
+        line_width: defaults.line_width,
+        up,
+        projection,
+        background: request.background,
+        axes,
+        scale_bar,
+        lighting,
+        ..defaults
+    })
+}
 
-    Ok((
-        RenderOptions {
-            width,
-            height,
-            padding_factor: 1.0 - margin,
-            line_width: defaults.line_width,
-            up,
-            projection,
-            background: request.background,
-            axes,
-            scale_bar,
-            lighting,
-            ..defaults
-        },
-        format,
-    ))
+/// Resolve the request's own format name and encoder settings. `format` is
+/// required on the wire — the TS façade makes it mandatory so a better default
+/// can be adopted later without an API break, which leaves no honest default
+/// to fall back to here. The name is handed back so a batch can resolve its
+/// per-view overrides against it.
+fn resolve_required_format(
+    name: Option<&str>,
+    quality: Option<f32>,
+) -> Result<(&str, ImageFormat), RenderError> {
+    let name = name.ok_or_else(|| RenderError::Parse("format is required".into()))?;
+    let format = resolve_format(name, quality).map_err(RenderError::Parse)?;
+    Ok((name, format))
 }
 
 /// Resolve a format name plus 0..=1 quality into the encoder format, applying
@@ -544,7 +557,7 @@ mod tests {
 
     #[test]
     fn singular_defaults_annotations_off() {
-        let (options, format) = RenderRequest::from_json("{}")
+        let (options, format) = RenderRequest::from_json(r#"{"format":"png"}"#)
             .expect("parse")
             .resolve()
             .expect("resolve");
@@ -558,13 +571,13 @@ mod tests {
 
     #[test]
     fn a_label_alone_switches_the_label_annotation_on() {
-        let (options, _) = RenderRequest::from_json(r#"{"label":"gear"}"#)
+        let (options, _) = RenderRequest::from_json(r#"{"format":"png","label":"gear"}"#)
             .expect("parse")
             .resolve()
             .expect("resolve");
         assert_eq!(options.label.as_deref(), Some("gear"));
         assert_eq!(
-            RenderRequest::from_json(r#"{"label":"gear","width":191}"#)
+            RenderRequest::from_json(r#"{"format":"png","label":"gear","width":191}"#)
                 .expect("parse")
                 .resolve()
                 .unwrap_err()
@@ -573,7 +586,7 @@ mod tests {
         );
         assert_eq!(
             RenderImagesRequest::from_json(
-                r#"{"views":[{"id":"front","label":"Front","phi":90,"theta":0,"width":191}]}"#
+                r#"{"format":"png","views":[{"id":"front","label":"Front","phi":90,"theta":0,"width":191}]}"#
             )
             .expect("parse")
             .resolve()
@@ -581,6 +594,33 @@ mod tests {
             .to_string(),
             "parse: views[0]: annotated images must be at least 192x192"
         );
+    }
+
+    #[test]
+    fn an_image_request_without_a_format_is_rejected() {
+        // The TS façade makes `format` required, so no default can be right
+        // here: an absent format is a caller mistake, not a request for PNG.
+        for json in ["{}", r#"{"width":256}"#, r#"{"quality":0.9}"#] {
+            let error = RenderRequest::from_json(json)
+                .expect("parse")
+                .resolve()
+                .unwrap_err();
+            assert_eq!(error.to_string(), "parse: format is required", "{json}");
+        }
+        assert_eq!(
+            RenderImagesRequest::from_json(r#"{"views":[{"id":"front","phi":90,"theta":0}]}"#)
+                .expect("parse")
+                .resolve()
+                .unwrap_err()
+                .to_string(),
+            "parse: format is required"
+        );
+        // The raw-pixels path encodes nothing, so it still takes no format.
+        let options = RenderRequest::from_json(r#"{"width":256}"#)
+            .expect("parse")
+            .resolve_pixels()
+            .expect("resolve");
+        assert_eq!(options.width, 256);
     }
 
     #[test]
@@ -653,16 +693,16 @@ mod tests {
     #[test]
     fn rejects_invalid_singular_requests() {
         for json in [
-            r#"{"width":15}"#,
-            r#"{"margin":0.6}"#,
-            r#"{"quality":1.5}"#,
-            r#"{"up":"w"}"#,
-            r#"{"projection":"fish-eye"}"#,
+            r#"{"format":"png","width":15}"#,
+            r#"{"format":"png","margin":0.6}"#,
+            r#"{"format":"png","quality":1.5}"#,
+            r#"{"format":"png","up":"w"}"#,
+            r#"{"format":"png","projection":"fish-eye"}"#,
             r#"{"format":"gif"}"#,
-            r#"{"background":[2.0,0.0,0.0,1.0]}"#,
-            r#"{"zoomLevel":1.8}"#,
-            r#"{"axes":true,"width":191}"#,
-            r#"{"label":"snowman ☃"}"#,
+            r#"{"format":"png","background":[2.0,0.0,0.0,1.0]}"#,
+            r#"{"format":"png","zoomLevel":1.8}"#,
+            r#"{"format":"png","axes":true,"width":191}"#,
+            r#"{"format":"png","label":"snowman ☃"}"#,
             "not json",
         ] {
             assert!(
@@ -676,12 +716,12 @@ mod tests {
     #[test]
     fn rejects_invalid_plural_views_before_rendering() {
         for json in [
-            r#"{"views":[]}"#,
-            r#"{"views":[{"id":"../front","phi":90,"theta":0}]}"#,
-            r#"{"views":[{"id":"front","phi":90,"theta":0},{"id":"front","phi":0,"theta":0}]}"#,
-            r#"{"views":[{"id":"front","phi":90,"theta":0,"zoom":2}]}"#,
-            r#"{"phi":90,"views":[{"id":"front","phi":90,"theta":0}]}"#,
-            r#"{"label":"shared","views":[{"id":"front","phi":90,"theta":0}]}"#,
+            r#"{"format":"png","views":[]}"#,
+            r#"{"format":"png","views":[{"id":"../front","phi":90,"theta":0}]}"#,
+            r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0},{"id":"front","phi":0,"theta":0}]}"#,
+            r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"zoom":2}]}"#,
+            r#"{"format":"png","phi":90,"views":[{"id":"front","phi":90,"theta":0}]}"#,
+            r#"{"format":"png","label":"shared","views":[{"id":"front","phi":90,"theta":0}]}"#,
         ] {
             assert!(
                 RenderImagesRequest::from_json(json)
@@ -695,23 +735,23 @@ mod tests {
     fn rejects_invalid_per_view_output_overrides_by_name() {
         let cases = [
             (
-                r#"{"views":[{"id":"front","phi":90,"theta":0,"width":15}]}"#,
+                r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"width":15}]}"#,
                 "parse: views[0].width 15 outside 16..=4096",
             ),
             (
-                r#"{"views":[{"id":"front","phi":90,"theta":0,"height":4097}]}"#,
+                r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"height":4097}]}"#,
                 "parse: views[0].height 4097 outside 16..=4096",
             ),
             (
-                r#"{"views":[{"id":"front","phi":90,"theta":0,"quality":1.5}]}"#,
+                r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"quality":1.5}]}"#,
                 "parse: views[0].quality 1.5 outside 0..=1",
             ),
             (
-                r#"{"views":[{"id":"front","phi":90,"theta":0,"format":"gif"}]}"#,
+                r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"format":"gif"}]}"#,
                 "parse: views[0]: format \"gif\" not png/webp/jpeg/jpg",
             ),
             (
-                r#"{"axes":true,"views":[{"id":"front","phi":90,"theta":0,"width":191}]}"#,
+                r#"{"format":"png","axes":true,"views":[{"id":"front","phi":90,"theta":0,"width":191}]}"#,
                 "parse: views[0]: annotated images must be at least 192x192",
             ),
         ];
@@ -783,10 +823,12 @@ mod tests {
         }
     }
 
+    /// Lighting is settled before any encoder is chosen, so these cases go
+    /// through the format-free raw-pixels resolution.
     fn lighting_of(json: &str) -> Result<ResolvedLighting, RenderError> {
         RenderRequest::from_json(json)
-            .and_then(|request| request.resolve())
-            .map(|(options, _)| options.lighting)
+            .and_then(|request| request.resolve_pixels())
+            .map(|options| options.lighting)
     }
 
     #[test]
@@ -802,7 +844,7 @@ mod tests {
         }
         // The plural request carries the same field.
         let (options, _, _, _) = RenderImagesRequest::from_json(
-            r#"{"lighting":"studio","views":[{"id":"front","phi":90,"theta":0}]}"#,
+            r#"{"format":"png","lighting":"studio","views":[{"id":"front","phi":90,"theta":0}]}"#,
         )
         .expect("parse")
         .resolve()
@@ -938,6 +980,7 @@ mod tests {
     fn rejects_non_finite_views_labels_and_common_values() {
         for (phi, theta) in [(f32::NAN, 0.0), (0.0, f32::INFINITY)] {
             let request = RenderImagesRequest {
+                format: Some("png".into()),
                 views: vec![RenderImageViewRequest {
                     id: "front".into(),
                     label: None,
@@ -956,16 +999,20 @@ mod tests {
             assert!(validate_optional_label(Some(label), "label").is_err());
         }
         assert!(finite_or_default(Some(f32::NAN), 0.0, "angle").is_err());
+        let png = || Some("png".to_owned());
         for request in [
             RenderRequest {
+                format: png(),
                 margin: Some(f32::NAN),
                 ..Default::default()
             },
             RenderRequest {
+                format: png(),
                 quality: Some(f32::INFINITY),
                 ..Default::default()
             },
             RenderRequest {
+                format: png(),
                 background: Some([0.0, 0.0, f32::NAN, 1.0]),
                 ..Default::default()
             },
