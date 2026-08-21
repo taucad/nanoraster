@@ -1,8 +1,7 @@
 import { expectTypeOf } from 'vitest';
 import * as renderModule from '#index.js';
 
-const { createRenderImageOptions, createRenderImagesOptions, renderGlbToImage, renderGlbToImages } =
-  renderModule;
+const { createRenderImageOptions, createRenderImagesOptions, renderImage, renderImages } = renderModule;
 type RenderModule = typeof renderModule;
 expectTypeOf<
   Extract<
@@ -48,7 +47,7 @@ expectTypeOf(singular).toEqualTypeOf<{
   readonly includeLabel: true;
   readonly includeScale: true;
 }>();
-expectTypeOf(renderGlbToImage(glb, singular)).toEqualTypeOf<Promise<renderModule.RenderedImageFile>>();
+expectTypeOf(renderImage(glb, singular)).toEqualTypeOf<Promise<renderModule.RenderedImageFile>>();
 
 type TauExportFileShape = {
   name: string;
@@ -67,18 +66,18 @@ const options = createRenderImagesOptions({
     { id: 'top', label: 'Top', phi: 0, theta: 0 },
   ],
 });
-const rendered = renderGlbToImages(glb, options);
+const rendered = renderImages(glb, options);
 expectTypeOf(rendered).toEqualTypeOf<
   Promise<readonly [renderModule.RenderedImage<'front', 'png'>, renderModule.RenderedImage<'top', 'png'>]>
 >();
 
 const dynamicViews: renderModule.RenderImageView[] = [{ id: 'front', phi: 90, theta: 0 }];
-const dynamic = renderGlbToImages(glb, { format: 'png', views: dynamicViews });
+const dynamic = renderImages(glb, { format: 'png', views: dynamicViews });
 expectTypeOf(dynamic).toEqualTypeOf<Promise<readonly renderModule.RenderedImage<string, 'png'>[]>>();
 
 // Per-view output overrides flow into each entry's mime type (R15), and
 // profile: true adds a typed profile to the result.
-const ladder = renderGlbToImages(glb, {
+const ladder = renderImages(glb, {
   format: 'webp',
   views: [
     { id: 'card', phi: 60, theta: -45 },
@@ -93,13 +92,13 @@ expectTypeOf(cardFile.mimeType).toEqualTypeOf<'image/webp'>();
 declare const heroFile: Awaited<typeof ladder>[1]['file'];
 expectTypeOf(heroFile.mimeType).toEqualTypeOf<'image/png'>();
 
-const profiled = renderGlbToImages(glb, {
+const profiled = renderImages(glb, {
   format: 'png',
   profile: true,
   views: [{ id: 'front', phi: 90, theta: 0 }],
 });
 expectTypeOf((await profiled).profile).toEqualTypeOf<renderModule.RenderProfile>();
-const unprofiled = await renderGlbToImages(glb, {
+const unprofiled = await renderImages(glb, {
   format: 'png',
   views: [{ id: 'front', phi: 90, theta: 0 }],
 });
@@ -108,11 +107,9 @@ void unprofiled.profile;
 
 // Renderer handles mirror the module-level surface.
 declare const renderer: renderModule.Renderer;
-expectTypeOf(renderer.renderGlbToImage(glb, singular)).toEqualTypeOf<
-  Promise<renderModule.RenderedImageFile>
->();
-expectTypeOf(renderer.renderGlbToImages(glb, options)).toEqualTypeOf<typeof rendered>();
-expectTypeOf(renderer.renderGlbToPixels(glb, {})).toEqualTypeOf<Promise<renderModule.RenderedPixels>>();
+expectTypeOf(renderer.renderImage(glb, singular)).toEqualTypeOf<Promise<renderModule.RenderedImageFile>>();
+expectTypeOf(renderer.renderImages(glb, options)).toEqualTypeOf<typeof rendered>();
+expectTypeOf(renderer.renderPixels(glb, {})).toEqualTypeOf<Promise<renderModule.RenderedPixels>>();
 expectTypeOf(renderer.dispose).toEqualTypeOf<() => void>();
 expectTypeOf(renderer[Symbol.dispose]).toEqualTypeOf<() => void>();
 expectTypeOf(renderModule.createRenderer()).toEqualTypeOf<Promise<renderModule.Renderer>>();
@@ -120,13 +117,13 @@ expectTypeOf(renderModule.createRenderer({ powerPreference: 'low-power' })).toEq
   Promise<renderModule.Renderer>
 >();
 // @ts-expect-error pixels options carry no encoder pair
-void renderer.renderGlbToPixels(glb, { format: 'png' });
+void renderer.renderPixels(glb, { format: 'png' });
 // @ts-expect-error unknown power preference
 void renderModule.createRenderer({ powerPreference: 'turbo' });
 
 // @ts-expect-error empty literal view tuples are rejected
-void renderGlbToImages(glb, { format: 'png', views: [] });
-void renderGlbToImages(glb, {
+void renderImages(glb, { format: 'png', views: [] });
+void renderImages(glb, {
   format: 'png',
   views: [
     {
@@ -142,7 +139,7 @@ void renderGlbToImages(glb, {
 createRenderImageOptions({ format: 'png', includeLabel: true });
 // @ts-expect-error includeLabel true requires every batch view label
 createRenderImagesOptions({ format: 'png', includeLabel: true, views: [{ id: 'front', phi: 90, theta: 0 }] });
-void renderGlbToImages(glb, {
+void renderImages(glb, {
   format: 'png',
   views: [
     {
@@ -170,7 +167,7 @@ createRenderImageOptions({ format: 'png', includeAxis: true });
 createRenderImagesOptions({ format: 'png', includeAxis: true, views: [{ id: 'front', phi: 90, theta: 0 }] });
 // @ts-expect-error missing singular format
 createRenderImageOptions({ includeAxes: true });
-void renderGlbToImages(glb, {
+void renderImages(glb, {
   format: 'png',
   lighting: 'studio',
   views: [{ id: 'front', phi: 90, theta: 0 }],
@@ -213,6 +210,6 @@ createRenderImagesOptions({
   },
   views: [{ id: 'front', phi: 90, theta: 0 }],
 });
-void renderGlbToImages(glb, { format: 'png', views: [{ id: 'front', phi: 90, theta: 0, width: 320 }] });
+void renderImages(glb, { format: 'png', views: [{ id: 'front', phi: 90, theta: 0, width: 320 }] });
 // @ts-expect-error missing view id
 createRenderImagesOptions({ format: 'png', views: [{ phi: 90, theta: 0 }] });

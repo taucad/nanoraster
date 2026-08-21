@@ -69,7 +69,7 @@ impl Task for RenderImageTask {
 
     fn compute(&mut self) -> Result<Self::Output> {
         match &self.renderer {
-            None => pollster::block_on(render_core::render_glb_request(
+            None => pollster::block_on(render_core::render_image_request(
                 &self.glb,
                 &self.options_json,
             ))
@@ -100,7 +100,7 @@ impl Task for RenderImagesTask {
 
     fn compute(&mut self) -> Result<Self::Output> {
         match &self.renderer {
-            None => pollster::block_on(render_core::render_glb_images_request(
+            None => pollster::block_on(render_core::render_images_request(
                 &self.glb,
                 &self.options_json,
                 None,
@@ -136,7 +136,7 @@ impl Task for RenderPixelsTask {
 
     fn compute(&mut self) -> Result<Self::Output> {
         match &self.renderer {
-            None => pollster::block_on(render_core::render_glb_pixels_request(
+            None => pollster::block_on(render_core::render_pixels_request(
                 &self.glb,
                 &self.options_json,
             ))
@@ -197,7 +197,7 @@ pub fn create_renderer(options_json: Option<String>) -> AsyncTask<CreateRenderer
 impl Renderer {
     /// Render one view to encoded image bytes on this renderer's warm device.
     #[napi]
-    pub fn render_glb_to_image(
+    pub fn render_image(
         &self,
         glb: Uint8Array,
         options_json: String,
@@ -211,7 +211,7 @@ impl Renderer {
 
     /// Render ordered identified views in one plan call on the warm device.
     #[napi]
-    pub fn render_glb_to_images(
+    pub fn render_images(
         &self,
         glb: Uint8Array,
         options_json: String,
@@ -225,7 +225,7 @@ impl Renderer {
 
     /// Render one view to raw RGBA pixels (no encode) on the warm device.
     #[napi]
-    pub fn render_glb_to_pixels(
+    pub fn render_pixels(
         &self,
         glb: Uint8Array,
         options_json: String,
@@ -264,7 +264,7 @@ impl Renderer {
 /// One-shot sugar: creates and destroys a device per call — hold a
 /// [`Renderer`] to amortize that across calls.
 #[napi]
-pub fn render_glb_to_image(glb: Uint8Array, options_json: String) -> AsyncTask<RenderImageTask> {
+pub fn render_image(glb: Uint8Array, options_json: String) -> AsyncTask<RenderImageTask> {
     AsyncTask::new(RenderImageTask {
         renderer: None,
         glb,
@@ -274,7 +274,7 @@ pub fn render_glb_to_image(glb: Uint8Array, options_json: String) -> AsyncTask<R
 
 /// Render ordered identified views through one batch-scoped plan call.
 #[napi]
-pub fn render_glb_to_images(glb: Uint8Array, options_json: String) -> AsyncTask<RenderImagesTask> {
+pub fn render_images(glb: Uint8Array, options_json: String) -> AsyncTask<RenderImagesTask> {
     AsyncTask::new(RenderImagesTask {
         renderer: None,
         glb,
@@ -284,7 +284,7 @@ pub fn render_glb_to_images(glb: Uint8Array, options_json: String) -> AsyncTask<
 
 /// Render a kernel GLB to raw straight-alpha RGBA8 pixels (no encode).
 #[napi]
-pub fn render_glb_to_pixels(glb: Uint8Array, options_json: String) -> AsyncTask<RenderPixelsTask> {
+pub fn render_pixels(glb: Uint8Array, options_json: String) -> AsyncTask<RenderPixelsTask> {
     AsyncTask::new(RenderPixelsTask {
         renderer: None,
         glb,
@@ -305,7 +305,7 @@ pub fn bench_codecs(glb: Uint8Array, width: u32, height: u32) -> Result<String> 
     };
     let started = std::time::Instant::now();
     let rendered =
-        pollster::block_on(render_core::render_glb_to_rgba(&glb, &options)).map_err(map_error)?;
+        pollster::block_on(render_core::render_rgba(&glb, &options)).map_err(map_error)?;
     let render_ms = started.elapsed().as_secs_f64() * 1000.0;
     let epoch = std::time::Instant::now();
     let now = move || epoch.elapsed().as_secs_f64() * 1000.0;

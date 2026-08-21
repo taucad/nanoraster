@@ -42,7 +42,7 @@ export const toRenderedPixels = (result: RawPixelsResult): RenderedPixels => ({
  * @param options - Camera, background, and annotation settings (no format or quality)
  * @returns The rendered pixels with their dimensions
  */
-export const renderGlbToPixels = async (
+export const renderPixels = async (
   glb: Uint8Array<ArrayBuffer>,
   options: RenderPixelsOptions,
 ): Promise<RenderedPixels> => {

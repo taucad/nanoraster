@@ -32,7 +32,7 @@ fn main() {
 
     let glb = std::fs::read(&input).expect("read glb");
     let started = std::time::Instant::now();
-    let bytes = pollster::block_on(render_core::render_glb_to_image(&glb, &options, format))
+    let bytes = pollster::block_on(render_core::render_image(&glb, &options, format))
         .expect("render");
     eprintln!(
         "rendered {}x{} in {:?}",

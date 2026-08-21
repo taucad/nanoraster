@@ -1,9 +1,9 @@
 ---
 title: Work with raw pixels
-description: Skip the encode with renderGlbToPixels, paint straight into a canvas, and compare renders pixel by pixel.
+description: Skip the encode with renderPixels, paint straight into a canvas, and compare renders pixel by pixel.
 ---
 
-The fourth output format is none. `renderGlbToPixels` stops the pipeline after
+The fourth output format is none. `renderPixels` stops the pipeline after
 readback and hands you the pixels themselves — for canvas display, custom
 encoding pipelines, and pixel-level comparison in tests.
 
@@ -16,9 +16,9 @@ encode plus decode round trip costs roughly 20 ms per frame that the pixels
 path never spends.
 
 ```typescript
-import { renderGlbToPixels } from 'nanoraster';
+import { renderPixels } from 'nanoraster';
 
-const { rgba, width, height } = await renderGlbToPixels(glb, {
+const { rgba, width, height } = await renderPixels(glb, {
   width: 640,
   height: 480,
   phi: 60,
@@ -73,15 +73,15 @@ const difference = (a: Uint8Array, b: Uint8Array): number => {
   return total / a.length;
 };
 
-const before = await renderGlbToPixels(previousGlb, { width: 512 });
-const after = await renderGlbToPixels(currentGlb, { width: 512 });
+const before = await renderPixels(previousGlb, { width: 512 });
+const after = await renderPixels(currentGlb, { width: 512 });
 
 console.log(`mean channel delta: ${difference(before.rgba, after.rgba).toFixed(3)}`);
 ```
 
 ## Variations
 
-**On a warm renderer.** `Renderer.renderGlbToPixels` is the same call on a
+**On a warm renderer.** `Renderer.renderPixels` is the same call on a
 reused device; [Reuse the renderer](reuse-the-renderer) covers when to hold
 one.
 

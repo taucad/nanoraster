@@ -28,12 +28,12 @@ npm install nanoraster
 ## Quick start
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
 import { readFile, writeFile } from 'node:fs/promises';
 
 const glb = Uint8Array.from(await readFile('model.glb'));
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'png',
   width: 512,
   height: 512,
@@ -59,7 +59,7 @@ import { createRenderer } from 'nanoraster';
 
 using renderer = await createRenderer({ powerPreference: 'low-power' });
 
-const [card, og, print] = await renderer.renderGlbToImages(glb, {
+const [card, og, print] = await renderer.renderImages(glb, {
   format: 'webp',
   width: 768,
   height: 576,

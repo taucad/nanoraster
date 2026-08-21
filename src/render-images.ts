@@ -90,7 +90,7 @@ export const assembleRenderedImages = <const Options extends RenderImagesOptions
  * @param options - Shared settings and the ordered views to render
  * @returns An ordered tuple whose IDs follow the input view tuple
  */
-export const renderGlbToImages = async <const Options extends RenderImagesOptions>(
+export const renderImages = async <const Options extends RenderImagesOptions>(
   glb: Uint8Array<ArrayBuffer>,
   options: StrictRenderImagesOptions<Options>,
 ): Promise<RenderedImagesResult<Options>> => {

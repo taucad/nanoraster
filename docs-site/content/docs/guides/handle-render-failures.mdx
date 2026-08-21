@@ -10,10 +10,10 @@ Turn a rejected render into a decision: fix the input, retry, or fall back.
 `RenderError.from` never throws, so it is safe as the first line of a `catch`.
 
 ```typescript
-import { RenderError, renderGlbToImage } from 'nanoraster';
+import { RenderError, renderImage } from 'nanoraster';
 
 try {
-  const image = await renderGlbToImage(glb, { format: 'png' });
+  const image = await renderImage(glb, { format: 'png' });
   console.log(image.name);
 } catch (error) {
   const failure = RenderError.from(error);
@@ -28,7 +28,7 @@ the request: the only ones worth retrying.
 
 ```typescript
 try {
-  await renderGlbToImage(glb, { format: 'png' });
+  await renderImage(glb, { format: 'png' });
 } catch (error) {
   const failure = RenderError.from(error);
 
@@ -43,12 +43,12 @@ try {
 ### 3. Retry only the transient class
 
 ```typescript
-import { RenderError, renderGlbToImage, type RenderedImageFile } from 'nanoraster';
+import { RenderError, renderImage, type RenderedImageFile } from 'nanoraster';
 
 const renderWithRetry = async (glb: Uint8Array<ArrayBuffer>, attempts = 3): Promise<RenderedImageFile> => {
   for (let attempt = 1; ; attempt += 1) {
     try {
-      return await renderGlbToImage(glb, { format: 'png' });
+      return await renderImage(glb, { format: 'png' });
     } catch (error) {
       const failure = RenderError.from(error);
       if (!failure.isGpuFault || attempt >= attempts) throw failure;
@@ -68,7 +68,7 @@ A transient GPU fault should not blank the last good image.
 let lastGood: RenderedImageFile | undefined;
 
 try {
-  lastGood = await renderGlbToImage(glb, { format: 'png' });
+  lastGood = await renderImage(glb, { format: 'png' });
 } catch (error) {
   const failure = RenderError.from(error);
   if (!failure.isGpuFault) throw failure;

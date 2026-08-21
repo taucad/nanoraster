@@ -10,9 +10,9 @@ import type {
   StrictRenderImagesOptions,
 } from '#options.js';
 import { imageFileName } from '#options.js';
-import { serializeImageOptions } from '#render-glb-to-image.js';
-import { assembleRenderedImages, serializeImagesOptions } from '#render-glb-to-images.js';
-import { serializePixelsOptions, toRenderedPixels } from '#render-glb-to-pixels.js';
+import { serializeImageOptions } from '#render-image.js';
+import { assembleRenderedImages, serializeImagesOptions } from '#render-images.js';
+import { serializePixelsOptions, toRenderedPixels } from '#render-pixels.js';
 import type { RawRendererHandle } from '#renderer.js';
 import { createRendererRaw } from '#renderer.js';
 
@@ -44,17 +44,17 @@ export type CreateRendererOptions = {
  */
 export type Renderer = {
   /** Render one view to one owned `render.<format>` image on the warm device. */
-  readonly renderGlbToImage: (
+  readonly renderImage: (
     glb: Uint8Array<ArrayBuffer>,
     options: RenderImageOptions,
   ) => Promise<RenderedImageFile>;
   /** Render an ordered plan of identified views (with per-view output overrides) in one call. */
-  readonly renderGlbToImages: <const Options extends RenderImagesOptions>(
+  readonly renderImages: <const Options extends RenderImagesOptions>(
     glb: Uint8Array<ArrayBuffer>,
     options: StrictRenderImagesOptions<Options>,
   ) => Promise<RenderedImagesResult<Options>>;
   /** Render one view to raw straight-alpha RGBA8 pixels — no encode. */
-  readonly renderGlbToPixels: (
+  readonly renderPixels: (
     glb: Uint8Array<ArrayBuffer>,
     options: RenderPixelsOptions,
   ) => Promise<RenderedPixels>;
@@ -140,7 +140,7 @@ export const createRenderer = async (options?: CreateRendererOptions): Promise<R
   };
 
   return {
-    renderGlbToImage: (glb, renderOptions) =>
+    renderImage: (glb, renderOptions) =>
       enqueue(async () => {
         const request = serializeImageOptions(renderOptions);
         let bytes: Uint8Array<ArrayBuffer>;
@@ -151,7 +151,7 @@ export const createRenderer = async (options?: CreateRendererOptions): Promise<R
         }
         return createRenderedImageFile(renderOptions.format, imageFileName(renderOptions.format), bytes);
       }),
-    renderGlbToImages: (glb, renderOptions) =>
+    renderImages: (glb, renderOptions) =>
       enqueue(async () => {
         const request = serializeImagesOptions(renderOptions);
         try {
@@ -160,7 +160,7 @@ export const createRenderer = async (options?: CreateRendererOptions): Promise<R
           throw RenderError.from(error);
         }
       }),
-    renderGlbToPixels: (glb, renderOptions) =>
+    renderPixels: (glb, renderOptions) =>
       enqueue(async () => {
         const request = serializePixelsOptions(renderOptions);
         try {

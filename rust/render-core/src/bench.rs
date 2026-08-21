@@ -4,8 +4,8 @@
 //! images around.
 
 use crate::{
-    ImageFormat, RenderError, RenderOptions, RenderView, Rendered, encode, render_glb_to_image,
-    render_glb_to_images_profiled,
+    ImageFormat, RenderError, RenderOptions, RenderView, Rendered, encode, render_image,
+    render_images_profiled,
 };
 
 /// FNV-1a 64 — enough to compare artifacts for equality across legs.
@@ -144,14 +144,14 @@ pub async fn bench_multi_view(
             view_options.label.clone_from(&view.label);
             let started = now();
             let bytes =
-                render_glb_to_image(glb, &view_options, ImageFormat::WebP { quality: 100 }).await?;
+                render_image(glb, &view_options, ImageFormat::WebP { quality: 100 }).await?;
             singular_ms.push(now() - started);
             singular.push(bytes);
         }
         let singular_wall_ms = now() - singular_started;
 
         let batch_started = now();
-        let (batch, profile) = render_glb_to_images_profiled(
+        let (batch, profile) = render_images_profiled(
             glb,
             &options,
             ImageFormat::WebP { quality: 100 },

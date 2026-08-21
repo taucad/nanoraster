@@ -11,9 +11,9 @@ quality, annotations, and the dimensions annotations require.
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'webp',
   background: '#101418',
   quality: 0.8,
@@ -42,7 +42,7 @@ an arbitrary colour.
 Backgrounds accept `#RRGGBB`, `#RRGGBBAA`, or normalised straight-alpha RGBA:
 
 ```typescript
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'png',
   background: [0.05, 0.06, 0.08, 1],
 });
@@ -74,9 +74,9 @@ render's context once it is separated from the request.
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'png',
   width: 512,
   height: 512,
@@ -109,7 +109,7 @@ minimum output size to **192 pixels** on both axes. A smaller request fails
 validation rather than producing an unreadable overlay.
 
 ```typescript
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'png',
   width: 192,
   height: 192,

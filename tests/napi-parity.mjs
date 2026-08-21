@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 // The façade is imported for exactly one section: the concurrent visual
 // ladder, which exists to exercise its shared one-shot renderer. Everything
 // else here calls the addon directly, on purpose.
-import { renderGlbToImage } from '#index.js';
+import { renderImage } from '#index.js';
 
 import { withPbrFactors } from './pbr-fixture.mjs';
 
@@ -25,13 +25,13 @@ if (nativePackage === undefined)
 const native =
   /**
    * @type {{
-   *   renderGlbToImage: (glb: Buffer, optionsJson: string) => Promise<Buffer>,
-   *   renderGlbToImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], profile?: string }>,
-   *   renderGlbToPixels: (glb: Buffer, optionsJson: string) => Promise<{ rgba: Buffer, width: number, height: number }>,
+   *   renderImage: (glb: Buffer, optionsJson: string) => Promise<Buffer>,
+   *   renderImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], profile?: string }>,
+   *   renderPixels: (glb: Buffer, optionsJson: string) => Promise<{ rgba: Buffer, width: number, height: number }>,
    *   createRenderer: (optionsJson?: string) => Promise<{
-   *     renderGlbToImage: (glb: Buffer, optionsJson: string) => Promise<Buffer>,
-   *     renderGlbToImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], profile?: string }>,
-   *     renderGlbToPixels: (glb: Buffer, optionsJson: string) => Promise<{ rgba: Buffer, width: number, height: number }>,
+   *     renderImage: (glb: Buffer, optionsJson: string) => Promise<Buffer>,
+   *     renderImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], profile?: string }>,
+   *     renderPixels: (glb: Buffer, optionsJson: string) => Promise<{ rgba: Buffer, width: number, height: number }>,
    *     dispose: () => void,
    *   }>,
    *   describeAdapter: () => string,
@@ -43,7 +43,7 @@ console.log('adapter:', native.describeAdapter());
 const glb = readFileSync(join(here, 'fixtures', 'gear-12.glb'));
 const interleavedGlb = readFileSync(join(here, 'fixtures', 'interleaved-instanced-lines.glb'));
 const started = Date.now();
-const png = await native.renderGlbToImage(glb, JSON.stringify({ width: 768, height: 432, format: 'png' }));
+const png = await native.renderImage(glb, JSON.stringify({ width: 768, height: 432, format: 'png' }));
 console.log(`rendered in ${Date.now() - started}ms, ${png.length} bytes`);
 
 if (!(png[0] === 0x89 && png[1] === 0x50 && png[2] === 0x4e && png[3] === 0x47)) {
@@ -57,17 +57,17 @@ if (width !== 768 || height !== 432) {
 const pbrOptions = JSON.stringify({ width: 192, height: 192, format: 'png' });
 const matteGlb = Buffer.from(withPbrFactors(glb, { metallic: 0, roughness: 0.85 }));
 const metalGlb = Buffer.from(withPbrFactors(glb, { metallic: 1, roughness: 0.05 }));
-const matteFirst = await native.renderGlbToImage(matteGlb, pbrOptions);
-const matteSecond = await native.renderGlbToImage(matteGlb, pbrOptions);
-const metalFirst = await native.renderGlbToImage(metalGlb, pbrOptions);
-const metalSecond = await native.renderGlbToImage(metalGlb, pbrOptions);
+const matteFirst = await native.renderImage(matteGlb, pbrOptions);
+const matteSecond = await native.renderImage(matteGlb, pbrOptions);
+const metalFirst = await native.renderImage(metalGlb, pbrOptions);
+const metalSecond = await native.renderImage(metalGlb, pbrOptions);
 if (!matteFirst.equals(matteSecond) || !metalFirst.equals(metalSecond)) {
   throw new Error('repeated PBR renders differ');
 }
 if (matteFirst.equals(metalFirst)) {
   throw new Error('metallic and rough dielectric PBR renders are identical');
 }
-const interleavedPng = await native.renderGlbToImage(
+const interleavedPng = await native.renderImage(
   interleavedGlb,
   JSON.stringify({ width: 768, height: 576, format: 'png' }),
 );
@@ -78,12 +78,12 @@ if (
 ) {
   throw new Error('interleaved/instanced fixture did not produce a 768x576 PNG');
 }
-const webp = await native.renderGlbToImage(glb, JSON.stringify({ width: 768, height: 432, format: 'webp' }));
+const webp = await native.renderImage(glb, JSON.stringify({ width: 768, height: 432, format: 'webp' }));
 if (webp.toString('latin1', 0, 4) !== 'RIFF' || webp.toString('latin1', 8, 12) !== 'WEBP') {
   throw new Error('webp output is not a WebP');
 }
 
-const jpeg = await native.renderGlbToImage(
+const jpeg = await native.renderImage(
   glb,
   JSON.stringify({ width: 768, height: 432, format: 'jpeg', quality: 0.85, background: [1, 1, 1, 1] }),
 );
@@ -94,7 +94,7 @@ if (!(jpeg[0] === 0xff && jpeg[1] === 0xd8)) {
 // The taxonomy contract: jpeg on a transparent background must refuse.
 let transparentJpegError = '';
 try {
-  await native.renderGlbToImage(glb, JSON.stringify({ width: 768, height: 432, format: 'jpeg' }));
+  await native.renderImage(glb, JSON.stringify({ width: 768, height: 432, format: 'jpeg' }));
 } catch (error) {
   transparentJpegError = String(error instanceof Error ? error.message : error);
 }
@@ -107,12 +107,12 @@ const views = [
   { id: 'front', phi: 90, theta: 0 },
   { id: 'top', phi: 0, theta: 0 },
 ];
-const batch = (await native.renderGlbToImages(glb, JSON.stringify({ ...shared, views }))).images;
+const batch = (await native.renderImages(glb, JSON.stringify({ ...shared, views }))).images;
 if (batch.length !== views.length || !Buffer.isBuffer(batch[0]) || !Buffer.isBuffer(batch[1])) {
   throw new Error('batch output is not an ordered Buffer array');
 }
 for (const [index, view] of views.entries()) {
-  const singularView = await native.renderGlbToImage(
+  const singularView = await native.renderImage(
     glb,
     JSON.stringify({ ...shared, phi: view.phi, theta: view.theta }),
   );
@@ -121,21 +121,21 @@ for (const [index, view] of views.entries()) {
   }
 }
 const axesRequest = { ...shared, phi: 60, theta: -45, includeAxes: true };
-const explicitAxesOff = await native.renderGlbToImage(
+const explicitAxesOff = await native.renderImage(
   glb,
   JSON.stringify({ ...shared, phi: 60, theta: -45, includeAxes: false }),
 );
-const axes = await native.renderGlbToImage(glb, JSON.stringify(axesRequest));
-const hiddenLabelA = await native.renderGlbToImage(
+const axes = await native.renderImage(glb, JSON.stringify(axesRequest));
+const hiddenLabelA = await native.renderImage(
   glb,
   JSON.stringify({ ...shared, phi: 60, theta: -45, includeLabel: false, label: 'A' }),
 );
-const hiddenLabelB = await native.renderGlbToImage(
+const hiddenLabelB = await native.renderImage(
   glb,
   JSON.stringify({ ...shared, phi: 60, theta: -45, includeLabel: false, label: 'B' }),
 );
 const axesBatch = (
-  await native.renderGlbToImages(
+  await native.renderImages(
     glb,
     JSON.stringify({ ...shared, includeAxes: true, views: [{ id: 'isometric', phi: 60, theta: -45 }] }),
   )
@@ -151,7 +151,7 @@ if (
 if (!hiddenLabelA.equals(png) || !hiddenLabelB.equals(png)) {
   throw new Error('disabled labels must not affect output bytes');
 }
-const annotations = await native.renderGlbToImage(
+const annotations = await native.renderImage(
   glb,
   JSON.stringify({
     width: 768,
@@ -180,7 +180,7 @@ const visualCases = [
 ].map(async (view) => ({
   ...view,
   bytes: (
-    await renderGlbToImage(Uint8Array.from(glb), {
+    await renderImage(Uint8Array.from(glb), {
       width: view.width,
       height: view.height,
       format: 'png',
@@ -198,7 +198,7 @@ const visualCases = [
 const resolvedVisualCases = await Promise.all(visualCases);
 // Warm == cold: bytes off the shared renderer — which has by now rendered the
 // 4096² case and trimmed its targets — must match a cold addon render.
-const coldSmallLadder = await native.renderGlbToImage(
+const coldSmallLadder = await native.renderImage(
   glb,
   JSON.stringify({
     width: 192,
@@ -258,10 +258,9 @@ for (const { format, projection, includeAxes, includeLabel, includeScale } of pa
     includeLabel,
     includeScale,
   };
-  const images = (await native.renderGlbToImages(glb, JSON.stringify({ ...common, views: parityViews })))
-    .images;
+  const images = (await native.renderImages(glb, JSON.stringify({ ...common, views: parityViews }))).images;
   for (const [index, view] of parityViews.entries()) {
-    const one = await native.renderGlbToImage(
+    const one = await native.renderImage(
       glb,
       JSON.stringify({ ...common, label: view.label, phi: view.phi, theta: view.theta }),
     );
@@ -277,14 +276,13 @@ for (const { format, projection, includeAxes, includeLabel, includeScale } of pa
     parityViews[0],
     { ...parityViews[3], id: 'right-second' },
   ];
-  const repeated = (await native.renderGlbToImages(glb, JSON.stringify({ ...common, views: reordered })))
-    .images;
+  const repeated = (await native.renderImages(glb, JSON.stringify({ ...common, views: reordered }))).images;
   if (!repeated[0].equals(repeated[2])) {
     throw new Error(`${format}/${projection} repeated annotated view differs`);
   }
 }
 const canonicalVisuals = (
-  await native.renderGlbToImages(
+  await native.renderImages(
     glb,
     JSON.stringify({
       width: 800,
@@ -299,7 +297,7 @@ const canonicalVisuals = (
     }),
   )
 ).images;
-const isometricPerspective = await native.renderGlbToImage(
+const isometricPerspective = await native.renderImage(
   glb,
   JSON.stringify({
     width: 800,
@@ -336,11 +334,10 @@ const lightingViews = [
   { id: 'isometric', phi: 60, theta: -45 },
   { id: 'back', phi: 90, theta: 90 },
 ];
-const renderLit = (lighting) =>
-  native.renderGlbToImage(glb, JSON.stringify({ ...lightingBase, ...lighting }));
+const renderLit = (lighting) => native.renderImage(glb, JSON.stringify({ ...lightingBase, ...lighting }));
 const renderLitBatch = async (lighting) =>
   (
-    await native.renderGlbToImages(
+    await native.renderImages(
       glb,
       JSON.stringify({
         ...lightingBase,
@@ -418,7 +415,7 @@ for (const { name, lighting, prefix } of [
 
 let validationError = '';
 try {
-  await native.renderGlbToImages(Buffer.from([0]), JSON.stringify({ views: [], unexpected: true }));
+  await native.renderImages(Buffer.from([0]), JSON.stringify({ views: [], unexpected: true }));
 } catch (error) {
   validationError = String(error instanceof Error ? error.message : error);
 }
@@ -427,7 +424,7 @@ if (!validationError.startsWith('parse:') || validationError.includes('GLB')) {
 }
 let glbError = '';
 try {
-  await native.renderGlbToImage(Buffer.from([0]), JSON.stringify(shared));
+  await native.renderImage(Buffer.from([0]), JSON.stringify(shared));
 } catch (error) {
   glbError = String(error instanceof Error ? error.message : error);
 }
@@ -436,7 +433,7 @@ if (!glbError.startsWith('parse:')) {
 }
 let atomicError = '';
 try {
-  await native.renderGlbToImages(glb, JSON.stringify({ format: 'jpeg', views: parityViews.slice(0, 2) }));
+  await native.renderImages(glb, JSON.stringify({ format: 'jpeg', views: parityViews.slice(0, 2) }));
 } catch (error) {
   atomicError = String(error instanceof Error ? error.message : error);
 }
@@ -447,15 +444,15 @@ if (!atomicError.startsWith('encode: view "isometric":')) {
 // Handles-first surface (R1): a warm renderer must produce byte-identical
 // output to the one-shot sugar, and its profiled counters must prove reuse.
 const renderer = await native.createRenderer();
-const warmPng = await renderer.renderGlbToImage(glb, JSON.stringify({ ...shared }));
+const warmPng = await renderer.renderImage(glb, JSON.stringify({ ...shared }));
 if (!warmPng.equals(png)) throw new Error('warm renderer bytes differ from one-shot bytes');
-const warmBatch = (await renderer.renderGlbToImages(glb, JSON.stringify({ ...shared, views }))).images;
+const warmBatch = (await renderer.renderImages(glb, JSON.stringify({ ...shared, views }))).images;
 if (warmBatch.length !== views.length || warmBatch.some((image, index) => !image.equals(batch[index]))) {
   throw new Error('warm batch bytes differ from one-shot batch bytes');
 }
 // R15: per-view output overrides equal their singular equivalents.
 const ladder = (
-  await renderer.renderGlbToImages(
+  await renderer.renderImages(
     glb,
     JSON.stringify({
       format: 'png',
@@ -469,11 +466,11 @@ const ladder = (
     }),
   )
 ).images;
-const bigSingular = await renderer.renderGlbToImage(
+const bigSingular = await renderer.renderImage(
   glb,
   JSON.stringify({ format: 'png', width: 1024, height: 768, phi: 60, theta: -45 }),
 );
-const lossySingular = await renderer.renderGlbToImage(
+const lossySingular = await renderer.renderImage(
   glb,
   JSON.stringify({ format: 'webp', quality: 0.9, width: 512, height: 384, phi: 60, theta: -45 }),
 );
@@ -482,7 +479,7 @@ if (!ladder[1].equals(bigSingular) || !ladder[2].equals(lossySingular)) {
 }
 if (ladder[2].toString('latin1', 0, 4) !== 'RIFF') throw new Error('per-view webp override missing');
 // R13: profile rides the plan call; a warm renderer reports zero device requests.
-const profiled = await renderer.renderGlbToImages(glb, JSON.stringify({ ...shared, profile: true, views }));
+const profiled = await renderer.renderImages(glb, JSON.stringify({ ...shared, profile: true, views }));
 const profile = JSON.parse(profiled.profile ?? '{}');
 if (profile.adapterDeviceRequests !== 0 || profile.views.length !== views.length) {
   throw new Error(`warm profile must attribute zero device requests: ${profiled.profile}`);
@@ -491,7 +488,7 @@ if (profiled.images.some((image, index) => !image.equals(batch[index]))) {
   throw new Error('profiled bytes differ from unprofiled bytes');
 }
 // R11: raw pixels stop before encode.
-const pixelsOut = await renderer.renderGlbToPixels(glb, JSON.stringify({ width: 192, height: 192 }));
+const pixelsOut = await renderer.renderPixels(glb, JSON.stringify({ width: 192, height: 192 }));
 if (pixelsOut.width !== 192 || pixelsOut.height !== 192 || pixelsOut.rgba.length !== 192 * 192 * 4) {
   throw new Error('pixels output has the wrong shape');
 }
@@ -499,7 +496,7 @@ if (pixelsOut.width !== 192 || pixelsOut.height !== 192 || pixelsOut.rgba.length
 renderer.dispose();
 let disposedError = '';
 try {
-  await renderer.renderGlbToImage(glb, JSON.stringify(shared));
+  await renderer.renderImage(glb, JSON.stringify(shared));
 } catch (error) {
   disposedError = String(error instanceof Error ? error.message : error);
 }

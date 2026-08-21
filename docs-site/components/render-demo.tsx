@@ -108,8 +108,8 @@ export const RenderDemo = ({
           const json = JSON.stringify(request);
           const started = performance.now();
           const bytes = batch
-            ? (await renderer.render_glb_to_images(glb, json)).images
-            : [await renderer.render_glb_to_image(glb, json)];
+            ? (await renderer.render_images(glb, json)).images
+            : [await renderer.render_image(glb, json)];
           const ms = Math.round(performance.now() - started);
 
           for (const url of urlsRef.current) URL.revokeObjectURL(url);

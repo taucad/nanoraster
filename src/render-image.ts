@@ -31,7 +31,7 @@ export const serializeImageOptions = (options: RenderImageOptions): string => {
  * @param options - Camera, format, background, and optional axis-indicator settings
  * @returns The encoded image file
  */
-export const renderGlbToImage = async (
+export const renderImage = async (
   glb: Uint8Array<ArrayBuffer>,
   options: RenderImageOptions,
 ): Promise<RenderedImageFile> => {

@@ -46,12 +46,12 @@ export class Renderer {
      * @param {string} options_json
      * @returns {Promise<any>}
      */
-    render_glb_to_image(glb, options_json) {
+    render_image(glb, options_json) {
         const ptr0 = passArray8ToWasm0(glb, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.renderer_render_glb_to_image(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        const ret = wasm.renderer_render_image(this.__wbg_ptr, ptr0, len0, ptr1, len1);
         return takeObject(ret);
     }
     /**
@@ -60,12 +60,12 @@ export class Renderer {
      * @param {string} options_json
      * @returns {Promise<any>}
      */
-    render_glb_to_images(glb, options_json) {
+    render_images(glb, options_json) {
         const ptr0 = passArray8ToWasm0(glb, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.renderer_render_glb_to_images(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        const ret = wasm.renderer_render_images(this.__wbg_ptr, ptr0, len0, ptr1, len1);
         return takeObject(ret);
     }
     /**
@@ -74,12 +74,12 @@ export class Renderer {
      * @param {string} options_json
      * @returns {Promise<any>}
      */
-    render_glb_to_pixels(glb, options_json) {
+    render_pixels(glb, options_json) {
         const ptr0 = passArray8ToWasm0(glb, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.renderer_render_glb_to_pixels(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        const ret = wasm.renderer_render_pixels(this.__wbg_ptr, ptr0, len0, ptr1, len1);
         return takeObject(ret);
     }
     /**
@@ -173,12 +173,12 @@ export function describe_adapter() {
  * @param {string} options_json
  * @returns {Promise<Uint8Array>}
  */
-export function render_glb_to_image(glb, options_json) {
+export function render_image(glb, options_json) {
     const ptr0 = passArray8ToWasm0(glb, wasm.__wbindgen_export);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.render_glb_to_image(ptr0, len0, ptr1, len1);
+    const ret = wasm.render_image(ptr0, len0, ptr1, len1);
     return takeObject(ret);
 }
 
@@ -188,12 +188,12 @@ export function render_glb_to_image(glb, options_json) {
  * @param {string} options_json
  * @returns {Promise<any>}
  */
-export function render_glb_to_images(glb, options_json) {
+export function render_images(glb, options_json) {
     const ptr0 = passArray8ToWasm0(glb, wasm.__wbindgen_export);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.render_glb_to_images(ptr0, len0, ptr1, len1);
+    const ret = wasm.render_images(ptr0, len0, ptr1, len1);
     return takeObject(ret);
 }
 
@@ -203,12 +203,12 @@ export function render_glb_to_images(glb, options_json) {
  * @param {string} options_json
  * @returns {Promise<any>}
  */
-export function render_glb_to_pixels(glb, options_json) {
+export function render_pixels(glb, options_json) {
     const ptr0 = passArray8ToWasm0(glb, wasm.__wbindgen_export);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.render_glb_to_pixels(ptr0, len0, ptr1, len1);
+    const ret = wasm.render_pixels(ptr0, len0, ptr1, len1);
     return takeObject(ret);
 }
 function __wbg_get_imports() {

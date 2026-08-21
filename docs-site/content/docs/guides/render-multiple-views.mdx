@@ -17,13 +17,13 @@ orientation of each one, which a set of angles alone does not show.
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImages } from 'nanoraster';
+import { renderImages } from 'nanoraster';
 
 import { readFile } from 'node:fs/promises';
 
 const glb = Uint8Array.from(await readFile('model.glb'));
 
-const images = await renderGlbToImages(glb, {
+const images = await renderImages(glb, {
   format: 'webp',
   width: 640,
   height: 480,
@@ -58,7 +58,7 @@ overridden per entry, defaulting to the shared values. One subject becomes a
 card, a social image and a print asset in one call.
 
 ```typescript
-const [card, og, print] = await renderGlbToImages(glb, {
+const [card, og, print] = await renderImages(glb, {
   format: 'webp',
   width: 768,
   height: 576,
@@ -85,7 +85,7 @@ Assigning options to a variable widens the literals and loses the IDs;
 `createRenderImagesOptions` prevents that without changing runtime behaviour.
 
 ```typescript
-import { createRenderImagesOptions, renderGlbToImages } from 'nanoraster';
+import { createRenderImagesOptions, renderImages } from 'nanoraster';
 
 const options = createRenderImagesOptions({
   format: 'png',
@@ -95,14 +95,14 @@ const options = createRenderImagesOptions({
   ],
 });
 
-const images = await renderGlbToImages(glb, options);
+const images = await renderImages(glb, options);
 ```
 
 ## Variations
 
-**One image only.** Use `renderGlbToImage`. The batch call requires a non-empty
+**One image only.** Use `renderImage`. The batch call requires a non-empty
 tuple and returns a tuple even for one view, under the same
-[exactness rules](../api#renderglbtoimages).
+[exactness rules](../api#renderimages).
 
 **Labels on every view.** `includeLabel: true` makes `label` required on every
 entry; see [Format and annotate](format-and-annotate).

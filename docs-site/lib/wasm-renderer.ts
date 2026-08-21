@@ -1,11 +1,11 @@
 /** The persistent renderer handle the wasm artifact exposes. */
 export type WasmRendererHandle = {
-  readonly render_glb_to_image: (
+  readonly render_image: (
     glb: Uint8Array<ArrayBuffer>,
     optionsJson: string,
   ) => Promise<Uint8Array<ArrayBuffer>>;
   /** Ordered identified views through one plan call; result order is view order. */
-  readonly render_glb_to_images: (
+  readonly render_images: (
     glb: Uint8Array<ArrayBuffer>,
     optionsJson: string,
   ) => Promise<{ readonly images: Uint8Array<ArrayBuffer>[]; readonly profile?: string }>;
@@ -31,8 +31,8 @@ export const serializeRenders = (handle: WasmRendererHandle): WasmRendererHandle
     return next;
   };
   return {
-    render_glb_to_image: (glb, optionsJson) => enqueue(() => handle.render_glb_to_image(glb, optionsJson)),
-    render_glb_to_images: (glb, optionsJson) => enqueue(() => handle.render_glb_to_images(glb, optionsJson)),
+    render_image: (glb, optionsJson) => enqueue(() => handle.render_image(glb, optionsJson)),
+    render_images: (glb, optionsJson) => enqueue(() => handle.render_images(glb, optionsJson)),
   };
 };
 

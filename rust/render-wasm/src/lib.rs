@@ -123,7 +123,7 @@ impl Renderer {
 
     /// Render one view to encoded image bytes on the warm device.
     #[wasm_bindgen(skip_typescript)]
-    pub fn render_glb_to_image(&self, glb: Vec<u8>, options_json: String) -> js_sys::Promise {
+    pub fn render_image(&self, glb: Vec<u8>, options_json: String) -> js_sys::Promise {
         let shared = self.shared.clone();
         wasm_bindgen_futures::future_to_promise(async move {
             let mut renderer = shared.checkout()?;
@@ -136,7 +136,7 @@ impl Renderer {
 
     /// Render ordered identified views in one plan call on the warm device.
     #[wasm_bindgen(skip_typescript)]
-    pub fn render_glb_to_images(&self, glb: Vec<u8>, options_json: String) -> js_sys::Promise {
+    pub fn render_images(&self, glb: Vec<u8>, options_json: String) -> js_sys::Promise {
         let shared = self.shared.clone();
         wasm_bindgen_futures::future_to_promise(async move {
             let mut renderer = shared.checkout()?;
@@ -151,7 +151,7 @@ impl Renderer {
 
     /// Render one view to raw RGBA pixels (no encode) on the warm device.
     #[wasm_bindgen(skip_typescript)]
-    pub fn render_glb_to_pixels(&self, glb: Vec<u8>, options_json: String) -> js_sys::Promise {
+    pub fn render_pixels(&self, glb: Vec<u8>, options_json: String) -> js_sys::Promise {
         let shared = self.shared.clone();
         wasm_bindgen_futures::future_to_promise(async move {
             let mut renderer = shared.checkout()?;
@@ -201,9 +201,9 @@ export class Renderer {
   private constructor();
   free(): void;
   static create(options_json?: string): Promise<Renderer>;
-  render_glb_to_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
-  render_glb_to_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
-  render_glb_to_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
+  render_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
+  render_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
+  render_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
   trim_targets(): void;
   dispose(): void;
 }
@@ -216,17 +216,17 @@ export class Renderer {
 /// One-shot sugar: creates and destroys a device per call — hold a `Renderer`
 /// to amortize that across calls.
 #[wasm_bindgen]
-pub async fn render_glb_to_image(glb: Vec<u8>, options_json: String) -> Result<Vec<u8>, JsError> {
-    render_core::render_glb_request(&glb, &options_json)
+pub async fn render_image(glb: Vec<u8>, options_json: String) -> Result<Vec<u8>, JsError> {
+    render_core::render_image_request(&glb, &options_json)
         .await
         .map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Render ordered identified views through one batch-scoped plan call.
 #[wasm_bindgen(skip_typescript)]
-pub async fn render_glb_to_images(glb: Vec<u8>, options_json: String) -> Result<JsValue, JsValue> {
+pub async fn render_images(glb: Vec<u8>, options_json: String) -> Result<JsValue, JsValue> {
     let (images, profile) =
-        render_core::render_glb_images_request(&glb, &options_json, Some(&js_sys::Date::now))
+        render_core::render_images_request(&glb, &options_json, Some(&js_sys::Date::now))
             .await
             .map_err(to_js_error)?;
     images_result(images, profile)
@@ -234,8 +234,8 @@ pub async fn render_glb_to_images(glb: Vec<u8>, options_json: String) -> Result<
 
 /// Render a kernel GLB to raw straight-alpha RGBA8 pixels (no encode).
 #[wasm_bindgen(skip_typescript)]
-pub async fn render_glb_to_pixels(glb: Vec<u8>, options_json: String) -> Result<JsValue, JsValue> {
-    let rendered = render_core::render_glb_pixels_request(&glb, &options_json)
+pub async fn render_pixels(glb: Vec<u8>, options_json: String) -> Result<JsValue, JsValue> {
+    let rendered = render_core::render_pixels_request(&glb, &options_json)
         .await
         .map_err(to_js_error)?;
     pixels_result(rendered)
@@ -244,9 +244,9 @@ pub async fn render_glb_to_pixels(glb: Vec<u8>, options_json: String) -> Result<
 #[wasm_bindgen(typescript_custom_section)]
 const FREE_FUNCTION_TYPES: &str = r#"
 /** Render ordered identified views through one batch-scoped plan call. */
-export function render_glb_to_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
+export function render_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
 /** Render a kernel GLB to raw straight-alpha RGBA8 pixels (no encode). */
-export function render_glb_to_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
+export function render_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
 "#;
 
 /// Benchmark the codec encoders over one render (white background so JPEG
@@ -261,7 +261,7 @@ pub async fn bench_codecs(glb: Vec<u8>, width: u32, height: u32) -> Result<Strin
         ..Default::default()
     };
     let start = js_sys::Date::now();
-    let rendered = render_core::render_glb_to_rgba(&glb, &options)
+    let rendered = render_core::render_rgba(&glb, &options)
         .await
         .map_err(|e| JsError::new(&e.to_string()))?;
     let render_ms = js_sys::Date::now() - start;

@@ -1,4 +1,4 @@
-//! Native codec benchmark: renders a GLB at the current thumbnail size and
+//! Native codec benchmark: renders a GLB at the current default size and
 //! historical comparison sizes, then
 //! times each encoder (`bench_encodes`). Prints one JSON object to stdout;
 //! progress goes to stderr.
@@ -30,7 +30,7 @@ fn main() {
         };
         let started = std::time::Instant::now();
         let rendered =
-            pollster::block_on(render_core::render_glb_to_rgba(&glb, &options)).expect("render");
+            pollster::block_on(render_core::render_rgba(&glb, &options)).expect("render");
         let render_ms = started.elapsed().as_secs_f64() * 1000.0;
         let mut report = render_core::bench_encodes(&rendered, &now).expect("bench");
         report["renderMs"] = ((render_ms * 100.0).round() / 100.0).into();

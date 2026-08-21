@@ -21,8 +21,8 @@ const busyHandle = (): WasmRendererHandle => {
     return result;
   };
   return {
-    render_glb_to_image: () => run(new Uint8Array([1])),
-    render_glb_to_images: () => run({ images: [new Uint8Array([2])] }),
+    render_image: () => run(new Uint8Array([1])),
+    render_images: () => run({ images: [new Uint8Array([2])] }),
   };
 };
 
@@ -33,10 +33,10 @@ describe('serializeRenders', () => {
 
     // Four tiles mount on one page and render concurrently — the tutorial page shape.
     const results = await Promise.all([
-      handle.render_glb_to_image(glb, '{}'),
-      handle.render_glb_to_images(glb, '{}'),
-      handle.render_glb_to_image(glb, '{}'),
-      handle.render_glb_to_image(glb, '{}'),
+      handle.render_image(glb, '{}'),
+      handle.render_images(glb, '{}'),
+      handle.render_image(glb, '{}'),
+      handle.render_image(glb, '{}'),
     ]);
 
     expect(results).toHaveLength(4);
@@ -46,11 +46,11 @@ describe('serializeRenders', () => {
     const inner = busyHandle();
     const handle = serializeRenders({
       ...inner,
-      render_glb_to_images: () => Promise.reject(new Error('parse: unexpected glb magic')),
+      render_images: () => Promise.reject(new Error('parse: unexpected glb magic')),
     });
     const glb = new Uint8Array([0]);
 
-    await expect(handle.render_glb_to_images(glb, '{}')).rejects.toThrow('parse');
-    await expect(handle.render_glb_to_image(glb, '{}')).resolves.toEqual(new Uint8Array([1]));
+    await expect(handle.render_images(glb, '{}')).rejects.toThrow('parse');
+    await expect(handle.render_image(glb, '{}')).resolves.toEqual(new Uint8Array([1]));
   });
 });

@@ -2,7 +2,7 @@ import path from 'node:path';
 
 // Initial 0.1.0 package contract measured on 2026-08-15; changes require
 // explicit admission. 2026-08-20: +6 for the handles-first surface
-// (create-renderer, render-glb-to-pixels, describe-adapter modules).
+// (create-renderer, render-pixels, describe-adapter modules).
 const PACKAGE_FILE_COUNT_CEILING = 32;
 
 export const PACKAGE_FILES = [
@@ -25,12 +25,12 @@ export const PACKAGE_FILES = [
   'dist/options.mjs',
   'dist/render-error.d.mts',
   'dist/render-error.mjs',
-  'dist/render-glb-to-image.d.mts',
-  'dist/render-glb-to-image.mjs',
-  'dist/render-glb-to-images.d.mts',
-  'dist/render-glb-to-images.mjs',
-  'dist/render-glb-to-pixels.d.mts',
-  'dist/render-glb-to-pixels.mjs',
+  'dist/render-image.d.mts',
+  'dist/render-image.mjs',
+  'dist/render-images.d.mts',
+  'dist/render-images.mjs',
+  'dist/render-pixels.d.mts',
+  'dist/render-pixels.mjs',
   'dist/renderer.mjs',
   'dist/wasm/render_wasm.d.ts',
   'dist/wasm/render_wasm.js',

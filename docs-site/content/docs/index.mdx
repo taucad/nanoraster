@@ -25,13 +25,13 @@ same move in your own code.
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
 import { readFile, writeFile } from 'node:fs/promises';
 
 const glb = Uint8Array.from(await readFile('model.glb'));
 
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'png',
   width: 512,
   height: 512,

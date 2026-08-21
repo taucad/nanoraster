@@ -15,13 +15,13 @@ Start with one view so the camera controls are visible on their own.
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
 import { readFile, writeFile } from 'node:fs/promises';
 
 const glb = Uint8Array.from(await readFile('model.glb'));
 
-const front = await renderGlbToImage(glb, {
+const front = await renderImage(glb, {
   format: 'png',
   width: 512,
   height: 512,
@@ -39,20 +39,20 @@ await writeFile('front.png', front.bytes);
 ## Step 2: Switch to the batch call
 
 Rendering each view with its own call parses and uploads the GLB every time.
-`renderGlbToImages` does that once and renders every view in the list — start
+`renderImages` does that once and renders every view in the list — start
 with two, then add the rest in step 3. A sheet wants a tighter fit than a
 single hero image, so `margin` drops to `0.05`.
 
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImages } from 'nanoraster';
+import { renderImages } from 'nanoraster';
 
 import { readFile, writeFile } from 'node:fs/promises';
 
 const glb = Uint8Array.from(await readFile('model.glb'));
 
-const sheet = await renderGlbToImages(glb, {
+const sheet = await renderImages(glb, {
   format: 'png',
   width: 512,
   height: 512,
@@ -90,7 +90,7 @@ orients the top view once it is on its own.
 <RenderDemo>
 
 ```typescript
-const sheet = await renderGlbToImages(glb, {
+const sheet = await renderImages(glb, {
   format: 'png',
   width: 512,
   height: 512,
@@ -121,7 +121,7 @@ units too.
 <RenderDemo>
 
 ```typescript
-const sheet = await renderGlbToImages(glb, {
+const sheet = await renderImages(glb, {
   format: 'png',
   width: 512,
   height: 512,

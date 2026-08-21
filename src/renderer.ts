@@ -42,12 +42,9 @@ type WasmImagesResult = {
 };
 
 type WasmRenderer = {
-  render_glb_to_image: (
-    glb: Uint8Array<ArrayBuffer>,
-    optionsJson: string,
-  ) => Promise<Uint8Array<ArrayBuffer>>;
-  render_glb_to_images: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<WasmImagesResult>;
-  render_glb_to_pixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawPixelsResult>;
+  render_image: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<Uint8Array<ArrayBuffer>>;
+  render_images: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<WasmImagesResult>;
+  render_pixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawPixelsResult>;
   trim_targets: () => void;
   dispose: () => void;
 };
@@ -66,9 +63,9 @@ type NapiImagesResult = {
 };
 
 type NapiRenderer = {
-  renderGlbToImage: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<Uint8Array<ArrayBuffer>>;
-  renderGlbToImages: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<NapiImagesResult>;
-  renderGlbToPixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawPixelsResult>;
+  renderImage: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<Uint8Array<ArrayBuffer>>;
+  renderImages: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<NapiImagesResult>;
+  renderPixels: (glb: Uint8Array<ArrayBuffer>, optionsJson: string) => Promise<RawPixelsResult>;
   trimTargets: () => void;
   dispose: () => void;
 };
@@ -113,10 +110,9 @@ const loadWasmBindings = async (): Promise<RendererBindings> => {
     createRenderer: async (optionsJson) => {
       const renderer = await wasm.Renderer.create(optionsJson);
       return {
-        renderImage: async (glb, json) => renderer.render_glb_to_image(glb, json),
-        renderImages: async (glb, json) =>
-          normalizeImagesResult(await renderer.render_glb_to_images(glb, json)),
-        renderPixels: async (glb, json) => renderer.render_glb_to_pixels(glb, json),
+        renderImage: async (glb, json) => renderer.render_image(glb, json),
+        renderImages: async (glb, json) => normalizeImagesResult(await renderer.render_images(glb, json)),
+        renderPixels: async (glb, json) => renderer.render_pixels(glb, json),
         trimTargets: () => {
           renderer.trim_targets();
         },
@@ -154,9 +150,9 @@ const loadNapiBindings = async (): Promise<RendererBindings> => {
     createRenderer: async (optionsJson) => {
       const renderer = await native.createRenderer(optionsJson);
       return {
-        renderImage: async (glb, json) => renderer.renderGlbToImage(glb, json),
-        renderImages: async (glb, json) => normalizeImagesResult(await renderer.renderGlbToImages(glb, json)),
-        renderPixels: async (glb, json) => renderer.renderGlbToPixels(glb, json),
+        renderImage: async (glb, json) => renderer.renderImage(glb, json),
+        renderImages: async (glb, json) => normalizeImagesResult(await renderer.renderImages(glb, json)),
+        renderPixels: async (glb, json) => renderer.renderPixels(glb, json),
         trimTargets: () => {
           renderer.trimTargets();
         },

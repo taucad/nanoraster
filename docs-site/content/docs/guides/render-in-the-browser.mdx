@@ -44,12 +44,12 @@ Only the source of the GLB differs: a fetch, a file input or an in-memory
 buffer instead of the filesystem.
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
 const response = await fetch('/model.glb');
 const glb = new Uint8Array(await response.arrayBuffer());
 
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'webp',
   width: 640,
   height: 480,
@@ -86,7 +86,7 @@ let renderer: Promise<Renderer> | undefined;
 self.addEventListener('message', async ({ data }: MessageEvent<Uint8Array>) => {
   try {
     renderer ??= createRenderer();
-    const image = await (await renderer).renderGlbToImage(data, { format: 'webp' });
+    const image = await (await renderer).renderImage(data, { format: 'webp' });
     self.postMessage(image.bytes, [image.bytes.buffer]);
   } catch (error) {
     self.postMessage({ error: error instanceof Error ? error.message : String(error) });
@@ -136,7 +136,7 @@ const anglesFromOffset = ([x, y, z]: readonly [number, number, number]) => {
   };
 };
 
-const image = await renderGlbToImage(glb, { format: 'webp', ...anglesFromOffset(eye) });
+const image = await renderImage(glb, { format: 'webp', ...anglesFromOffset(eye) });
 ```
 
 Distance is discarded on purpose: nanoraster

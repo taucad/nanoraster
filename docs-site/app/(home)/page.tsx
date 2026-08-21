@@ -6,9 +6,9 @@ import { SizeStrip } from '@/components/size-strip';
 
 import styles from './page.module.css';
 
-const heroExample = `import { renderGlbToImage } from 'nanoraster';
+const heroExample = `import { renderImage } from 'nanoraster';
 
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'webp',
   quality: 1,
   phi: 60,

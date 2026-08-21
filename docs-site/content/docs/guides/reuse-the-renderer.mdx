@@ -21,8 +21,8 @@ Three things amortize the device, and they compose:
 
 - **The module-level functions** already share one renderer per process. A
   script, a one-off, a service that renders whatever arrives next on default
-  settings — reach for `renderGlbToImage` and stop here.
-- **One `renderGlbToImages` call** additionally parses and uploads the GLB once
+  settings — reach for `renderImage` and stop here.
+- **One `renderImages` call** additionally parses and uploads the GLB once
   and pipelines the views: six warm one-shot renders take about three times as
   long as the same six views in one plan call. If you can write the full list
   of images down — a contact sheet, a resolution ladder, a turntable — make one
@@ -50,7 +50,7 @@ import { createRenderer } from 'nanoraster';
 const renderer = await createRenderer({ powerPreference: 'low-power' });
 
 for await (const model of modelsAsTheyArrive) {
-  const image = await renderer.renderGlbToImage(model.glb, { format: 'webp', width: 512 });
+  const image = await renderer.renderImage(model.glb, { format: 'webp', width: 512 });
   await store(model.id, image);
 }
 ```
@@ -71,7 +71,7 @@ keeps workers warm.
 ```typescript
 using renderer = await createRenderer();
 
-const image = await renderer.renderGlbToImage(glb, { format: 'png' });
+const image = await renderer.renderImage(glb, { format: 'png' });
 // renderer.dispose() runs automatically at scope exit.
 ```
 
@@ -96,7 +96,7 @@ device actually carried over: a warm renderer reports the parse and per-view
 work, while setup stays near zero after the first call.
 
 ```typescript
-const results = await renderer.renderGlbToImages(glb, {
+const results = await renderer.renderImages(glb, {
   format: 'webp',
   profile: true,
   views: [{ id: 'iso', phi: 60, theta: -45 }],

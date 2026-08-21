@@ -41,9 +41,9 @@ describe('renderer binding selection', () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' });
     Object.defineProperty(process, 'arch', { configurable: true, value: 'arm64' });
     const nativeRenderer = {
-      renderGlbToImage: vi.fn(() => Promise.resolve(new Uint8Array([21]))),
-      renderGlbToImages: vi.fn(() => Promise.resolve({ images: [new Uint8Array([22])], profile: null })),
-      renderGlbToPixels: vi.fn(() => Promise.resolve({ rgba: new Uint8Array([23]), width: 1, height: 1 })),
+      renderImage: vi.fn(() => Promise.resolve(new Uint8Array([21]))),
+      renderImages: vi.fn(() => Promise.resolve({ images: [new Uint8Array([22])], profile: null })),
+      renderPixels: vi.fn(() => Promise.resolve({ rgba: new Uint8Array([23]), width: 1, height: 1 })),
       trimTargets: vi.fn(),
       dispose: vi.fn(),
     };
@@ -79,11 +79,11 @@ describe('renderer binding selection', () => {
     Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { gpu: {} } });
     const initialize = vi.fn((_options: { module_or_path: URL }) => Promise.resolve(undefined));
     const wasmRenderer = {
-      render_glb_to_image: vi.fn(() => Promise.resolve(new Uint8Array([31]))),
-      render_glb_to_images: vi.fn(() =>
+      render_image: vi.fn(() => Promise.resolve(new Uint8Array([31]))),
+      render_images: vi.fn(() =>
         Promise.resolve({ images: [new Uint8Array([32])], profile: 'profile-json' }),
       ),
-      render_glb_to_pixels: vi.fn(() => Promise.resolve({ rgba: new Uint8Array([33]), width: 1, height: 1 })),
+      render_pixels: vi.fn(() => Promise.resolve({ rgba: new Uint8Array([33]), width: 1, height: 1 })),
       trim_targets: vi.fn(),
       dispose: vi.fn(),
     };
@@ -148,16 +148,16 @@ describe('renderer binding selection', () => {
       return value;
     };
     const nativeRenderer = {
-      renderGlbToImage: vi.fn(() => serialized(new Uint8Array([21]))),
-      renderGlbToImages: vi.fn(() => serialized({ images: [new Uint8Array([22])], profile: null })),
-      renderGlbToPixels: vi.fn(() => serialized({ rgba: new Uint8Array([23]), width: 1, height: 1 })),
+      renderImage: vi.fn(() => serialized(new Uint8Array([21]))),
+      renderImages: vi.fn(() => serialized({ images: [new Uint8Array([22])], profile: null })),
+      renderPixels: vi.fn(() => serialized({ rgba: new Uint8Array([23]), width: 1, height: 1 })),
       trimTargets: vi.fn(),
       dispose: vi.fn(),
     };
     const native = {
-      renderGlbToImage: vi.fn(() => Promise.resolve(new Uint8Array([1]))),
-      renderGlbToImages: vi.fn(() => Promise.resolve({ images: [new Uint8Array([2])], profile: null })),
-      renderGlbToPixels: vi.fn(() => Promise.resolve({ rgba: new Uint8Array([3]), width: 9, height: 9 })),
+      renderImage: vi.fn(() => Promise.resolve(new Uint8Array([1]))),
+      renderImages: vi.fn(() => Promise.resolve({ images: [new Uint8Array([2])], profile: null })),
+      renderPixels: vi.fn(() => Promise.resolve({ rgba: new Uint8Array([3]), width: 9, height: 9 })),
       createRenderer: vi.fn(() => Promise.resolve(nativeRenderer)),
       describeAdapter: vi.fn(() => 'Metal / Test (IntegratedGpu)'),
     };
@@ -180,7 +180,7 @@ describe('renderer binding selection', () => {
     ]);
     expect(native.createRenderer).toHaveBeenCalledOnce();
     expect(native.createRenderer).toHaveBeenCalledWith(undefined);
-    expect(native.renderGlbToImage).not.toHaveBeenCalled();
+    expect(native.renderImage).not.toHaveBeenCalled();
     // The one-shot guard runs after every call, so an oversized target set
     // never outlives the render that needed it.
     expect(nativeRenderer.trimTargets).toHaveBeenCalledTimes(4);
@@ -190,9 +190,9 @@ describe('renderer binding selection', () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' });
     Object.defineProperty(process, 'arch', { configurable: true, value: 'arm64' });
     const nativeRenderer = {
-      renderGlbToImage: vi.fn(() => Promise.resolve(new Uint8Array([21]))),
-      renderGlbToImages: vi.fn(),
-      renderGlbToPixels: vi.fn(),
+      renderImage: vi.fn(() => Promise.resolve(new Uint8Array([21]))),
+      renderImages: vi.fn(),
+      renderPixels: vi.fn(),
       trimTargets: vi.fn(),
       dispose: vi.fn(),
     };

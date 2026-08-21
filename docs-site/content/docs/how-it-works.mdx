@@ -46,7 +46,7 @@ code names the stage that rejected the work, the
 [retry decision](guides/handle-render-failures) is mechanical rather than a
 guess.
 
-[`renderGlbToImages`](api#renderglbtoimages) parses and uploads once, then fits,
+[`renderImages`](api#renderimages) parses and uploads once, then fits,
 rasterises and encodes once per view. A profiled call's
 [`RenderProfile`](api#renderprofile) fields map one-to-one onto these stages —
 `parseMs` for parse and fit, `setupMs` for device acquisition and upload, then

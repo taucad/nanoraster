@@ -12,9 +12,9 @@ lights and inherits every value it leaves out.
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'png',
   lighting: {
     lights: [
@@ -49,7 +49,7 @@ The studio preset, for reference (`ambient: 0.02`, analytic environment):
 <RenderDemo>
 
 ```typescript
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'png',
   lighting: {
     lights: [],
@@ -74,7 +74,7 @@ subject is black.
 <RenderDemo>
 
 ```typescript
-const images = await renderGlbToImages(glb, {
+const images = await renderImages(glb, {
   format: 'png',
   lighting: {
     lights: [{ direction: [1, 0.4, 0], color: [3, 2.9, 2.7] }],
@@ -99,7 +99,7 @@ contact sheets.
 ### 4. Keep the preset pinned
 
 ```typescript
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'png',
   lighting: 'studio',
 });
@@ -111,7 +111,7 @@ the image was lit; [determinism](../how-it-works#determinism) covers either.
 
 ## Variations
 
-**Lighting is shared across a batch.** `renderGlbToImages` takes one rig for the
+**Lighting is shared across a batch.** `renderImages` takes one rig for the
 whole call; a model-fixed light is `space: 'world'`, as above.
 
 **Annotations ignore the rig.** The axis indicator, label and scale bar are

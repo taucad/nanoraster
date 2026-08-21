@@ -47,12 +47,12 @@ Any static glTF 2.0 binary works as `model.glb`; the examples in these docs use
 a 12-tooth spur gear.
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
 import { readFile } from 'node:fs/promises';
 
 const glb = Uint8Array.from(await readFile('model.glb'));
-const image = await renderGlbToImage(glb, { format: 'png' });
+const image = await renderImage(glb, { format: 'png' });
 
 console.log(image.name, image.bytes.length, image.mimeType);
 ```

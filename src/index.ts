@@ -8,9 +8,9 @@
  *
  */
 
-export { renderGlbToImage } from '#render-glb-to-image.js';
-export { renderGlbToImages } from '#render-glb-to-images.js';
-export { renderGlbToPixels } from '#render-glb-to-pixels.js';
+export { renderImage } from '#render-image.js';
+export { renderImages } from '#render-images.js';
+export { renderPixels } from '#render-pixels.js';
 export { createRenderer } from '#create-renderer.js';
 export type { CreateRendererOptions, Renderer } from '#create-renderer.js';
 export { describeAdapter } from '#describe-adapter.js';

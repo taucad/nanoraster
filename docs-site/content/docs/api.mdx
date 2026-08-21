@@ -9,9 +9,9 @@ the call; the bytes you get back are newly allocated and yours.
 ## Every option and its default
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'png', // required
   width: 768, // default
   height: 432, // default
@@ -30,21 +30,21 @@ const image = await renderGlbToImage(glb, {
 });
 ```
 
-`renderGlbToImages` takes the same shared keys, minus `phi`, `theta` and `label`,
+`renderImages` takes the same shared keys, minus `phi`, `theta` and `label`,
 plus `views: [{ id, label?, phi, theta, width?, height?, format?, quality? }]`:
 one entry per image, in result order, where each view may override the shared
 output settings. It also accepts `profile: true` to attach stage timings to the
-result. `renderGlbToPixels` takes the singular keys minus `format` and
+result. `renderPixels` takes the singular keys minus `format` and
 `quality` — nothing is encoded.
 
 ## Render
 
-### `renderGlbToImage`
+### `renderImage`
 
 Render one GLB camera view to one owned image file.
 
 ```typescript
-export declare const renderGlbToImage: (
+export declare const renderImage: (
   glb: Uint8Array<ArrayBuffer>,
   options: RenderImageOptions,
 ) => Promise<RenderedImageFile>;
@@ -56,19 +56,19 @@ export declare const renderGlbToImage: (
   or encoding failures.
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
-const image = await renderGlbToImage(glb, { format: 'png', width: 512 });
+const image = await renderImage(glb, { format: 'png', width: 512 });
 ```
 
-### `renderGlbToImages`
+### `renderImages`
 
 Parse and upload a GLB once, then render an ordered set of identified views —
 the plan call. Each view may override the shared `width`, `height`, `format`,
 and `quality`, so one call renders a whole resolution or format ladder.
 
 ```typescript
-export declare const renderGlbToImages: <const Options extends RenderImagesOptions>(
+export declare const renderImages: <const Options extends RenderImagesOptions>(
   glb: Uint8Array<ArrayBuffer>,
   options: StrictRenderImagesOptions<Options>,
 ) => Promise<RenderedImages<Options['views'], Options['format']>>;
@@ -87,9 +87,9 @@ its `profile` property.
   images the renderer returned.
 
 ```typescript
-import { renderGlbToImages } from 'nanoraster';
+import { renderImages } from 'nanoraster';
 
-const [iso, front] = await renderGlbToImages(glb, {
+const [iso, front] = await renderImages(glb, {
   format: 'png',
   views: [
     { id: 'iso', phi: 60, theta: -45 },
@@ -98,14 +98,14 @@ const [iso, front] = await renderGlbToImages(glb, {
 });
 ```
 
-### `renderGlbToPixels`
+### `renderPixels`
 
 Render one view to raw straight-alpha, sRGB-encoded RGBA8 pixels, skipping the
 encode entirely. [Work with raw pixels](guides/work-with-raw-pixels) shows the
 canvas, custom-encoder, and pixel-comparison uses.
 
 ```typescript
-export declare const renderGlbToPixels: (
+export declare const renderPixels: (
   glb: Uint8Array<ArrayBuffer>,
   options: RenderPixelsOptions,
 ) => Promise<RenderedPixels>;
@@ -118,9 +118,9 @@ export declare const renderGlbToPixels: (
   faults; there is no encode step to fail.
 
 ```typescript
-import { renderGlbToPixels } from 'nanoraster';
+import { renderPixels } from 'nanoraster';
 
-const { rgba, width, height } = await renderGlbToPixels(glb, { width: 512 });
+const { rgba, width, height } = await renderPixels(glb, { width: 512 });
 ```
 
 ## Renderer reuse
@@ -149,7 +149,7 @@ export declare const createRenderer: (options?: CreateRendererOptions) => Promis
 import { createRenderer } from 'nanoraster';
 
 using renderer = await createRenderer({ powerPreference: 'low-power' });
-const image = await renderer.renderGlbToImage(glb, { format: 'png' });
+const image = await renderer.renderImage(glb, { format: 'png' });
 ```
 
 ### `Renderer`
@@ -160,15 +160,15 @@ same results, byte-identical pixels on the same adapter — but reuse one device
 
 ```typescript
 export type Renderer = {
-  readonly renderGlbToImage: (
+  readonly renderImage: (
     glb: Uint8Array<ArrayBuffer>,
     options: RenderImageOptions,
   ) => Promise<RenderedImageFile>;
-  readonly renderGlbToImages: <const Options extends RenderImagesOptions>(
+  readonly renderImages: <const Options extends RenderImagesOptions>(
     glb: Uint8Array<ArrayBuffer>,
     options: StrictRenderImagesOptions<Options>,
   ) => Promise<RenderedImages<Options['views'], Options['format']>>;
-  readonly renderGlbToPixels: (
+  readonly renderPixels: (
     glb: Uint8Array<ArrayBuffer>,
     options: RenderPixelsOptions,
   ) => Promise<RenderedPixels>;
@@ -182,7 +182,7 @@ Contract points:
 - A renderer is **single-realm**: create it inside the worker that uses it.
   Handles cannot cross `postMessage`; bytes can.
 - Calls on one renderer run **in sequence**; a declared set of images should
-  always go through one `renderGlbToImages` call, never a loop.
+  always go through one `renderImages` call, never a loop.
 - **Device loss is recovered transparently** on the next call; the renderer
   rebuilds its device and re-uploads on demand.
 - After `dispose()`, every call rejects with `RenderError` code `'gpu'` —
@@ -227,10 +227,10 @@ export declare const createRenderImageOptions: <const Options extends RenderImag
 ```
 
 ```typescript
-import { createRenderImageOptions, renderGlbToImage } from 'nanoraster';
+import { createRenderImageOptions, renderImage } from 'nanoraster';
 
 const options = createRenderImageOptions({ format: 'webp', quality: 0.8 });
-const image = await renderGlbToImage(glb, options);
+const image = await renderImage(glb, options);
 ```
 
 ### `createRenderImagesOptions`
@@ -245,14 +245,14 @@ export declare const createRenderImagesOptions: <const Options extends RenderIma
 ```
 
 ```typescript
-import { createRenderImagesOptions, renderGlbToImages } from 'nanoraster';
+import { createRenderImagesOptions, renderImages } from 'nanoraster';
 
 const options = createRenderImagesOptions({
   format: 'png',
   views: [{ id: 'iso', phi: 60, theta: -45 }],
 });
 
-const [iso] = await renderGlbToImages(glb, options);
+const [iso] = await renderImages(glb, options);
 ```
 
 ## Options
@@ -362,16 +362,16 @@ channel within `renderImageLightColorRange`.
 
 ### `RenderedImageFile`
 
-Returned directly by [`renderGlbToImage`](#renderglbtoimage).
+Returned directly by [`renderImage`](#renderimage).
 
 <auto-type-table path="./props.ts" name="RenderedImageFile" caption="RenderedImageFile properties" />
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
 import { writeFile } from 'node:fs/promises';
 
-const image = await renderGlbToImage(glb, { format: 'png' });
+const image = await renderImage(glb, { format: 'png' });
 await writeFile(image.name, image.bytes);
 ```
 
@@ -384,7 +384,7 @@ the matching view.
 
 ### `RenderedImages`
 
-The tuple returned by [`renderGlbToImages`](#renderglbtoimages).
+The tuple returned by [`renderImages`](#renderimages).
 
 ```typescript
 export type RenderedImages<
@@ -404,9 +404,9 @@ prototype members as result fields. `ViewOutputFormat` is the internal
 conditional that picks the override when one exists.
 
 ```typescript
-import { renderGlbToImages } from 'nanoraster';
+import { renderImages } from 'nanoraster';
 
-const [iso, top] = await renderGlbToImages(glb, {
+const [iso, top] = await renderImages(glb, {
   format: 'png',
   views: [
     { id: 'iso', phi: 60, theta: -45 },
@@ -420,8 +420,8 @@ console.log(top.id, top.file.name); // 'top' 'thumbnail-top.png'
 
 ### `RenderedPixels`
 
-Returned by [`renderGlbToPixels`](#renderglbtopixels) and
-`Renderer.renderGlbToPixels`. The rows are straight-alpha, sRGB-encoded, and
+Returned by [`renderPixels`](#renderpixels) and
+`Renderer.renderPixels`. The rows are straight-alpha, sRGB-encoded, and
 tightly packed (`width * height * 4` bytes) — exactly what a canvas
 `ImageData` expects after a `Uint8ClampedArray` wrap.
 
@@ -506,10 +506,10 @@ export declare class RenderError extends Error {
 - `isGpuFault` is `true` for `adapter-unavailable`, `device-lost`, and `gpu`.
 
 ```typescript
-import { RenderError, renderGlbToImage } from 'nanoraster';
+import { RenderError, renderImage } from 'nanoraster';
 
 try {
-  await renderGlbToImage(glb, { format: 'png' });
+  await renderImage(glb, { format: 'png' });
 } catch (error) {
   const failure = RenderError.from(error);
   if (!failure.isGpuFault) throw failure;

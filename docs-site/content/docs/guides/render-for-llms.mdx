@@ -55,9 +55,9 @@ annotations exist to put that context into the pixels themselves:
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'webp',
   background: '#101418',
   includeAxes: true,

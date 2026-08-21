@@ -1,10 +1,5 @@
 import { beforeAll, expect, test } from 'vitest';
-import init, {
-  Renderer,
-  codec_conformance,
-  describe_adapter,
-  render_glb_to_image,
-} from 'nanoraster-wasm-candidate';
+import init, { Renderer, codec_conformance, describe_adapter, render_image } from 'nanoraster-wasm-candidate';
 
 import { withPbrFactors } from '../pbr-fixture.mjs';
 
@@ -27,7 +22,7 @@ test('wasm shell reports a real adapter and stable codec fingerprints', async ()
 });
 
 test('wasm shell renders a deterministic 192x192 PNG', async () => {
-  const png = await render_glb_to_image(glb, JSON.stringify({ width: 192, height: 192, format: 'png' }));
+  const png = await render_image(glb, JSON.stringify({ width: 192, height: 192, format: 'png' }));
   expect([...png.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
   const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
   expect(view.getUint32(16)).toBe(192);
@@ -37,14 +32,14 @@ test('wasm shell renders a deterministic 192x192 PNG', async () => {
 
 test('a warm renderer produces byte-identical output and disposes cleanly', async () => {
   const options = JSON.stringify({ width: 192, height: 192, format: 'png' });
-  const oneShot = await render_glb_to_image(glb, options);
+  const oneShot = await render_image(glb, options);
   const renderer = await Renderer.create();
-  const first = await renderer.render_glb_to_image(glb, options);
-  const second = await renderer.render_glb_to_image(glb, options);
+  const first = await renderer.render_image(glb, options);
+  const second = await renderer.render_image(glb, options);
   expect(first).toEqual(oneShot);
   expect(second).toEqual(oneShot);
 
-  const batch = await renderer.render_glb_to_images(
+  const batch = await renderer.render_images(
     glb,
     JSON.stringify({
       width: 192,
@@ -65,15 +60,15 @@ test('a warm renderer produces byte-identical output and disposes cleanly', asyn
   // The one-shot façade's retention guard: trimming keeps the device warm and
   // changes no pixels, whether or not anything was retained.
   renderer.trim_targets();
-  expect(await renderer.render_glb_to_image(glb, options)).toEqual(oneShot);
+  expect(await renderer.render_image(glb, options)).toEqual(oneShot);
 
-  const pixels = await renderer.render_glb_to_pixels(glb, JSON.stringify({ width: 64, height: 48 }));
+  const pixels = await renderer.render_pixels(glb, JSON.stringify({ width: 64, height: 48 }));
   expect(pixels.width).toBe(64);
   expect(pixels.height).toBe(48);
   expect(pixels.rgba.byteLength).toBe(64 * 48 * 4);
 
   renderer.dispose();
-  await expect(renderer.render_glb_to_image(glb, options)).rejects.toThrow('gpu: renderer disposed');
+  await expect(renderer.render_image(glb, options)).rejects.toThrow('gpu: renderer disposed');
 });
 
 test('overlapping calls on one raw renderer reject busy', async () => {
@@ -82,8 +77,8 @@ test('overlapping calls on one raw renderer reject busy', async () => {
   const options = JSON.stringify({ width: 192, height: 192, format: 'png' });
   const renderer = await Renderer.create();
   const settled = await Promise.allSettled([
-    renderer.render_glb_to_image(glb, options),
-    renderer.render_glb_to_image(glb, options),
+    renderer.render_image(glb, options),
+    renderer.render_image(glb, options),
   ]);
   expect(settled[0].status).toBe('fulfilled');
   expect(settled[1].status).toBe('rejected');
@@ -95,10 +90,10 @@ test('PBR factors produce deterministic and distinguishable renders', async () =
   const options = JSON.stringify({ width: 192, height: 192, format: 'png' });
   const matte = withPbrFactors(glb, { metallic: 0, roughness: 0.85 });
   const metal = withPbrFactors(glb, { metallic: 1, roughness: 0.05 });
-  const matteFirst = await render_glb_to_image(matte, options);
-  const matteSecond = await render_glb_to_image(matte, options);
-  const metalFirst = await render_glb_to_image(metal, options);
-  const metalSecond = await render_glb_to_image(metal, options);
+  const matteFirst = await render_image(matte, options);
+  const matteSecond = await render_image(matte, options);
+  const metalFirst = await render_image(metal, options);
+  const metalSecond = await render_image(metal, options);
 
   expect(matteFirst).toEqual(matteSecond);
   expect(metalFirst).toEqual(metalSecond);

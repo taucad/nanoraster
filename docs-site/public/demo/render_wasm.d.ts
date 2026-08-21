@@ -14,9 +14,9 @@ export class Renderer {
     private constructor();
     free(): void;
     static create(options_json?: string): Promise<Renderer>;
-    render_glb_to_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
-    render_glb_to_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
-    render_glb_to_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
+    render_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
+    render_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
+    render_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
     trim_targets(): void;
     dispose(): void;
 }
@@ -24,9 +24,9 @@ export class Renderer {
 
 
 /** Render ordered identified views through one batch-scoped plan call. */
-export function render_glb_to_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
+export function render_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
 /** Render a kernel GLB to raw straight-alpha RGBA8 pixels (no encode). */
-export function render_glb_to_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
+export function render_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
 
 
 
@@ -60,7 +60,7 @@ export function describe_adapter(): Promise<string>;
  * One-shot sugar: creates and destroys a device per call — hold a `Renderer`
  * to amortize that across calls.
  */
-export function render_glb_to_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
+export function render_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
@@ -68,14 +68,14 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_renderer_free: (a: number, b: number) => void;
     readonly renderer_create: (a: number, b: number) => number;
-    readonly renderer_render_glb_to_image: (a: number, b: number, c: number, d: number, e: number) => number;
-    readonly renderer_render_glb_to_images: (a: number, b: number, c: number, d: number, e: number) => number;
-    readonly renderer_render_glb_to_pixels: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly renderer_render_image: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly renderer_render_images: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly renderer_render_pixels: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly renderer_trim_targets: (a: number) => void;
     readonly renderer_dispose: (a: number) => void;
-    readonly render_glb_to_image: (a: number, b: number, c: number, d: number) => number;
-    readonly render_glb_to_images: (a: number, b: number, c: number, d: number) => number;
-    readonly render_glb_to_pixels: (a: number, b: number, c: number, d: number) => number;
+    readonly render_image: (a: number, b: number, c: number, d: number) => number;
+    readonly render_images: (a: number, b: number, c: number, d: number) => number;
+    readonly render_pixels: (a: number, b: number, c: number, d: number) => number;
     readonly bench_codecs: (a: number, b: number, c: number, d: number) => number;
     readonly bench_multi_view: (a: number, b: number, c: number, d: number) => number;
     readonly codec_conformance: (a: number) => void;

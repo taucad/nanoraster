@@ -133,7 +133,7 @@ pub struct RenderOptions {
     pub line_width: f32,
     /// World up axis for camera placement and view fitting.
     pub up: UpAxis,
-    /// Perspective for ordinary thumbnails, orthographic for canonical views.
+    /// Perspective for ordinary renders, orthographic for canonical views.
     pub projection: Projection,
     /// Background clear color as sRGB straight-alpha `[r, g, b, a]` in 0..=1;
     /// `None` renders on transparent. JPEG output requires an opaque one.
@@ -427,7 +427,7 @@ impl Renderer {
 
     /// Render ordered identified views on this renderer's warm device, parsing
     /// and uploading the GLB once. The whole plan executes in one crossing.
-    pub async fn render_glb_to_images(
+    pub async fn render_images(
         &mut self,
         glb: &[u8],
         options: &RenderOptions,
@@ -462,7 +462,7 @@ impl Renderer {
 
     /// Render one view on this renderer's warm device straight to
     /// straight-alpha RGBA8 pixels (overlay stamped, no encode).
-    pub async fn render_glb_to_rgba(
+    pub async fn render_rgba(
         &mut self,
         glb: &[u8],
         options: &RenderOptions,
@@ -492,7 +492,7 @@ impl Renderer {
         let (options, format) = RenderRequest::from_json(options_json)?.resolve()?;
         let view = singular_view(&options);
         let (mut images, _) = self
-            .render_glb_to_images(glb, &options, format, std::slice::from_ref(&view), None)
+            .render_images(glb, &options, format, std::slice::from_ref(&view), None)
             .await?;
         Ok(images.remove(0))
     }
@@ -525,7 +525,7 @@ impl Renderer {
         } else {
             None
         };
-        self.render_glb_to_images(glb, &options, format, &views, clock)
+        self.render_images(glb, &options, format, &views, clock)
             .await
     }
 
@@ -538,7 +538,7 @@ impl Renderer {
         options_json: &str,
     ) -> Result<Rendered, RenderError> {
         let (options, _format) = RenderRequest::from_json(options_json)?.resolve()?;
-        self.render_glb_to_rgba(glb, &options).await
+        self.render_rgba(glb, &options).await
     }
 }
 
@@ -561,7 +561,7 @@ fn instant_clock() -> impl Fn() -> f64 + Sync {
 }
 
 /// Render a kernel GLB to straight-alpha RGBA8 (sRGB-encoded) pixels.
-pub async fn render_glb_to_rgba(
+pub async fn render_rgba(
     glb: &[u8],
     options: &RenderOptions,
 ) -> Result<Rendered, RenderError> {
@@ -588,19 +588,19 @@ pub async fn render_glb_to_rgba(
 }
 
 /// Render a kernel GLB straight to encoded image bytes.
-pub async fn render_glb_to_image(
+pub async fn render_image(
     glb: &[u8],
     options: &RenderOptions,
     format: ImageFormat,
 ) -> Result<Vec<u8>, RenderError> {
     let view = singular_view(options);
     let mut images =
-        render_glb_to_images(glb, options, format, std::slice::from_ref(&view)).await?;
+        render_images(glb, options, format, std::slice::from_ref(&view)).await?;
     Ok(images.remove(0))
 }
 
 /// Render ordered views while parsing and uploading the GLB only once.
-pub async fn render_glb_to_images(
+pub async fn render_images(
     glb: &[u8],
     options: &RenderOptions,
     format: ImageFormat,
@@ -612,7 +612,7 @@ pub async fn render_glb_to_images(
 }
 
 /// Benchmark entry using the production batch path plus a caller-provided clock.
-pub async fn render_glb_to_images_profiled(
+pub async fn render_images_profiled(
     glb: &[u8],
     options: &RenderOptions,
     format: ImageFormat,
@@ -625,15 +625,15 @@ pub async fn render_glb_to_images_profiled(
 
 /// One-call surface for the wasm/napi bindings: parse the TS façade's JSON
 /// render request (see [`RenderRequest`]), render, encode.
-pub async fn render_glb_request(glb: &[u8], options_json: &str) -> Result<Vec<u8>, RenderError> {
+pub async fn render_image_request(glb: &[u8], options_json: &str) -> Result<Vec<u8>, RenderError> {
     let (options, format) = RenderRequest::from_json(options_json)?.resolve()?;
-    render_glb_to_image(glb, &options, format).await
+    render_image(glb, &options, format).await
 }
 
 /// Binding surface for an ordered plural request. The request's
 /// `profile: true` flag opts into stage timings; `now` supplies the clock on
 /// wasm (native self-clocks via `Instant`).
-pub async fn render_glb_images_request(
+pub async fn render_images_request(
     glb: &[u8],
     options_json: &str,
     now: Option<&ProfileClock>,
@@ -662,12 +662,12 @@ pub async fn render_glb_images_request(
 
 /// Binding surface for a singular raw-pixels request (`format`/`quality` in
 /// the request are ignored — nothing is encoded).
-pub async fn render_glb_pixels_request(
+pub async fn render_pixels_request(
     glb: &[u8],
     options_json: &str,
 ) -> Result<Rendered, RenderError> {
     let (options, _format) = RenderRequest::from_json(options_json)?.resolve()?;
-    render_glb_to_rgba(glb, &options).await
+    render_rgba(glb, &options).await
 }
 
 /// Report the adapter wgpu selects (backend + device name) — lets consumers
@@ -860,7 +860,7 @@ mod tests {
             width: Some(8),
             ..view("tiny", 60.0, -45.0)
         };
-        let error = pollster::block_on(render_glb_to_images(
+        let error = pollster::block_on(render_images(
             FIXTURE,
             &RenderOptions::default(),
             ImageFormat::Png,
@@ -876,10 +876,10 @@ mod tests {
             width: 1,
             ..Default::default()
         };
-        assert!(pollster::block_on(render_glb_to_rgba(FIXTURE, &invalid_options)).is_err());
-        assert!(pollster::block_on(render_glb_to_rgba(b"bad", &RenderOptions::default())).is_err());
+        assert!(pollster::block_on(render_rgba(FIXTURE, &invalid_options)).is_err());
+        assert!(pollster::block_on(render_rgba(b"bad", &RenderOptions::default())).is_err());
         assert!(
-            pollster::block_on(render_glb_to_rgba(
+            pollster::block_on(render_rgba(
                 FIXTURE,
                 &RenderOptions {
                     include_label: true,
@@ -889,7 +889,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            pollster::block_on(render_glb_to_image(
+            pollster::block_on(render_image(
                 b"bad",
                 &RenderOptions::default(),
                 ImageFormat::Png,
@@ -897,7 +897,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            pollster::block_on(render_glb_to_images(
+            pollster::block_on(render_images(
                 FIXTURE,
                 &RenderOptions::default(),
                 ImageFormat::Png,
@@ -906,7 +906,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            pollster::block_on(render_glb_to_images_profiled(
+            pollster::block_on(render_images_profiled(
                 b"bad",
                 &RenderOptions::default(),
                 ImageFormat::Png,
@@ -915,18 +915,18 @@ mod tests {
             ))
             .is_err()
         );
-        assert!(pollster::block_on(render_glb_request(FIXTURE, "{")).is_err());
-        assert!(pollster::block_on(render_glb_request(FIXTURE, r#"{"width":1}"#)).is_err());
-        assert!(pollster::block_on(render_glb_images_request(FIXTURE, "{}", None)).is_err());
+        assert!(pollster::block_on(render_image_request(FIXTURE, "{")).is_err());
+        assert!(pollster::block_on(render_image_request(FIXTURE, r#"{"width":1}"#)).is_err());
+        assert!(pollster::block_on(render_images_request(FIXTURE, "{}", None)).is_err());
         assert!(
-            pollster::block_on(render_glb_images_request(
+            pollster::block_on(render_images_request(
                 FIXTURE,
                 r#"{"views":[{"id":"x","phi":null,"theta":0}]}"#,
                 None,
             ))
             .is_err()
         );
-        assert!(pollster::block_on(render_glb_pixels_request(FIXTURE, r#"{"width":1}"#)).is_err());
+        assert!(pollster::block_on(render_pixels_request(FIXTURE, r#"{"width":1}"#)).is_err());
         assert!(
             pollster::block_on(Renderer::from_request(Some(
                 r#"{"powerPreference":"turbo"}"#
@@ -936,7 +936,7 @@ mod tests {
 
         let front = view("bad", 90.0, 0.0);
         assert!(
-            pollster::block_on(render_glb_to_images(
+            pollster::block_on(render_images(
                 FIXTURE,
                 &invalid_options,
                 ImageFormat::Png,
@@ -945,7 +945,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            pollster::block_on(render_glb_to_images(
+            pollster::block_on(render_images(
                 FIXTURE,
                 &RenderOptions::default(),
                 ImageFormat::Png,
@@ -957,7 +957,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            pollster::block_on(render_glb_to_images(
+            pollster::block_on(render_images(
                 FIXTURE,
                 &RenderOptions {
                     include_label: true,
@@ -988,7 +988,7 @@ mod tests {
         }];
 
         let rendered =
-            pollster::block_on(render_glb_to_rgba(FIXTURE, &options)).expect("RGBA render");
+            pollster::block_on(render_rgba(FIXTURE, &options)).expect("RGBA render");
         assert_eq!(rendered.width, 192);
         assert_eq!(rendered.height, 192);
         let material_options = RenderOptions {
@@ -996,14 +996,14 @@ mod tests {
             height: 192,
             ..Default::default()
         };
-        let baseline = pollster::block_on(render_glb_to_rgba(FIXTURE, &material_options))
+        let baseline = pollster::block_on(render_rgba(FIXTURE, &material_options))
             .expect("baseline material");
-        let polished_metal = pollster::block_on(render_glb_to_rgba(
+        let polished_metal = pollster::block_on(render_rgba(
             &material_variant(1.0, 0.05),
             &material_options,
         ))
         .expect("polished metal material");
-        let polished_metal_repeat = pollster::block_on(render_glb_to_rgba(
+        let polished_metal_repeat = pollster::block_on(render_rgba(
             &material_variant(1.0, 0.05),
             &material_options,
         ))
@@ -1011,11 +1011,11 @@ mod tests {
         assert_ne!(baseline.rgba, polished_metal.rgba);
         assert_eq!(polished_metal.rgba, polished_metal_repeat.rgba);
 
-        let png = pollster::block_on(render_glb_to_image(FIXTURE, &options, ImageFormat::Png))
+        let png = pollster::block_on(render_image(FIXTURE, &options, ImageFormat::Png))
             .expect("PNG render");
         assert_eq!(&png[..4], &[0x89, 0x50, 0x4e, 0x47]);
 
-        let images = pollster::block_on(render_glb_to_images(
+        let images = pollster::block_on(render_images(
             FIXTURE,
             &options,
             ImageFormat::WebP { quality: 100 },
@@ -1026,7 +1026,7 @@ mod tests {
 
         let tick = AtomicU64::new(0);
         let clock = move || (tick.fetch_add(1, Ordering::Relaxed) + 1) as f64;
-        let (_, profile) = pollster::block_on(render_glb_to_images_profiled(
+        let (_, profile) = pollster::block_on(render_images_profiled(
             FIXTURE,
             &options,
             ImageFormat::Png,
@@ -1041,10 +1041,10 @@ mod tests {
         assert!(profile.views[0].encode_ms > 0.0);
 
         let request = r#"{"format":"png","width":192,"height":192,"background":[1,1,1,1]}"#;
-        assert!(pollster::block_on(render_glb_request(FIXTURE, request)).is_ok());
+        assert!(pollster::block_on(render_image_request(FIXTURE, request)).is_ok());
         let plural = r#"{"format":"png","width":192,"height":192,"background":[1,1,1,1],"views":[{"id":"front","phi":90,"theta":0}]}"#;
-        assert!(pollster::block_on(render_glb_images_request(FIXTURE, plural, None)).is_ok());
-        let pixels = pollster::block_on(render_glb_pixels_request(
+        assert!(pollster::block_on(render_images_request(FIXTURE, plural, None)).is_ok());
+        let pixels = pollster::block_on(render_pixels_request(
             FIXTURE,
             r#"{"width":192,"height":192}"#,
         ))
@@ -1091,7 +1091,7 @@ mod tests {
         // A transparent JPEG passes validation and fails at encode, exercising
         // the executor's error propagation on both the singular fast path and
         // the parallel batch path.
-        let singular = pollster::block_on(render_glb_to_image(
+        let singular = pollster::block_on(render_image(
             FIXTURE,
             &RenderOptions::default(),
             ImageFormat::Jpeg { quality: 85 },
@@ -1099,7 +1099,7 @@ mod tests {
         .unwrap_err();
         assert!(singular.to_string().starts_with("encode:"), "{singular}");
 
-        let batch = pollster::block_on(render_glb_to_images(
+        let batch = pollster::block_on(render_images(
             FIXTURE,
             &RenderOptions::default(),
             ImageFormat::Jpeg { quality: 85 },
@@ -1119,7 +1119,7 @@ mod tests {
         };
 
         // One-shot sugar and the warm renderer must produce identical bytes.
-        let cold = pollster::block_on(render_glb_to_image(FIXTURE, &options, ImageFormat::Png))
+        let cold = pollster::block_on(render_image(FIXTURE, &options, ImageFormat::Png))
             .expect("cold render");
         let warm = pollster::block_on(
             renderer.render_image_request(FIXTURE, r#"{"format":"png","width":192,"height":192}"#),
@@ -1183,7 +1183,7 @@ mod tests {
         ))
         .expect("hosted clock profile");
         assert_eq!(hosted.expect("profile").parse_ms, 0.0);
-        let (_, free_hosted) = pollster::block_on(render_glb_images_request(
+        let (_, free_hosted) = pollster::block_on(render_images_request(
             FIXTURE,
             profiled_request,
             Some(&host_clock),
@@ -1192,13 +1192,13 @@ mod tests {
         assert_eq!(free_hosted.expect("profile").parse_ms, 0.0);
         // Without a host clock, native self-clocks via Instant.
         let (_, fallback) =
-            pollster::block_on(render_glb_images_request(FIXTURE, profiled_request, None))
+            pollster::block_on(render_images_request(FIXTURE, profiled_request, None))
                 .expect("fallback clock profile");
         assert!(fallback.expect("profile").views[0].encode_ms >= 0.0);
 
         // The typed warm entry rejects an empty plan before any GPU work.
         assert!(
-            pollster::block_on(renderer.render_glb_to_images(
+            pollster::block_on(renderer.render_images(
                 FIXTURE,
                 &RenderOptions::default(),
                 ImageFormat::Png,

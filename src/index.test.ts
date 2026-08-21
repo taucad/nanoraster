@@ -12,9 +12,9 @@ import {
   RenderError,
   createRenderer,
   describeAdapter,
-  renderGlbToImage,
-  renderGlbToImages,
-  renderGlbToPixels,
+  renderImage,
+  renderImages,
+  renderPixels,
 } from '#index.js';
 
 vi.mock('#renderer.js', () => ({
@@ -40,12 +40,12 @@ beforeEach(() => {
   adapter.mockReset();
 });
 
-describe('renderGlbToImage', () => {
+describe('renderImage', () => {
   it('should return one named file passing the binding bytes through', async () => {
     const output = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
     singular.mockResolvedValue(output);
 
-    const file = await renderGlbToImage(glb, { format: 'webp', width: 800 });
+    const file = await renderImage(glb, { format: 'webp', width: 800 });
 
     expect(file).toEqual(expect.objectContaining({ name: 'render.webp', mimeType: 'image/webp' }));
     // The binding allocates fresh bytes per call; the façade adds no copy.
@@ -56,7 +56,7 @@ describe('renderGlbToImage', () => {
   it('should resolve the jpeg mime type for the jpg alias', async () => {
     singular.mockResolvedValue(new Uint8Array([0xff, 0xd8]));
 
-    const file = await renderGlbToImage(glb, { format: 'jpg' });
+    const file = await renderImage(glb, { format: 'jpg' });
 
     expect(file.mimeType).toBe('image/jpeg');
     expect(file.name).toBe('render.jpg');
@@ -69,7 +69,7 @@ describe('renderGlbToImage', () => {
     };
 
     try {
-      await renderGlbToImage(glb, options);
+      await renderImage(glb, options);
       expect.fail('should have thrown');
     } catch (error) {
       expect(error).toBeInstanceOf(RenderError);
@@ -89,7 +89,7 @@ describe('renderGlbToImage', () => {
       },
     );
 
-    await expect(renderGlbToImage(glb, options)).rejects.toMatchObject({
+    await expect(renderImage(glb, options)).rejects.toMatchObject({
       code: 'parse',
       message: 'parse: singular trap',
     });
@@ -99,7 +99,7 @@ describe('renderGlbToImage', () => {
     singular.mockRejectedValue(new Error('parse: unexpected glb magic'));
 
     try {
-      await renderGlbToImage(glb, { format: 'png' });
+      await renderImage(glb, { format: 'png' });
       expect.fail('should have thrown');
     } catch (error) {
       expect(error).toBeInstanceOf(RenderError);
@@ -109,7 +109,7 @@ describe('renderGlbToImage', () => {
   });
 });
 
-describe('renderGlbToImages', () => {
+describe('renderImages', () => {
   const options = {
     format: 'png',
     includeAxes: true,
@@ -126,7 +126,7 @@ describe('renderGlbToImages', () => {
     const top = new Uint8Array([3, 4]);
     plural.mockResolvedValue({ images: [front, top] });
 
-    const results = await renderGlbToImages(glb, options);
+    const results = await renderImages(glb, options);
 
     expect(results.map(({ id }) => id)).toEqual(['front', 'top']);
     expect(results.map(({ file }) => file.name)).toEqual(['render-front.png', 'render-top.png']);
@@ -139,7 +139,7 @@ describe('renderGlbToImages', () => {
   it('should name and type each entry by its own format override', async () => {
     plural.mockResolvedValue({ images: [new Uint8Array([1]), new Uint8Array([2])] });
 
-    const results = await renderGlbToImages(glb, {
+    const results = await renderImages(glb, {
       format: 'webp',
       views: [
         { id: 'card', phi: 60, theta: -45 },
@@ -172,7 +172,7 @@ describe('renderGlbToImages', () => {
       }),
     });
 
-    const results = await renderGlbToImages(glb, {
+    const results = await renderImages(glb, {
       format: 'png',
       profile: true,
       views: [{ id: 'front', phi: 90, theta: 0 }],
@@ -190,7 +190,7 @@ describe('renderGlbToImages', () => {
     plural.mockResolvedValue({ images: [new Uint8Array([1])] });
 
     try {
-      await renderGlbToImages(glb, options);
+      await renderImages(glb, options);
       expect.fail('should have thrown');
     } catch (error) {
       expect(error).toBeInstanceOf(RenderError);
@@ -203,7 +203,7 @@ describe('renderGlbToImages', () => {
 
   it('should reject invalid batch options before invoking the renderer', async () => {
     await expect(
-      renderGlbToImages(glb, {
+      renderImages(glb, {
         format: 'png',
         includeLabel: true,
         views: [{ id: 'front', phi: 90, theta: 0 }],
@@ -219,7 +219,7 @@ describe('renderGlbToImages', () => {
     plural.mockRejectedValue(new Error('gpu: view "top": device lost'));
 
     try {
-      await renderGlbToImages(glb, options);
+      await renderImages(glb, options);
       expect.fail('should have thrown');
     } catch (error) {
       expect(error).toBeInstanceOf(RenderError);
@@ -235,24 +235,24 @@ describe('renderGlbToImages', () => {
       },
     });
 
-    await expect(renderGlbToImages(glb, trapped)).rejects.toMatchObject({
+    await expect(renderImages(glb, trapped)).rejects.toMatchObject({
       code: 'parse',
       message: 'parse: batch trap',
     });
   });
 });
 
-describe('renderGlbToPixels', () => {
+describe('renderPixels', () => {
   it('should return the raw pixels and reject encoder options', async () => {
     const rgba = new Uint8Array([1, 2, 3, 4]);
     pixels.mockResolvedValue({ rgba, width: 1, height: 1 });
 
-    const result = await renderGlbToPixels(glb, { width: 640, phi: 45 });
+    const result = await renderPixels(glb, { width: 640, phi: 45 });
 
     expect(result).toEqual({ rgba, width: 1, height: 1 });
     expect(pixels).toHaveBeenCalledWith(glb, JSON.stringify({ width: 640, phi: 45 }));
 
-    await expect(renderGlbToPixels(glb, { format: 'png' } as never)).rejects.toMatchObject({
+    await expect(renderPixels(glb, { format: 'png' } as never)).rejects.toMatchObject({
       code: 'parse',
       message: 'parse: options contains unknown property "format"',
     });
@@ -261,7 +261,7 @@ describe('renderGlbToPixels', () => {
   it('should preserve tagged renderer failures', async () => {
     pixels.mockRejectedValue(new Error('adapter-unavailable: no adapter'));
 
-    await expect(renderGlbToPixels(glb, {})).rejects.toMatchObject({
+    await expect(renderPixels(glb, {})).rejects.toMatchObject({
       code: 'adapter-unavailable',
     });
   });
@@ -276,7 +276,7 @@ describe('renderGlbToPixels', () => {
       },
     );
 
-    await expect(renderGlbToPixels(glb, options)).rejects.toMatchObject({
+    await expect(renderPixels(glb, options)).rejects.toMatchObject({
       code: 'parse',
       message: 'parse: pixels trap',
     });
@@ -312,14 +312,14 @@ describe('createRenderer', () => {
     const renderer = await createRenderer({ powerPreference: 'low-power' });
     expect(createRaw).toHaveBeenCalledWith(JSON.stringify({ powerPreference: 'low-power' }));
 
-    const file = await renderer.renderGlbToImage(glb, { format: 'png' });
+    const file = await renderer.renderImage(glb, { format: 'png' });
     expect(file.name).toBe('render.png');
-    const images = await renderer.renderGlbToImages(glb, {
+    const images = await renderer.renderImages(glb, {
       format: 'webp',
       views: [{ id: 'front', phi: 90, theta: 0 }],
     });
     expect(images[0].file.name).toBe('render-front.webp');
-    const raw = await renderer.renderGlbToPixels(glb, {});
+    const raw = await renderer.renderPixels(glb, {});
     expect(raw.width).toBe(1);
     expect(singular).not.toHaveBeenCalled();
     expect(plural).not.toHaveBeenCalled();
@@ -383,8 +383,8 @@ describe('createRenderer', () => {
     createRaw.mockResolvedValue(handle);
 
     const renderer = await createRenderer();
-    const first = renderer.renderGlbToImage(glb, { format: 'png' });
-    const second = renderer.renderGlbToImage(glb, { format: 'png' });
+    const first = renderer.renderImage(glb, { format: 'png' });
+    const second = renderer.renderImage(glb, { format: 'png' });
     await Promise.resolve();
     releaseFirst();
     await Promise.all([first, second]);
@@ -400,10 +400,10 @@ describe('createRenderer', () => {
     createRaw.mockResolvedValue(handle);
 
     const renderer = await createRenderer();
-    await expect(renderer.renderGlbToImage(glb, { format: 'jpeg' })).rejects.toMatchObject({
+    await expect(renderer.renderImage(glb, { format: 'jpeg' })).rejects.toMatchObject({
       code: 'encode',
     });
-    await expect(renderer.renderGlbToImage(glb, { format: 'png' })).resolves.toMatchObject({
+    await expect(renderer.renderImage(glb, { format: 'png' })).resolves.toMatchObject({
       name: 'render.png',
     });
   });
@@ -416,9 +416,9 @@ describe('createRenderer', () => {
 
     const renderer = await createRenderer();
     await expect(
-      renderer.renderGlbToImages(glb, { format: 'png', views: [{ id: 'front', phi: 90, theta: 0 }] }),
+      renderer.renderImages(glb, { format: 'png', views: [{ id: 'front', phi: 90, theta: 0 }] }),
     ).rejects.toMatchObject({ code: 'device-lost' });
-    await expect(renderer.renderGlbToPixels(glb, {})).rejects.toMatchObject({ code: 'parse' });
+    await expect(renderer.renderPixels(glb, {})).rejects.toMatchObject({ code: 'parse' });
   });
 
   it('should dispose after in-flight calls settle and reject later calls', async () => {
@@ -433,12 +433,12 @@ describe('createRenderer', () => {
     createRaw.mockResolvedValue(handle);
 
     const renderer = await createRenderer();
-    const inFlight = renderer.renderGlbToImage(glb, { format: 'png' });
+    const inFlight = renderer.renderImage(glb, { format: 'png' });
     await Promise.resolve();
     renderer.dispose();
     expect(handle.dispose).not.toHaveBeenCalled();
 
-    const late = renderer.renderGlbToImage(glb, { format: 'png' });
+    const late = renderer.renderImage(glb, { format: 'png' });
     release();
     await inFlight;
     await expect(late).rejects.toMatchObject({
