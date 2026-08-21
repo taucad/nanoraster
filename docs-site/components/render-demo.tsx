@@ -14,7 +14,6 @@ import {
   type DemoValue,
 } from '@/lib/demo-options';
 import { angleKeys, buildDemoRequest } from '@/lib/demo-request';
-import { falseColour } from '@/lib/false-colour';
 import { hexToLinear, linearToHex, patchMaterialFactors } from '@/lib/glb-material';
 import { hasWebGpu, loadDemoModel, loadWasmRenderer } from '@/lib/wasm-renderer';
 
@@ -117,12 +116,15 @@ export const RenderDemo = ({
 
           // `format: 'raw'` runs the same request through the same entry point
           // and stops before the encoder, so the timing below is render and
-          // readback with no encoder in it.
+          // readback with no encoder in it. The bytes are straight-alpha sRGB
+          // RGBA8, top row first, which is what `ImageData` reads — so the tile
+          // shows the render itself, with nothing decoding it on the way in.
           if (raw) {
-            const rgba = await renderer.render_image(glb, json);
+            const bytes = await renderer.render_image(glb, json);
             const ms = Math.round(performance.now() - started);
-            setFrame(falseColour({ rgba, ...RENDER_SIZE }));
-            setEvidence({ mime: 'raw rgba', ms, sizes: [rgba.byteLength] });
+            const { width, height } = RENDER_SIZE;
+            setFrame(new ImageData(new Uint8ClampedArray(bytes.buffer), width, height));
+            setEvidence({ mime: 'raw rgba', ms, sizes: [bytes.byteLength] });
             setState('idle');
             return;
           }
@@ -194,21 +196,22 @@ export const RenderDemo = ({
 
   // The bytes the request produced, under the image they produced: the same
   // evidence `image.bytes.length` and `mimeType` carry in the example itself.
-  const badge = (index: number): React.JSX.Element | undefined =>
+  // `note` records what the number leaves out, which only the raw tile needs.
+  const badge = (index: number, note?: string): React.JSX.Element | undefined =>
     evidence === undefined ? undefined : (
       <p className={styles.badge} data-badge>
         {evidence.mime} · {((evidence.sizes[index] ?? 0) / 1024).toFixed(1)} KB · {evidence.ms} ms
+        {note === undefined ? '' : ` · ${note}`}
       </p>
     );
 
-  // Raw pixels have no file to point an <img> at: the frame is painted into a
-  // canvas, false-coloured, and captioned so nobody mistakes the ramp for what
-  // the renderer produced.
+  // Raw pixels have no file to point an <img> at, so the frame goes straight
+  // into a canvas. What is on screen is the render itself: no encoder ran, and
+  // the badge says so beside the bytes.
   const painted = (
     <figure className={styles.single}>
       <canvas className={styles.image} ref={canvasRef} />
-      <figcaption className={styles.caption}>false colour · luma ramp applied in the page</figcaption>
-      {badge(0)}
+      {badge(0, 'no encode, no decode')}
     </figure>
   );
 

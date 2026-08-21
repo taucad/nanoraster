@@ -11,13 +11,6 @@ export type WasmRendererHandle = {
   ) => Promise<{ readonly images: Uint8Array<ArrayBuffer>[]; readonly timings?: string }>;
 };
 
-/** A `format: 'raw'` result read at the shape the request asked for. */
-export type WasmPixels = {
-  readonly rgba: Uint8Array<ArrayBuffer>;
-  readonly width: number;
-  readonly height: number;
-};
-
 type WasmModule = {
   readonly default: (input: { readonly module_or_path: URL }) => Promise<unknown>;
   readonly Renderer: { readonly create: (optionsJson?: string) => Promise<WasmRendererHandle> };
