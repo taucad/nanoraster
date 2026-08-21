@@ -36,7 +36,7 @@ The package has no compatibility commitments before its first stable release.
   `height` reads as image scaling.
 - The `RenderImageFormat`, `RenderUpAxis` and `RenderProjection` type aliases are
   no longer exported. Name the literal unions they stood for:
-  `'png' | 'webp' | 'jpeg' | 'jpg'`, `'x' | 'y' | 'z'` and
+  `'png' | 'webp' | 'jpeg' | 'jpg' | 'raw'`, `'x' | 'y' | 'z'` and
   `'perspective' | 'orthographic'`.
 - `describeAdapter` returns an `AdapterInfo` object with `backend`, `name` and
   `deviceType` instead of a string such as
