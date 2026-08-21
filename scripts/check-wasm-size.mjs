@@ -42,9 +42,15 @@ const sizes = {
 // and `codec_conformance` now sit behind the default-off `bench` cargo
 // feature, taking their wasm-bindgen glue, the encode-timing loop, the
 // six-view comparison harness and its serde_json report building with them.
-// Raw-output build (X1): raw 857,495, gzip-9 344,892, brotli-11 276,011 on
+// Codec-fingerprint build: raw 867,084, gzip-9 348,810, brotli-11 278,640 on
 // macOS, against 864,783 / 347,393 / 278,385 for the bench-feature-gated build
-// — -7,288 raw (-0.8%). `format: "raw"` is one identity arm in the encoder, so
+// — +2,301 raw (+0.3%) for the restored Huffman tie-break and the conformance
+// table's lossy-WebP arm. Measured after the fact, from a rebuild of that
+// tree: the wave landed without re-anchoring this log, which is why the next
+// entry is stated against this line rather than against W6.
+// Raw-output build (X1): raw 857,495, gzip-9 344,892, brotli-11 276,011 on
+// macOS, against 867,084 / 348,810 / 278,640 for the codec-fingerprint build
+// — -9,589 raw (-1.1%). `format: "raw"` is one identity arm in the encoder, so
 // the shrink is the deleted raw-pixels entry points: the wasm-bindgen glue for
 // the class method and the free function, their JS result object, and the
 // core's format-free pixels request path. Rendered bytes are unchanged.
