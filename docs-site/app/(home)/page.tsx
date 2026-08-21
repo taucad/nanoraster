@@ -67,7 +67,7 @@ const Page = (): React.JSX.Element => (
         The example below runs in your browser on WebGPU. Move a control and the request re-renders; the same
         call runs unchanged in Node.js.
       </p>
-      <RenderDemo code={heroExample} />
+      <RenderDemo code={heroExample} codeBelowControls />
     </section>
 
     <section className={styles.afterword}>

@@ -1,5 +1,4 @@
-/* Code and viewer share one frame: the code block sits flush on top and the
-   panel is divided from it by a single rule. */
+/* Code and viewer share one frame. */
 .demo {
   margin: 1.5rem 0;
   overflow: hidden;
@@ -14,6 +13,22 @@
   gap: 20px;
   padding: 16px;
   border-top: 1px solid var(--color-fd-border);
+}
+
+.panel[data-code-below-controls] {
+  grid-template-areas:
+    'preview controls'
+    'preview code';
+  grid-template-rows: auto 1fr;
+  border-top: 0;
+}
+
+.panel[data-code-below-controls] > :is(.stage, .sheet) {
+  grid-area: preview;
+}
+
+.panel[data-code-below-controls] > .controls {
+  grid-area: controls;
 }
 
 .stage {
@@ -103,6 +118,14 @@
   min-width: 0;
 }
 
+.code {
+  grid-area: code;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 6px;
+}
+
 .control {
   display: grid;
   grid-template-columns: minmax(5.5rem, max-content) minmax(0, 1fr);
@@ -171,5 +194,13 @@
 @media (max-width: 760px) {
   .panel {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .panel[data-code-below-controls] {
+    grid-template-areas:
+      'preview'
+      'controls'
+      'code';
+    grid-template-rows: repeat(3, auto);
   }
 }

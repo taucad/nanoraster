@@ -21,7 +21,7 @@ import styles from './render-demo.module.css';
 const RENDER_SIZE = { height: 720, width: 960 };
 
 /**
- * The code block sits flush inside the demo's own frame, so Fumadocs' card
+ * The code block sits inside the demo's own frame, so Fumadocs' card
  * border, radius, shadow and margin are turned off on its `<figure>`.
  */
 const codeblockProps = { className: 'my-0 rounded-none border-0 shadow-none' };
@@ -60,9 +60,11 @@ const twoColumnControls = 8;
  */
 export const RenderDemo = ({
   code,
+  codeBelowControls = false,
   lang = 'typescript',
 }: {
   readonly code: string;
+  readonly codeBelowControls?: boolean;
   readonly lang?: string;
   /** The MDX fence stays a child for the projection; the block below renders instead. */
   readonly children?: React.ReactNode;
@@ -176,9 +178,11 @@ export const RenderDemo = ({
 
   return (
     <div className={styles.demo}>
-      <DynamicCodeBlock code={shown} codeblock={codeblockProps} lang={lang} />
+      {codeBelowControls ? undefined : (
+        <DynamicCodeBlock code={shown} codeblock={codeblockProps} lang={lang} />
+      )}
 
-      <div className={styles.panel}>
+      <div className={styles.panel} data-code-below-controls={codeBelowControls || undefined}>
         <div className={batch ? styles.sheet : styles.stage}>
           {state === 'unsupported' ? (
             <p className={styles.notice}>
@@ -257,6 +261,12 @@ export const RenderDemo = ({
 
           {state === 'rendering' ? <p className={styles.status}>rendering…</p> : undefined}
         </div>
+
+        {codeBelowControls ? (
+          <div className={styles.code}>
+            <DynamicCodeBlock code={shown} codeblock={codeblockProps} lang={lang} />
+          </div>
+        ) : undefined}
       </div>
     </div>
   );
