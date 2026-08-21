@@ -26,5 +26,8 @@
       ],
       "ignore": ["public/demo/render_wasm.js"]
     }
+  },
+  "ignoreIssues": {
+    "tests/browser/render.browser.test.mjs": ["unlisted", "unresolved"]
   }
 }
