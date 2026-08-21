@@ -62,6 +62,11 @@ test('a warm renderer produces byte-identical output and disposes cleanly', asyn
   expect(profile.adapterDeviceRequests).toBe(0);
   expect(profile.views).toHaveLength(2);
 
+  // The one-shot façade's retention guard: trimming keeps the device warm and
+  // changes no pixels, whether or not anything was retained.
+  renderer.trim_targets();
+  expect(await renderer.render_glb_to_image(glb, options)).toEqual(oneShot);
+
   const pixels = await renderer.render_glb_to_pixels(glb, JSON.stringify({ width: 64, height: 48 }));
   expect(pixels.width).toBe(64);
   expect(pixels.height).toBe(48);

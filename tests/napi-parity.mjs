@@ -6,6 +6,11 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// The façade is imported for exactly one section: the concurrent visual
+// ladder, which exists to exercise its shared one-shot renderer. Everything
+// else here calls the addon directly, on purpose.
+import { renderGlbToImage } from '#index.js';
+
 import { withPbrFactors } from './pbr-fixture.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -161,38 +166,56 @@ const annotations = await native.renderGlbToImage(
     includeScale: true,
   }),
 );
-// Sequential on purpose: since the async conversion these calls would truly
-// overlap, and concurrent large one-shot renders abort the process inside
-// D3D12/WARP (each call brings up its own device; the big three overlap
-// hundreds of MB of targets). The library-level answer is an open design
-// question tracked in the device-lifecycle blueprint.
-const resolvedVisualCases = [];
-for (const view of [
+// The standing regression test of the façade's one-shot queue: five renders
+// launched at once, three of them huge. Concurrent one-shot renders used to
+// bring up a device each and abort the process inside D3D12/WARP; the shared
+// lazy renderer makes that structurally impossible, so this goes through the
+// package façade (the only layer that owns the queue) rather than the addon.
+const visualCases = [
   { name: '192', width: 192, height: 192, label: 'Isometric', phi: 60, theta: -45 },
   { name: '800', width: 800, height: 800, label: 'Front — View From +Z', phi: 90, theta: 270 },
   { name: '1600', width: 1600, height: 1600, label: 'Front — View From +Z', phi: 90, theta: 270 },
   { name: '4k', width: 3840, height: 2160, label: 'Front — View From +Z', phi: 90, theta: 270 },
   { name: '4096', width: 4096, height: 4096, label: 'Front — View From +Z', phi: 90, theta: 270 },
-]) {
-  resolvedVisualCases.push({
-    ...view,
-    bytes: await native.renderGlbToImage(
-      glb,
-      JSON.stringify({
-        width: view.width,
-        height: view.height,
-        format: 'png',
-        projection: 'orthographic',
-        background: [0.94, 0.97, 0.96, 1],
-        label: view.label,
-        phi: view.phi,
-        theta: view.theta,
-        includeAxes: true,
-        includeLabel: true,
-        includeScale: true,
-      }),
-    ),
-  });
+].map(async (view) => ({
+  ...view,
+  bytes: (
+    await renderGlbToImage(Uint8Array.from(glb), {
+      width: view.width,
+      height: view.height,
+      format: 'png',
+      projection: 'orthographic',
+      background: [0.94, 0.97, 0.96, 1],
+      label: view.label,
+      phi: view.phi,
+      theta: view.theta,
+      includeAxes: true,
+      includeLabel: true,
+      includeScale: true,
+    })
+  ).bytes,
+}));
+const resolvedVisualCases = await Promise.all(visualCases);
+// Warm == cold: bytes off the shared renderer — which has by now rendered the
+// 4096² case and trimmed its targets — must match a cold addon render.
+const coldSmallLadder = await native.renderGlbToImage(
+  glb,
+  JSON.stringify({
+    width: 192,
+    height: 192,
+    format: 'png',
+    projection: 'orthographic',
+    background: [0.94, 0.97, 0.96, 1],
+    label: 'Isometric',
+    phi: 60,
+    theta: -45,
+    includeAxes: true,
+    includeLabel: true,
+    includeScale: true,
+  }),
+);
+if (!coldSmallLadder.equals(Buffer.from(resolvedVisualCases[0].bytes))) {
+  throw new Error('shared one-shot renderer bytes differ from a cold addon render');
 }
 
 const parityViews = [
