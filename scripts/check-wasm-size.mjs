@@ -42,11 +42,17 @@ const sizes = {
 // and `codec_conformance` now sit behind the default-off `bench` cargo
 // feature, taking their wasm-bindgen glue, the encode-timing loop, the
 // six-view comparison harness and its serde_json report building with them.
+// Raw-output build (X1): raw 857,495, gzip-9 344,892, brotli-11 276,011 on
+// macOS, against 864,783 / 347,393 / 278,385 for the bench-feature-gated build
+// — -7,288 raw (-0.8%). `format: "raw"` is one identity arm in the encoder, so
+// the shrink is the deleted raw-pixels entry points: the wasm-bindgen glue for
+// the class method and the free function, their JS result object, and the
+// core's format-free pixels request path. Rendered bytes are unchanged.
 // Ceilings are the measured figure plus ~1%. The gate runs on Linux CI, whose
 // figure has not been re-measured since the PBR build (315,196 gzip-9 there
 // against 312,881 on macOS) — gzip9 carries extra slack until a CI run
 // re-anchors it.
-const ceilings = { raw: 873_400, gzip9: 350_800, brotli11: 281_100 };
+const ceilings = { raw: 866_000, gzip9: 348_300, brotli11: 278_800 };
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {
