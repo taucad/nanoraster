@@ -180,7 +180,12 @@ fn build_huffman_tree(
         // assign new lengths
         let mut len = length_limit;
         let mut indexes = frequencies.iter().copied().enumerate().collect::<Vec<_>>();
-        indexes.sort_unstable_by_key(|&(_, frequency)| frequency);
+        // Equal-frequency symbols must retain a platform-independent order.
+        // `sort_unstable_by_key(frequency)` made valid VP8L output differ
+        // between native and wasm builds whenever length limiting ran: the
+        // unstable sort resolves ties by a strategy that depends on the
+        // element's size, which is not the same on 32- and 64-bit targets.
+        indexes.sort_unstable_by_key(|&(index, frequency)| (frequency, index));
         for &(i, frequency) in &indexes {
             if frequency > 0 {
                 while counts[len as usize] == 0 {

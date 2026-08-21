@@ -19,6 +19,8 @@ describe('benchmark admission', () => {
 
   it('rejects byte drift even when timing improves', () => {
     assert.equal(compareBenchmark({ ...base, medianMs: 50, outputFnv: 'changed' }, base).failed, true);
+    const codecConformance = { base: { png: { fnv: 'changed' } } };
+    assert.equal(compareBenchmark({ ...base, medianMs: 50, codecConformance }, base).failed, true);
   });
 
   it('treats a renamed benchmark as explicit admission', () => {

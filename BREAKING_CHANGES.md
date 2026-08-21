@@ -8,7 +8,11 @@ The package has no compatibility commitments before its first stable release.
   request that passed an explicit `quality` under a lossless-only release now
   produces a lossy file; drop the option or pass `1` to keep lossless output.
   Lossless bytes also differ slightly from earlier releases after a vendored
-  encoder update, so byte-locked WebP snapshots need re-recording.
+  encoder update, so byte-locked WebP snapshots need re-recording. That update
+  had also dropped the fork's deterministic Huffman tie-break, which let
+  lossless WebP bytes differ between the native addon and the wasm module;
+  restoring it changes lossless bytes once more and makes the two agree again.
+  A committed fingerprint table now gates both artifacts against each other.
 - `renderGlbToImage`, `renderGlbToImages` and `renderGlbToPixels` are now
   `renderImage`, `renderImages` and `renderPixels`, as free functions and as
   `Renderer` methods. No aliases are kept. Direct consumers of the native addon

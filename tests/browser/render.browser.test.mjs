@@ -38,10 +38,11 @@ test('the shipped wasm drops the bench surface and renders as its sibling does',
     expect(candidate[gated], `shipped wasm exports the gated ${gated}`).toBeUndefined();
   }
 
-  const report = JSON.parse(codec_conformance());
-  expect(report).toHaveProperty('base.png.fnv');
-  expect(report).toHaveProperty('base.webp.fnv');
-  expect(report).toHaveProperty('base.jpeg.fnv');
+  // The other half of the native↔wasm byte-identity gate: the same committed
+  // table `render-core`'s own suite asserts against, so a codec that drifts on
+  // either artifact fails CI rather than being asserted in a comment.
+  const expected = await (await fetch(new URL('../codec-conformance.json', import.meta.url))).json();
+  expect(JSON.parse(codec_conformance())).toEqual(expected);
 
   const options = JSON.stringify({ width: 192, height: 192, format: 'png' });
   expect(await render_image(glb, options)).toEqual(await renderImageBench(glb, options));

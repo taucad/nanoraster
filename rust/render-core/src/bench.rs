@@ -18,15 +18,21 @@ pub fn fnv64(bytes: &[u8]) -> u64 {
     hash
 }
 
+/// Every codec path the package can take, including the lossy WebP one — the
+/// newest and the only forked encoder, and therefore the one a fingerprint
+/// table is most worth having.
+const CONFORMANCE_CODECS: [(&str, ImageFormat); 4] = [
+    ("png", ImageFormat::Png),
+    ("webp", ImageFormat::WebP { quality: 100 }),
+    ("webpLossy", ImageFormat::WebP { quality: 90 }),
+    ("jpeg", ImageFormat::Jpeg { quality: 85 }),
+];
+
 fn codec_fingerprints(rendered: &Rendered) -> Result<serde_json::Value, RenderError> {
     let mut report = serde_json::json!({
         "pixelFnv": format!("{:016x}", fnv64(&rendered.rgba)),
     });
-    for (name, format) in [
-        ("png", ImageFormat::Png),
-        ("webp", ImageFormat::WebP { quality: 100 }),
-        ("jpeg", ImageFormat::Jpeg { quality: 85 }),
-    ] {
+    for (name, format) in CONFORMANCE_CODECS {
         let bytes = encode(rendered, format)?;
         report[name] = serde_json::json!({
             "bytes": bytes.len(),
@@ -281,13 +287,27 @@ mod tests {
             "base", "include1", "include2", "include3", "include4", "include5", "include6",
             "include7",
         ] {
-            for codec in ["png", "webp", "jpeg"] {
+            for (codec, _) in CONFORMANCE_CODECS {
                 assert_eq!(
                     first[fixture][codec]["fnv"].as_str().map(str::len),
                     Some(16)
                 );
             }
         }
+    }
+
+    /// Half of the native↔wasm byte-identity gate: the browser suite asserts
+    /// the wasm build against this same table, so a codec that drifts on
+    /// either artifact fails CI instead of being asserted in a comment.
+    ///
+    /// Regenerate deliberately, never to make a red build green:
+    /// `pnpm run build:napi:bench && node scripts/record-codec-conformance.mjs`
+    #[test]
+    fn codec_fixtures_match_the_committed_fingerprints() {
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/codec-conformance.json"))
+                .expect("committed fingerprints");
+        assert_eq!(codec_conformance().expect("conformance"), expected);
     }
 
     #[test]

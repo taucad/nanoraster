@@ -1,0 +1,156 @@
+{
+  "base": {
+    "jpeg": {
+      "bytes": 109374,
+      "fnv": "b1ebd3af72946a70"
+    },
+    "pixelFnv": "afbe179d5512afa5",
+    "png": {
+      "bytes": 22146,
+      "fnv": "538e4fe8307c75b8"
+    },
+    "webp": {
+      "bytes": 84350,
+      "fnv": "d8434d1e160226b6"
+    },
+    "webpLossy": {
+      "bytes": 96590,
+      "fnv": "1e18b1931c055f6e"
+    }
+  },
+  "height": 240,
+  "include1": {
+    "jpeg": {
+      "bytes": 108496,
+      "fnv": "7b364bedc18d2ec4"
+    },
+    "pixelFnv": "85caf1637eff4311",
+    "png": {
+      "bytes": 24720,
+      "fnv": "4fba9a0fc7986e0d"
+    },
+    "webp": {
+      "bytes": 85524,
+      "fnv": "cdd6382ad15d06c4"
+    },
+    "webpLossy": {
+      "bytes": 95764,
+      "fnv": "e5dbe3040f49dba4"
+    }
+  },
+  "include2": {
+    "jpeg": {
+      "bytes": 108370,
+      "fnv": "61c7acb93effd371"
+    },
+    "pixelFnv": "84d0642b91b7c6da",
+    "png": {
+      "bytes": 23692,
+      "fnv": "79b4028d369379f0"
+    },
+    "webp": {
+      "bytes": 84840,
+      "fnv": "45cf02416459462b"
+    },
+    "webpLossy": {
+      "bytes": 95794,
+      "fnv": "4be51923cc1077d3"
+    }
+  },
+  "include3": {
+    "jpeg": {
+      "bytes": 107494,
+      "fnv": "6c1d704b4d71f0fe"
+    },
+    "pixelFnv": "0709029be80dc63a",
+    "png": {
+      "bytes": 26074,
+      "fnv": "09f4f3430b4c2a03"
+    },
+    "webp": {
+      "bytes": 85720,
+      "fnv": "54525cd8625fe502"
+    },
+    "webpLossy": {
+      "bytes": 94972,
+      "fnv": "047d8a89ca8ae56b"
+    }
+  },
+  "include4": {
+    "jpeg": {
+      "bytes": 106201,
+      "fnv": "c71775eaa28256de"
+    },
+    "pixelFnv": "014b3bbf9dcb405c",
+    "png": {
+      "bytes": 24376,
+      "fnv": "d97140160d5d117e"
+    },
+    "webp": {
+      "bytes": 84022,
+      "fnv": "a395c3c50f7f2a01"
+    },
+    "webpLossy": {
+      "bytes": 93664,
+      "fnv": "d71c9d9da4bf220f"
+    }
+  },
+  "include5": {
+    "jpeg": {
+      "bytes": 105321,
+      "fnv": "096e372e8e0f004b"
+    },
+    "pixelFnv": "360beca24bb7c068",
+    "png": {
+      "bytes": 26184,
+      "fnv": "ca1e5854b5a4da8b"
+    },
+    "webp": {
+      "bytes": 84786,
+      "fnv": "74027f1c741aa066"
+    },
+    "webpLossy": {
+      "bytes": 92838,
+      "fnv": "2b922b90bd0355df"
+    }
+  },
+  "include6": {
+    "jpeg": {
+      "bytes": 105188,
+      "fnv": "39b69e0344511c18"
+    },
+    "pixelFnv": "929ebb2d642b7e17",
+    "png": {
+      "bytes": 25740,
+      "fnv": "272f9e0154604563"
+    },
+    "webp": {
+      "bytes": 84116,
+      "fnv": "e0558caa20c98fd1"
+    },
+    "webpLossy": {
+      "bytes": 92870,
+      "fnv": "3e47e735b47c269e"
+    }
+  },
+  "include7": {
+    "jpeg": {
+      "bytes": 104310,
+      "fnv": "9aeba58be3f30be7"
+    },
+    "pixelFnv": "170949de45e727cf",
+    "png": {
+      "bytes": 27500,
+      "fnv": "5eeb7cda609ada5c"
+    },
+    "webp": {
+      "bytes": 84818,
+      "fnv": "d848f1bf9ee9c679"
+    },
+    "webpLossy": {
+      "bytes": 92048,
+      "fnv": "b84e346dc63897f7"
+    }
+  },
+  "width": 320
+}

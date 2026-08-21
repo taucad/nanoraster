@@ -12,5 +12,7 @@ commit f4d80bd (after the 0.2.4 release) and adds seventeen commits: a VP8 lossy
 still-image encoder — per-macroblock intra prediction chosen by rate-distortion
 cost, coefficient-free macroblock skipping, a nonlinear quality-to-quantizer
 curve, and quantizer-proportional loop filtering — alongside lossless encoder,
-decoder, and animation fixes. Its source and license text are retained under
+decoder, and animation fixes. On top of those, the fork keeps nanoraster's
+deterministic Huffman tie-break, which holds lossless output identical between
+32-bit and 64-bit targets. Its source and license text are retained under
 rust/vendor/image-webp/.

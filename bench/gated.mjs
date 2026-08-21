@@ -35,7 +35,12 @@ const report = {
   // v3: the vendored image-webp update that added lossy encoding also revised
   // its lossless encoder, so codecConformance's webp fingerprints changed on
   // purpose (pixels and PNG output are untouched).
-  name: 'gear-parse-raster-encode-512x384-v3',
+  // v4: codecConformance gained a lossy-webp fingerprint per fixture, and
+  // restoring the fork's deterministic Huffman tie-break — which that same
+  // vendored update had dropped, taking native and wasm lossless output apart
+  // — changed the lossless webp fingerprints on purpose. PNG, JPEG and every
+  // rendered pixel are untouched.
+  name: 'gear-parse-raster-encode-512x384-v4',
   adapter: JSON.parse(native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,
