@@ -44,30 +44,18 @@ describe('renderer binding selection', () => {
       renderGlbToImage: vi.fn(() => Promise.resolve(new Uint8Array([21]))),
       renderGlbToImages: vi.fn(() => Promise.resolve({ images: [new Uint8Array([22])], profile: null })),
       renderGlbToPixels: vi.fn(() => Promise.resolve({ rgba: new Uint8Array([23]), width: 1, height: 1 })),
+      trimTargets: vi.fn(),
       dispose: vi.fn(),
     };
     const native = {
-      renderGlbToImage: vi.fn(() => new Uint8Array([1, 2])),
-      renderGlbToImages: vi.fn(() => ({ images: [new Uint8Array([3]), new Uint8Array([4])], profile: null })),
-      renderGlbToPixels: vi.fn(() => ({ rgba: new Uint8Array([5]), width: 1, height: 1 })),
       createRenderer: vi.fn(() => Promise.resolve(nativeRenderer)),
       describeAdapter: vi.fn(() => 'Metal / Test (IntegratedGpu)'),
     };
     const require = vi.fn(() => native);
     vi.doMock('node:module', () => ({ createRequire: vi.fn(() => require) }));
-    const { createRendererRaw, describeAdapterRaw, renderManyRaw, renderPixelsRaw, renderRaw } =
-      await import('#renderer.js');
+    const { createRendererRaw, describeAdapterRaw } = await import('#renderer.js');
     const glb = new Uint8Array([9]);
 
-    await expect(renderRaw(glb, '{}')).resolves.toEqual(new Uint8Array([1, 2]));
-    await expect(renderManyRaw(glb, '{"views":[]}')).resolves.toEqual({
-      images: [new Uint8Array([3]), new Uint8Array([4])],
-    });
-    await expect(renderPixelsRaw(glb, '{}')).resolves.toEqual({
-      rgba: new Uint8Array([5]),
-      width: 1,
-      height: 1,
-    });
     await expect(describeAdapterRaw()).resolves.toBe('Metal / Test (IntegratedGpu)');
 
     const handle = await createRendererRaw('{"powerPreference":"low-power"}');
@@ -79,6 +67,8 @@ describe('renderer binding selection', () => {
       width: 1,
       height: 1,
     });
+    handle.trimTargets();
+    expect(nativeRenderer.trimTargets).toHaveBeenCalledOnce();
     handle.dispose();
     expect(nativeRenderer.dispose).toHaveBeenCalledOnce();
     expect(require).toHaveBeenCalledOnce();
@@ -88,22 +78,18 @@ describe('renderer binding selection', () => {
   it('loads and initializes the WASM package when WebGPU is exposed', async () => {
     Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { gpu: {} } });
     const initialize = vi.fn((_options: { module_or_path: URL }) => Promise.resolve(undefined));
-    const renderImage = vi.fn(() => Promise.resolve(new Uint8Array([5])));
-    const renderImages = vi.fn(() =>
-      Promise.resolve({ images: [new Uint8Array([6])], profile: 'profile-json' }),
-    );
     const wasmRenderer = {
       render_glb_to_image: vi.fn(() => Promise.resolve(new Uint8Array([31]))),
-      render_glb_to_images: vi.fn(() => Promise.resolve({ images: [new Uint8Array([32])] })),
+      render_glb_to_images: vi.fn(() =>
+        Promise.resolve({ images: [new Uint8Array([32])], profile: 'profile-json' }),
+      ),
       render_glb_to_pixels: vi.fn(() => Promise.resolve({ rgba: new Uint8Array([33]), width: 1, height: 1 })),
+      trim_targets: vi.fn(),
       dispose: vi.fn(),
     };
     const create = vi.fn(() => Promise.resolve(wasmRenderer));
     vi.doMock('./wasm/render_wasm.js', () => ({
       default: initialize,
-      render_glb_to_image: renderImage,
-      render_glb_to_images: renderImages,
-      render_glb_to_pixels: vi.fn(() => Promise.resolve({ rgba: new Uint8Array([7]), width: 1, height: 1 })),
       describe_adapter: vi.fn(() => Promise.resolve('WebGPU / Test (Other)')),
       Renderer: { create },
     }));
@@ -111,22 +97,28 @@ describe('renderer binding selection', () => {
       await import('#renderer.js');
     const glb = new Uint8Array([9]);
 
-    await expect(renderRaw(glb, '{}')).resolves.toEqual(new Uint8Array([5]));
+    // The browser artifact shares one renderer for one-shot calls too.
+    await expect(renderRaw(glb, '{}')).resolves.toEqual(new Uint8Array([31]));
     await expect(renderManyRaw(glb, '{}')).resolves.toEqual({
-      images: [new Uint8Array([6])],
+      images: [new Uint8Array([32])],
       profile: 'profile-json',
     });
     await expect(renderPixelsRaw(glb, '{}')).resolves.toEqual({
-      rgba: new Uint8Array([7]),
+      rgba: new Uint8Array([33]),
       width: 1,
       height: 1,
     });
+    expect(create).toHaveBeenCalledOnce();
+    expect(wasmRenderer.trim_targets).toHaveBeenCalledTimes(3);
     await expect(describeAdapterRaw()).resolves.toBe('WebGPU / Test (Other)');
 
     const handle = await createRendererRaw(undefined);
-    expect(create).toHaveBeenCalledWith(undefined);
+    expect(create).toHaveBeenLastCalledWith(undefined);
     await expect(handle.renderImage(glb, '{}')).resolves.toEqual(new Uint8Array([31]));
-    await expect(handle.renderImages(glb, '{}')).resolves.toEqual({ images: [new Uint8Array([32])] });
+    await expect(handle.renderImages(glb, '{}')).resolves.toEqual({
+      images: [new Uint8Array([32])],
+      profile: 'profile-json',
+    });
     await expect(handle.renderPixels(glb, '{}')).resolves.toEqual({
       rgba: new Uint8Array([33]),
       width: 1,
@@ -138,6 +130,85 @@ describe('renderer binding selection', () => {
     expect(initialize.mock.calls[0]?.[0].module_or_path.pathname.endsWith('/wasm/render_wasm_bg.wasm')).toBe(
       true,
     );
+  });
+
+  it('shares one lazy renderer across concurrent one-shot calls', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' });
+    Object.defineProperty(process, 'arch', { configurable: true, value: 'arm64' });
+    // Mirrors the wasm class contract: overlapping calls on one renderer are a
+    // hard error, so an unserialized façade fails loudly here.
+    let busy = false;
+    const serialized = async <Value>(value: Value): Promise<Value> => {
+      if (busy) {
+        throw new Error('gpu: renderer busy');
+      }
+      busy = true;
+      await Promise.resolve();
+      busy = false;
+      return value;
+    };
+    const nativeRenderer = {
+      renderGlbToImage: vi.fn(() => serialized(new Uint8Array([21]))),
+      renderGlbToImages: vi.fn(() => serialized({ images: [new Uint8Array([22])], profile: null })),
+      renderGlbToPixels: vi.fn(() => serialized({ rgba: new Uint8Array([23]), width: 1, height: 1 })),
+      trimTargets: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const native = {
+      renderGlbToImage: vi.fn(() => Promise.resolve(new Uint8Array([1]))),
+      renderGlbToImages: vi.fn(() => Promise.resolve({ images: [new Uint8Array([2])], profile: null })),
+      renderGlbToPixels: vi.fn(() => Promise.resolve({ rgba: new Uint8Array([3]), width: 9, height: 9 })),
+      createRenderer: vi.fn(() => Promise.resolve(nativeRenderer)),
+      describeAdapter: vi.fn(() => 'Metal / Test (IntegratedGpu)'),
+    };
+    vi.doMock('node:module', () => ({ createRequire: vi.fn(() => vi.fn(() => native)) }));
+    const { renderManyRaw, renderPixelsRaw, renderRaw } = await import('#renderer.js');
+    const glb = new Uint8Array([9]);
+
+    await expect(
+      Promise.all([
+        renderRaw(glb, '{}'),
+        renderManyRaw(glb, '{"views":[]}'),
+        renderPixelsRaw(glb, '{}'),
+        renderRaw(glb, '{}'),
+      ]),
+    ).resolves.toEqual([
+      new Uint8Array([21]),
+      { images: [new Uint8Array([22])] },
+      { rgba: new Uint8Array([23]), width: 1, height: 1 },
+      new Uint8Array([21]),
+    ]);
+    expect(native.createRenderer).toHaveBeenCalledOnce();
+    expect(native.createRenderer).toHaveBeenCalledWith(undefined);
+    expect(native.renderGlbToImage).not.toHaveBeenCalled();
+    // The one-shot guard runs after every call, so an oversized target set
+    // never outlives the render that needed it.
+    expect(nativeRenderer.trimTargets).toHaveBeenCalledTimes(4);
+  });
+
+  it('retries the shared renderer after a failed bring-up', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' });
+    Object.defineProperty(process, 'arch', { configurable: true, value: 'arm64' });
+    const nativeRenderer = {
+      renderGlbToImage: vi.fn(() => Promise.resolve(new Uint8Array([21]))),
+      renderGlbToImages: vi.fn(),
+      renderGlbToPixels: vi.fn(),
+      trimTargets: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const createRenderer = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('gpu: request_device failed'))
+      .mockResolvedValueOnce(nativeRenderer);
+    vi.doMock('node:module', () => ({
+      createRequire: vi.fn(() => vi.fn(() => ({ createRenderer, describeAdapter: vi.fn() }))),
+    }));
+    const { renderRaw } = await import('#renderer.js');
+    const glb = new Uint8Array([9]);
+
+    await expect(renderRaw(glb, '{}')).rejects.toThrow('gpu: request_device failed');
+    await expect(renderRaw(glb, '{}')).resolves.toEqual(new Uint8Array([21]));
+    expect(createRenderer).toHaveBeenCalledTimes(2);
   });
 
   it('reports an unpublished native target without attempting require', async () => {

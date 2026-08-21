@@ -2,9 +2,9 @@
  * `nanoraster` — GLB to image rendering for browsers and Node.js.
  *
  * Picks the wasm (browser worker WebGPU) or napi (Node native) artifact and
- * renders one or many identified views with typed failures. One-shot
- * functions are sugar over a persistent {@link Renderer}; hold one to reuse
- * the GPU device across calls.
+ * renders one or many identified views with typed failures. The one-shot
+ * functions share one lazily created {@link Renderer} per process and run in
+ * sequence; create your own to control its lifetime or power preference.
  *
  */
 

@@ -17,6 +17,7 @@ export class Renderer {
     render_glb_to_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
     render_glb_to_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
     render_glb_to_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
+    trim_targets(): void;
     dispose(): void;
 }
 
@@ -70,6 +71,7 @@ export interface InitOutput {
     readonly renderer_render_glb_to_image: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly renderer_render_glb_to_images: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly renderer_render_glb_to_pixels: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly renderer_trim_targets: (a: number) => void;
     readonly renderer_dispose: (a: number) => void;
     readonly render_glb_to_image: (a: number, b: number, c: number, d: number) => number;
     readonly render_glb_to_images: (a: number, b: number, c: number, d: number) => number;
@@ -78,13 +80,13 @@ export interface InitOutput {
     readonly bench_multi_view: (a: number, b: number, c: number, d: number) => number;
     readonly codec_conformance: (a: number) => void;
     readonly describe_adapter: () => number;
-    readonly __wasm_bindgen_func_elem_2052: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1056: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1056_4: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1056_5: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_2069: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1053: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1053_3: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_2055: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1059: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1059_4: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1059_5: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2072: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1056: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1056_3: (a: number, b: number, c: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

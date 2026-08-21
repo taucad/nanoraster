@@ -34,11 +34,11 @@ export type CreateRendererOptions = {
 
 /**
  * A persistent GPU renderer: one adapter, device, shader, and pipeline set
- * reused across calls, removing the per-call GPU bring-up the one-shot
- * functions pay. Pixels are byte-identical to the one-shot functions on the
- * same adapter. A renderer is single-realm — create it inside the worker that
- * uses it (handles cannot cross `postMessage`; bytes can) — and calls on one
- * renderer run in sequence.
+ * reused across calls, with a lifetime and a power preference you choose (the
+ * one-shot functions share a renderer of their own that has neither). Pixels
+ * are byte-identical to the one-shot functions on the same adapter. A renderer
+ * is single-realm — create it inside the worker that uses it (handles cannot
+ * cross `postMessage`; bytes can) — and calls on one renderer run in sequence.
  *
  * @public
  */

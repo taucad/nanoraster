@@ -298,6 +298,7 @@ describe('createRenderer', () => {
     renderImage: vi.fn<RawRendererHandle['renderImage']>(),
     renderImages: vi.fn<RawRendererHandle['renderImages']>(),
     renderPixels: vi.fn<RawRendererHandle['renderPixels']>(),
+    trimTargets: vi.fn<RawRendererHandle['trimTargets']>(),
     dispose: vi.fn<RawRendererHandle['dispose']>(),
   });
 

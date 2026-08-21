@@ -29,6 +29,10 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// this bound keeps a long-lived renderer from accumulating one pair per size
 /// it has ever seen.
 const MAX_CACHED_PIPELINE_PAIRS: usize = 16;
+/// Retention budget for [`Renderer::trim_targets`], in pixels (2048²). Above
+/// it a target set is worth tens of megabytes, which the one-shot façade's
+/// process-lifetime renderer must not pin after the render that needed it.
+const MAX_RETAINED_TARGET_PIXELS: u64 = 2048 * 2048;
 
 pub struct Rendered {
     /// Straight-alpha, sRGB-encoded RGBA8 rows, tightly packed.
@@ -822,6 +826,19 @@ impl Renderer {
 
     pub(crate) fn counters(&self) -> Counters {
         self.counters
+    }
+
+    /// Drop retained render targets larger than [`MAX_RETAINED_TARGET_PIXELS`].
+    /// Re-allocating them costs milliseconds, so the shared one-shot renderer
+    /// calls this after every render rather than holding a 4096² target set
+    /// (hundreds of MB) for the rest of the process.
+    pub fn trim_targets(&mut self) {
+        let oversized = self.state.targets.as_ref().is_some_and(|targets| {
+            u64::from(targets.width) * u64::from(targets.height) > MAX_RETAINED_TARGET_PIXELS
+        });
+        if oversized {
+            self.state.targets = None;
+        }
     }
 
     /// Device loss is recovered transparently at the next plan entry: rebuild
@@ -1996,6 +2013,17 @@ mod tests {
         assert_eq!(renderer.counters.target_allocations, 1);
         renderer.ensure_targets(640, 480);
         assert_eq!(renderer.counters.target_allocations, 2);
+        // The retention guard keeps ordinary sizes and evicts oversized ones.
+        renderer.trim_targets();
+        assert!(renderer.state.targets.is_some());
+        renderer.ensure_targets(4096, 4096);
+        renderer.trim_targets();
+        assert!(renderer.state.targets.is_none());
+        // Nothing retained: trimming again is a no-op.
+        renderer.trim_targets();
+        assert!(renderer.state.targets.is_none());
+
+        renderer.ensure_targets(640, 480);
         let targets = renderer.state.targets.as_ref().expect("targets");
         assert_eq!(targets.readback.len(), 2);
         assert_eq!(targets.unpadded_bytes_per_row, 640 * 4);

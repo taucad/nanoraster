@@ -161,6 +161,17 @@ impl Renderer {
         })
     }
 
+    /// Drop retained render targets above the core's retention budget. The
+    /// one-shot façade calls this after every render so a single huge render
+    /// cannot pin GPU memory for the worker's lifetime. A no-op while a call
+    /// holds the renderer, which the façade queue prevents anyway.
+    #[wasm_bindgen(skip_typescript)]
+    pub fn trim_targets(&self) {
+        if let Some(renderer) = self.shared.renderer.borrow_mut().as_mut() {
+            renderer.trim_targets();
+        }
+    }
+
     /// Destroy the WebGPU device now instead of waiting for GC; later calls
     /// reject with `gpu: renderer disposed`. Safe to call while a render is
     /// in flight: the destroy happens when that call settles.
@@ -193,6 +204,7 @@ export class Renderer {
   render_glb_to_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
   render_glb_to_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
   render_glb_to_pixels(glb: Uint8Array, options_json: string): Promise<RenderPixelsResult>;
+  trim_targets(): void;
   dispose(): void;
 }
 "#;

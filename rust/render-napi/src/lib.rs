@@ -237,6 +237,17 @@ impl Renderer {
         })
     }
 
+    /// Drop retained render targets above the core's retention budget. The
+    /// one-shot façade calls this after every render so a single huge render
+    /// cannot pin GPU memory for the process lifetime; it never blocks,
+    /// because the façade queue leaves no call in flight.
+    #[napi]
+    pub fn trim_targets(&self) {
+        if let Some(renderer) = lock_renderer(&self.inner).as_mut() {
+            renderer.trim_targets();
+        }
+    }
+
     /// Destroy the GPU device now; later render calls reject.
     #[napi]
     pub fn dispose(&self) {
