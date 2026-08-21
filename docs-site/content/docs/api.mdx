@@ -51,7 +51,7 @@ export declare const renderImage: (
 ```
 
 - **Parameters:** owned GLB bytes and one validated render request.
-- **Returns:** a newly allocated `thumbnail.<format>` file.
+- **Returns:** a newly allocated `render.<format>` file.
 - **Throws:** `RenderError` for invalid requests, malformed GLB data, GPU faults,
   or encoding failures.
 
@@ -414,8 +414,8 @@ const [iso, top] = await renderImages(glb, {
   ],
 });
 
-console.log(iso.id, iso.file.name); // 'iso' 'thumbnail-iso.png'
-console.log(top.id, top.file.name); // 'top' 'thumbnail-top.png'
+console.log(iso.id, iso.file.name); // 'iso' 'render-iso.png'
+console.log(top.id, top.file.name); // 'top' 'render-top.png'
 ```
 
 ### `RenderedPixels`

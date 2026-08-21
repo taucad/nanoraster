@@ -45,7 +45,7 @@ The result is a tuple, not a map: position and length match the input.
 const [iso, front] = images;
 
 console.log(iso.id); // 'iso'
-console.log(front.file.name); // 'thumbnail-front.webp'
+console.log(front.file.name); // 'render-front.webp'
 ```
 
 TypeScript types `iso.id` as `'iso'` rather than `string`, but only while the
@@ -69,7 +69,7 @@ const [card, og, print] = await renderImages(glb, {
   ],
 });
 
-console.log(og.file.name); // 'thumbnail-og.webp'
+console.log(og.file.name); // 'render-og.webp'
 console.log(print.file.mimeType); // 'image/png'
 ```
 
