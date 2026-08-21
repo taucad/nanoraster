@@ -55,7 +55,7 @@ for await (const model of modelsAsTheyArrive) {
 }
 ```
 
-`powerPreference: 'low-power'` keeps thumbnail-class work off the discrete GPU
+`powerPreference: 'low-power'` keeps small, frequent renders off the discrete GPU
 on dual-GPU machines; output bytes are identical either way on a given
 adapter. Calls on one renderer run in sequence, so concurrent callers can
 share a handle without interleaving GPU state.

@@ -24,7 +24,7 @@ import { createRendererRaw } from '#renderer.js';
 export type CreateRendererOptions = {
   /**
    * GPU selection hint. On dual-GPU machines `'high-performance'` prefers the
-   * discrete GPU; thumbnail-class workloads should prefer `'low-power'`.
+   * discrete GPU; small, frequent renders should prefer `'low-power'`.
    * Pixel output is identical either way on a given adapter.
    *
    * @default 'high-performance'
