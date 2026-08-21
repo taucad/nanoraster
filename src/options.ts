@@ -800,9 +800,9 @@ export const toPixelsRequestJson = (options: RenderPixelsOptions): string => {
  *
  * @internal
  * @param format - Encoded image format
- * @returns The singular thumbnail filename
+ * @returns The singular output filename
  */
-export const imageFileName = (format: ImageFormat): string => `thumbnail.${format}`;
+export const imageFileName = (format: ImageFormat): string => `render.${format}`;
 
 /**
  * Derive an identified-view output filename.
@@ -810,6 +810,6 @@ export const imageFileName = (format: ImageFormat): string => `thumbnail.${forma
  * @internal
  * @param id - Validated view identifier
  * @param format - Encoded image format
- * @returns The identified thumbnail filename
+ * @returns The identified output filename
  */
-export const imageViewFileName = (id: string, format: ImageFormat): string => `thumbnail-${id}.${format}`;
+export const imageViewFileName = (id: string, format: ImageFormat): string => `render-${id}.${format}`;

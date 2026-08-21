@@ -16,7 +16,7 @@ export type ImageFormat = keyof typeof imageMimeTypes;
  * @public
  */
 export type RenderedImageFile<Format extends ImageFormat = ImageFormat> = {
-  /** Canonical output filename: `thumbnail.<format>` or `thumbnail-<id>.<format>`. */
+  /** Canonical output filename: `render.<format>` or `render-<id>.<format>`. */
   name: string;
   /** Newly allocated encoded image bytes owned by the caller. */
   bytes: Uint8Array<ArrayBuffer>;

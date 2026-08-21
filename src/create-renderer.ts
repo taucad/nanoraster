@@ -43,7 +43,7 @@ export type CreateRendererOptions = {
  * @public
  */
 export type Renderer = {
-  /** Render one view to one owned `thumbnail.<format>` image on the warm device. */
+  /** Render one view to one owned `render.<format>` image on the warm device. */
   readonly renderGlbToImage: (
     glb: Uint8Array<ArrayBuffer>,
     options: RenderImageOptions,

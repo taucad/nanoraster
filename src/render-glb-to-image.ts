@@ -24,7 +24,7 @@ export const serializeImageOptions = (options: RenderImageOptions): string => {
 };
 
 /**
- * Render a kernel GLB to one owned `thumbnail.<format>` image.
+ * Render a kernel GLB to one owned `render.<format>` image.
  *
  * @public
  * @param glb - Binary glTF bytes with owned `ArrayBuffer` storage
