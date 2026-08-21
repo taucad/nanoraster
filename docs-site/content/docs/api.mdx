@@ -301,16 +301,8 @@ without changing what is rendered.
 The exact parameter type of [`renderImages`](#renderimages) and
 `Renderer.renderImages`: `RenderImagesOptions` narrowed so extra keys, empty
 view tuples, and per-view settings placed at call level are compile errors.
-
-```typescript
-export type StrictRenderImagesOptions<Options extends RenderImagesOptions> = NoExtraKeys<
-  Options,
-  RenderImagesOptions
-> & {
-  readonly views: StrictViews<Options['views']>;
-  readonly lighting?: StrictLighting<Options['lighting']>;
-};
-```
+`NoExtraKeys`, `StrictViews`, and `StrictLighting` are the internal
+compile-time checks behind it, with no runtime form.
 
 Callers write plain `RenderImagesOptions` object literals and never name this
 type — reach for it only to forward the plan call through your own generic
@@ -324,9 +316,6 @@ const renderCatalogue = async <const Options extends RenderImagesOptions>(
   options: StrictRenderImagesOptions<Options>,
 ) => renderImages(glb, options);
 ```
-
-`NoExtraKeys`, `StrictViews`, and `StrictLighting` are internal compile-time
-checks with no runtime form.
 
 ### `RenderPixelsOptions`
 
@@ -437,14 +426,6 @@ resolve to: the [`RenderedImages`](#renderedimages) tuple, and — only when the
 options literal set `profile: true` — a [`RenderProfile`](#renderprofile) on
 its `profile` property. Reading `profile` without having asked for it is a
 compile error, so the flag and the field cannot drift apart.
-
-```typescript
-export type RenderedImagesResult<Options extends RenderImagesOptions> = RenderedImages<
-  Options['views'],
-  Options['format']
-> &
-  (Options extends { readonly profile: true } ? { readonly profile: RenderProfile } : unknown);
-```
 
 ```typescript
 import { renderImages, type RenderedImagesResult, type RenderImagesOptions } from 'nanoraster';
