@@ -140,11 +140,11 @@ void renderImages(glb, {
 });
 // @ts-expect-error includeLabel true requires a singular label
 void ({ format: 'png', includeLabel: true } as const satisfies ImageOptions);
-// @ts-expect-error includeLabel true requires every batch view label
 void ({
   format: 'png',
   includeLabel: true,
   views: [{ id: 'front', phi: 90, theta: 0 }],
+  // @ts-expect-error includeLabel true requires every batch view label
 } as const satisfies ImagesOptions);
 void renderImages(glb, {
   format: 'png',
@@ -158,9 +158,9 @@ void renderImages(glb, {
     },
   ],
 });
-// @ts-expect-error singular label is not a batch-level property
 void ({
   format: 'png',
+  // @ts-expect-error singular label is not a batch-level property
   label: 'Front',
   views: [{ id: 'front', phi: 90, theta: 0 }],
 } as const satisfies ImagesOptions);
@@ -169,14 +169,14 @@ void ({
   format: 'png',
   views: [{ id: 'front', phi: 90, theta: 0, format: 'webp' }],
 } as const satisfies ImagesOptions);
-// @ts-expect-error unknown per-view format
 void ({
   format: 'png',
+  // @ts-expect-error unknown per-view format
   views: [{ id: 'front', phi: 90, theta: 0, format: 'gif' }],
 } as const satisfies ImagesOptions);
-// @ts-expect-error plural angles belong on each view
 void ({
   format: 'png',
+  // @ts-expect-error plural angles belong on each view
   phi: 90,
   views: [{ id: 'front', phi: 90, theta: 0 }],
 } as const satisfies ImagesOptions);
@@ -184,9 +184,9 @@ void ({
 void ({ format: 'png', views: [{ id: 'front', phi: 90 }] } as const satisfies ImagesOptions);
 // @ts-expect-error misspelled singular option
 void ({ format: 'png', includeAxis: true } as const satisfies ImageOptions);
-// @ts-expect-error misspelled plural option
 void ({
   format: 'png',
+  // @ts-expect-error misspelled plural option
   includeAxis: true,
   views: [{ id: 'front', phi: 90, theta: 0 }],
 } as const satisfies ImagesOptions);
