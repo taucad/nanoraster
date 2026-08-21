@@ -1,5 +1,7 @@
 import { beforeAll, expect, test } from 'vitest';
-import init, { Renderer, codec_conformance, render_image } from 'nanoraster-wasm-candidate';
+import * as candidate from 'nanoraster-wasm-candidate';
+import init, { Renderer, render_image } from 'nanoraster-wasm-candidate';
+import initBench, { codec_conformance, render_image as renderImageBench } from 'nanoraster-wasm-bench';
 
 import { describeAdapter } from '../../src/describe-adapter.ts';
 import { withPbrFactors } from '../pbr-fixture.mjs';
@@ -9,6 +11,7 @@ let glb;
 beforeAll(async () => {
   expect(navigator.gpu, 'WebGPU must be enabled for every supported browser').toBeDefined();
   await init();
+  await initBench();
   const response = await fetch(new URL('../fixtures/gear-12.glb', import.meta.url));
   expect(response.ok).toBe(true);
   glb = new Uint8Array(await response.arrayBuffer());
@@ -27,11 +30,21 @@ test('the façade describes the adapter without loading the wasm', async () => {
   }
 });
 
-test('wasm shell reports stable codec fingerprints', async () => {
+test('the shipped wasm drops the bench surface and renders as its sibling does', async () => {
+  // Q4's accepted trade: the fingerprints come from a `bench`-enabled sibling
+  // build, so the shipped artifact must both lack that surface and produce the
+  // same bytes as the build the gate measures.
+  for (const gated of ['bench_codecs', 'bench_multi_view', 'codec_conformance']) {
+    expect(candidate[gated], `shipped wasm exports the gated ${gated}`).toBeUndefined();
+  }
+
   const report = JSON.parse(codec_conformance());
   expect(report).toHaveProperty('base.png.fnv');
   expect(report).toHaveProperty('base.webp.fnv');
   expect(report).toHaveProperty('base.jpeg.fnv');
+
+  const options = JSON.stringify({ width: 192, height: 192, format: 'png' });
+  expect(await render_image(glb, options)).toEqual(await renderImageBench(glb, options));
 });
 
 test('wasm shell renders a deterministic 192x192 PNG', async () => {

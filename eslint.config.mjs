@@ -18,6 +18,8 @@ export default tseslint.config(
       'rust/target/**',
       'src/native/**',
       'src/wasm/**',
+      // Generated build outputs: the bench-enabled wasm sibling lands here.
+      'tests/out/**',
     ],
   },
   eslint.configs.recommended,

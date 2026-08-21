@@ -295,6 +295,7 @@ pub fn render_pixels(glb: Uint8Array, options_json: String) -> AsyncTask<RenderP
 /// Benchmark the codec encoders over one render (white background so JPEG
 /// participates): JSON report with per-format avg ms / bytes / FNV-1a
 /// fingerprints for cross-artifact byte-identity checks.
+#[cfg(feature = "bench")]
 #[napi]
 pub fn bench_codecs(glb: Uint8Array, width: u32, height: u32) -> Result<String> {
     let options = render_core::RenderOptions {
@@ -315,6 +316,7 @@ pub fn bench_codecs(glb: Uint8Array, width: u32, height: u32) -> Result<String> 
 }
 
 /// Compare six singular calls with one six-view batch.
+#[cfg(feature = "bench")]
 #[napi]
 pub fn bench_multi_view(glb: Uint8Array, width: u32, height: u32) -> Result<String> {
     let epoch = std::time::Instant::now();
@@ -325,6 +327,7 @@ pub fn bench_multi_view(glb: Uint8Array, width: u32, height: u32) -> Result<Stri
 }
 
 /// GPU-independent PNG/WebP/JPEG fingerprints for native/wasm conformance.
+#[cfg(feature = "bench")]
 #[napi]
 pub fn codec_conformance() -> Result<String> {
     render_core::codec_conformance()

@@ -36,11 +36,17 @@ const sizes = {
 // 289,985 on macOS, against 918,021 / 366,752 / 291,416 for the handles-first
 // build — -2,545 raw (-0.3%). The browser reads `navigator.gpu` in TypeScript
 // now, so `describe_adapter` and its wasm-bindgen glue are gone from here.
+// Bench-feature-gated build (W6): raw 864,783, gzip-9 347,393, brotli-11
+// 278,385 on macOS, against 915,476 / 366,233 / 289,985 for the structured-
+// AdapterInfo build — -50,693 raw (-5.5%). `bench_codecs`, `bench_multi_view`
+// and `codec_conformance` now sit behind the default-off `bench` cargo
+// feature, taking their wasm-bindgen glue, the encode-timing loop, the
+// six-view comparison harness and its serde_json report building with them.
 // Ceilings are the measured figure plus ~1%. The gate runs on Linux CI, whose
 // figure has not been re-measured since the PBR build (315,196 gzip-9 there
 // against 312,881 on macOS) — gzip9 carries extra slack until a CI run
 // re-anchors it.
-const ceilings = { raw: 924_600, gzip9: 369_900, brotli11: 292_800 };
+const ceilings = { raw: 873_400, gzip9: 350_800, brotli11: 281_100 };
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {

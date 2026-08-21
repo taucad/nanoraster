@@ -1,15 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
-const nativePackage = {
-  'darwin-arm64': 'nanoraster-darwin-arm64',
-  'linux-x64': 'nanoraster-linux-x64-gnu',
-  'win32-x64': 'nanoraster-win32-x64-msvc',
-}[`${process.platform}-${process.arch}`];
-
-if (!nativePackage) throw new Error(`unsupported benchmark host: ${process.platform}-${process.arch}`);
-
-const native = createRequire(import.meta.url)(nativePackage);
+// `codecConformance` lives behind the default-off `bench` cargo feature, so the
+// benchmark runs on the feature-enabled sibling addon built by
+// `pnpm run build:napi:bench` — same source, same release profile, but never
+// packed into a platform package.
+const native = createRequire(import.meta.url)('../tests/out/native-bench/nanoraster.node');
 const glb = readFileSync(new URL('../tests/fixtures/gear-12.glb', import.meta.url));
 const options = JSON.stringify({ width: 512, height: 384, format: 'png' });
 const iterations = 15;

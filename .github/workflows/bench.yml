@@ -20,7 +20,7 @@ jobs:
         with:
           node-version: '26'
       - run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
-      - run: pnpm run build:napi
+      - run: pnpm run build:napi:bench
       - id: benchmark
         continue-on-error: true # Origin: monthly drift opens an issue; the PR-vs-main gate remains fail-closed.
         env:

@@ -252,6 +252,7 @@ export function render_pixels(glb: Uint8Array, options_json: string): Promise<Re
 /// Benchmark the codec encoders over one render (white background so JPEG
 /// participates): JSON report with per-format avg ms / bytes / FNV-1a
 /// fingerprints for cross-artifact byte-identity checks.
+#[cfg(feature = "bench")]
 #[wasm_bindgen]
 pub async fn bench_codecs(glb: Vec<u8>, width: u32, height: u32) -> Result<String, JsError> {
     let options = render_core::RenderOptions {
@@ -272,6 +273,7 @@ pub async fn bench_codecs(glb: Vec<u8>, width: u32, height: u32) -> Result<Strin
 }
 
 /// Compare six singular calls with one six-view batch.
+#[cfg(feature = "bench")]
 #[wasm_bindgen]
 pub async fn bench_multi_view(glb: Vec<u8>, width: u32, height: u32) -> Result<String, JsError> {
     render_core::bench_multi_view(&glb, width, height, &js_sys::Date::now)
@@ -281,6 +283,7 @@ pub async fn bench_multi_view(glb: Vec<u8>, width: u32, height: u32) -> Result<S
 }
 
 /// GPU-independent PNG/WebP/JPEG fingerprints for native/wasm conformance.
+#[cfg(feature = "bench")]
 #[wasm_bindgen]
 pub fn codec_conformance() -> Result<String, JsError> {
     render_core::codec_conformance()

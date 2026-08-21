@@ -8,6 +8,7 @@
 //! across calls; the free functions are one-shot sugar (create → render →
 //! destroy) with unchanged signatures.
 
+#[cfg(feature = "bench")]
 mod bench;
 mod capture_overlay;
 mod encode;
@@ -17,6 +18,7 @@ mod render;
 
 use glb::parse_glb;
 
+#[cfg(feature = "bench")]
 pub use bench::{bench_encodes, bench_multi_view, codec_conformance};
 pub use encode::{ImageFormat, encode, encode_jpeg, encode_png, encode_webp};
 pub use options::{
@@ -1059,7 +1061,8 @@ mod tests {
         )
         .expect("adapter JSON");
         assert!(
-            ["metal", "vulkan", "dx12", "webgpu"].contains(&adapter["backend"].as_str().expect("backend"))
+            ["metal", "vulkan", "dx12", "webgpu"]
+                .contains(&adapter["backend"].as_str().expect("backend"))
         );
         assert!(adapter["name"].is_string());
         assert!(
@@ -1073,9 +1076,12 @@ mod tests {
             .contains(&adapter["deviceType"].as_str().expect("deviceType"))
         );
 
-        let benchmark = pollster::block_on(bench::bench_multi_view(FIXTURE, 192, 192, &clock))
-            .expect("multi-view benchmark");
-        assert_eq!(benchmark["variants"].as_array().map(Vec::len), Some(8));
+        #[cfg(feature = "bench")]
+        {
+            let benchmark = pollster::block_on(bench::bench_multi_view(FIXTURE, 192, 192, &clock))
+                .expect("multi-view benchmark");
+            assert_eq!(benchmark["variants"].as_array().map(Vec::len), Some(8));
+        }
     }
 
     #[test]

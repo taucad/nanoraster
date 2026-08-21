@@ -17,6 +17,13 @@ owns GLB parsing, rendering, annotations, and encoding; `render-napi` and
 `render-wasm` are host shells. `npm/` holds the three native platform packages.
 `docs-site/` is a static Fumadocs site generated from public TypeScript exports.
 
+The benchmark and codec-conformance entry points sit behind render-core's
+default-off `bench` cargo feature, which `render-napi` and `render-wasm`
+forward. Published artifacts never carry them. `pnpm run build:napi:bench` and
+`pnpm run build:wasm:bench` build feature-enabled siblings of the same source
+under `tests/out/`, which is where the gated benchmark and the browser
+conformance test read them from.
+
 ## Conventions
 
 - ESM-only public API through package exports.

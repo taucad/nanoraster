@@ -51,3 +51,10 @@ The package has no compatibility commitments before its first stable release.
   `encodeMs` are `render`, `overlay` and `encode`. The values are unchanged —
   still milliseconds. Direct consumers of the native addon or the wasm class
   rename the wire fields too.
+- The benchmark surface is gone from the published artifacts. The native addon
+  no longer exports `benchCodecs`, `benchMultiView` or `codecConformance`, and
+  the wasm module no longer exports `bench_codecs`, `bench_multi_view` or
+  `codec_conformance`; they live behind a default-off `bench` cargo feature and
+  are development instrumentation, never part of the package API. Build the
+  crates yourself with `--features bench` if you need them. Rendered bytes are
+  unchanged.

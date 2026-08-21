@@ -9,6 +9,10 @@ repository.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# Forwards render-core's default-off benchmark surface; see its Cargo.toml.
+[features]
+bench = ["render-core/bench"]
+
 [dependencies]
 render-core = { path = "../render-core" }
 js-sys = "0.3"

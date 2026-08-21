@@ -38,6 +38,12 @@ const native =
    * }}
    */ (requireNative(nativePackage));
 
+// The benchmark surface is behind the default-off `bench` cargo feature, so the
+// addon this suite loads — the one `npm pack` ships — must not carry it.
+for (const gated of ['benchCodecs', 'benchMultiView', 'codecConformance']) {
+  if (gated in native) throw new Error(`published addon exports the gated ${gated}`);
+}
+
 // The FFI hands the adapter over as JSON; the TS façade parses the same bytes.
 const adapter = JSON.parse(native.describeAdapter());
 console.log('adapter:', adapter);

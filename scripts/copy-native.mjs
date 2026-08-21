@@ -12,12 +12,16 @@ if (artifact === undefined) {
 }
 
 const [sourceName, packageDirectory, destinationName] = artifact;
-const destination = new URL(`../npm/${packageDirectory}/`, import.meta.url);
+// An argument diverts the addon to a scratch directory under a fixed name:
+// how the feature-enabled benchmark sibling stays out of the platform package.
+const scratch = process.argv[2];
+const destination = new URL(`../${scratch ?? `npm/${packageDirectory}`}/`, import.meta.url);
 await mkdir(destination, { recursive: true });
-await Promise.all([
-  copyFile(
-    new URL(`../rust/target/release/${sourceName}`, import.meta.url),
-    new URL(destinationName, destination),
-  ),
-  copyFile(new URL('../license', import.meta.url), new URL('license', destination)),
-]);
+await copyFile(
+  new URL(`../rust/target/release/${sourceName}`, import.meta.url),
+  new URL(scratch ? 'nanoraster.node' : destinationName, destination),
+);
+// The license ships beside the addon in the platform package only.
+if (!scratch) {
+  await copyFile(new URL('../license', import.meta.url), new URL('license', destination));
+}

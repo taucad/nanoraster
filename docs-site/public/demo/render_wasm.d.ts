@@ -31,23 +31,6 @@ export function render_pixels(glb: Uint8Array, options_json: string): Promise<Re
 
 
 /**
- * Benchmark the codec encoders over one render (white background so JPEG
- * participates): JSON report with per-format avg ms / bytes / FNV-1a
- * fingerprints for cross-artifact byte-identity checks.
- */
-export function bench_codecs(glb: Uint8Array, width: number, height: number): Promise<string>;
-
-/**
- * Compare six singular calls with one six-view batch.
- */
-export function bench_multi_view(glb: Uint8Array, width: number, height: number): Promise<string>;
-
-/**
- * GPU-independent PNG/WebP/JPEG fingerprints for native/wasm conformance.
- */
-export function codec_conformance(): string;
-
-/**
  * Render a kernel GLB to encoded image bytes. `options_json` is the shared
  * render-request contract (`render_core::RenderRequest`): width/height,
  * format `"png" | "webp" | "jpeg" | "jpg"`, quality 0..=1, phi/theta degrees,
@@ -71,16 +54,13 @@ export interface InitOutput {
     readonly render_image: (a: number, b: number, c: number, d: number) => number;
     readonly render_images: (a: number, b: number, c: number, d: number) => number;
     readonly render_pixels: (a: number, b: number, c: number, d: number) => number;
-    readonly bench_codecs: (a: number, b: number, c: number, d: number) => number;
-    readonly bench_multi_view: (a: number, b: number, c: number, d: number) => number;
-    readonly codec_conformance: (a: number) => void;
-    readonly __wasm_bindgen_func_elem_2037: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1043: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1043_4: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1043_5: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_2054: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1040: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1040_3: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1992: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_998: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_998_4: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_998_5: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2009: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_995: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_995_3: (a: number, b: number, c: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

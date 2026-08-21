@@ -6,6 +6,13 @@ publish = false
 license.workspace = true
 repository.workspace = true
 
+# Benchmark and codec-conformance entry points. Default-off: they are
+# development surface, so no published artifact carries them. CI builds
+# feature-enabled siblings of the same source for the benchmark and the
+# native/wasm fingerprint gates.
+[features]
+bench = []
+
 [dependencies]
 bytemuck = "1.25.1"
 futures-channel = "0.3.32"
@@ -37,6 +44,11 @@ wgpu = { version = "30.0.0", default-features = false, features = ["std", "webgp
 [dev-dependencies]
 pollster = "1.0.1"
 zune-jpeg = "0.5.15"
+
+# `render_core::bench_encodes` and `bench_multi_view` only exist with `bench`.
+[[example]]
+name = "bench"
+required-features = ["bench"]
 
 [build-dependencies]
 fontdue = { version = "=0.9.4", default-features = false, features = ["std"] }

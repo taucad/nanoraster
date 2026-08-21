@@ -138,6 +138,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
       - name: Clippy
         run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
+      - name: Clippy with the bench feature
+        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features -- -D warnings
       - name: First-party Rust coverage
         run: pnpm run test:rust-coverage
       - name: Native singular/batch parity
@@ -175,6 +177,13 @@ jobs:
       - name: Install lavapipe software Vulkan
         run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
       - run: pnpm run build
+      - name: Build the bench-enabled wasm sibling for the conformance gate
+        run: pnpm run build:wasm:bench
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wasm-bench
+          path: tests/out/wasm-bench/
+          if-no-files-found: error
       - run: pnpm run pkgcheck
       - run: pnpm run check:size
       - run: npm pack --ignore-scripts --pack-destination candidate
@@ -239,6 +248,10 @@ jobs:
         with:
           name: npm-candidate
           path: candidate
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: wasm-bench
+          path: tests/out/wasm-bench
       - run: pnpm exec playwright install --with-deps ${{ matrix.browser }}
       - name: Extract the exact root candidate
         run: |
@@ -268,7 +281,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
       - name: Benchmark the pull request
         run: |
-          pnpm run build:napi
+          pnpm run build:napi:bench
           node bench/gated.mjs > /tmp/current-benchmark.json
       - name: Benchmark main on the same runner
         shell: bash
@@ -278,7 +291,13 @@ jobs:
           if [[ -f "$base_directory/bench/gated.mjs" ]]; then
             cd "$base_directory"
             pnpm install --frozen-lockfile
-            pnpm run build:napi
+            # The base may predate the bench cargo feature, whose sibling addon
+            # the benchmark now loads; build whichever addon that tree expects.
+            if node -e "process.exit(require('./package.json').scripts['build:napi:bench'] ? 0 : 1)"; then
+              pnpm run build:napi:bench
+            else
+              pnpm run build:napi
+            fi
             node bench/gated.mjs > /tmp/base-benchmark.json
           fi
       - id: compare
