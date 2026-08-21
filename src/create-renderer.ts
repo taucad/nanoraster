@@ -17,7 +17,7 @@ import type { RawRendererHandle } from '#renderer.js';
 import { createRendererRaw } from '#renderer.js';
 
 /**
- * Options accepted by {@link createRenderer}.
+ * Options accepted by {@link createRenderer} and {@link describeAdapter}.
  *
  * @public
  */
@@ -70,7 +70,8 @@ export type Renderer = {
 
 const createRendererKeys = new Set(['powerPreference']);
 
-const serializeCreateOptions = (options: CreateRendererOptions | undefined): string | undefined => {
+/** Validate creation options and render them as the wire request. @internal */
+export const serializeCreateOptions = (options: CreateRendererOptions | undefined): string | undefined => {
   if (options === undefined) {
     return undefined;
   }

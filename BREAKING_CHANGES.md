@@ -34,6 +34,16 @@ The package has no compatibility commitments before its first stable release.
   no longer exported. Name the literal unions they stood for:
   `'png' | 'webp' | 'jpeg' | 'jpg'`, `'x' | 'y' | 'z'` and
   `'perspective' | 'orthographic'`.
+- `describeAdapter` returns an `AdapterInfo` object with `backend`, `name` and
+  `deviceType` instead of a string such as
+  `"Metal / Apple M2 Pro (IntegratedGpu)"`. Replace an `adapter.includes('(Cpu)')`
+  check with `adapter.deviceType === 'cpu'`. It also accepts the
+  `CreateRendererOptions` that `createRenderer` accepts, so a `low-power`
+  renderer's adapter can be described; passing nothing keeps describing the
+  `high-performance` adapter the one-shot functions bind. The wasm artifact no
+  longer exports `describe_adapter` at all — browsers read `navigator.gpu`
+  directly — and the native addon's `describeAdapter` takes an optional options
+  JSON string and returns JSON.
 - The `profile` option and the `profile` result property are now `timings`, and
   the `RenderProfile` / `RenderViewProfile` types are `RenderTimings` /
   `RenderViewTimings`. Every duration field drops its unit suffix: `parseMs` and

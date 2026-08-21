@@ -1,6 +1,7 @@
 import { beforeAll, expect, test } from 'vitest';
-import init, { Renderer, codec_conformance, describe_adapter, render_image } from 'nanoraster-wasm-candidate';
+import init, { Renderer, codec_conformance, render_image } from 'nanoraster-wasm-candidate';
 
+import { describeAdapter } from '../../src/describe-adapter.ts';
 import { withPbrFactors } from '../pbr-fixture.mjs';
 
 let glb;
@@ -13,8 +14,20 @@ beforeAll(async () => {
   glb = new Uint8Array(await response.arrayBuffer());
 });
 
-test('wasm shell reports a real adapter and stable codec fingerprints', async () => {
-  expect(await describe_adapter()).toContain('/');
+test('the façade describes the adapter without loading the wasm', async () => {
+  // Pure TypeScript over `navigator.gpu`: no browser tells us the device
+  // class, so only a fallback adapter (Chromium under --enable-unsafe-webgpu)
+  // may report `cpu`.
+  for (const options of [undefined, { powerPreference: 'low-power' }]) {
+    const adapter = await describeAdapter(options);
+    console.log('adapter:', JSON.stringify(adapter));
+    expect(adapter.backend).toBe('webgpu');
+    expect(typeof adapter.name).toBe('string');
+    expect(['cpu', 'unknown']).toContain(adapter.deviceType);
+  }
+});
+
+test('wasm shell reports stable codec fingerprints', async () => {
   const report = JSON.parse(codec_conformance());
   expect(report).toHaveProperty('base.png.fnv');
   expect(report).toHaveProperty('base.webp.fnv');

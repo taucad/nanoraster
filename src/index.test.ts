@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RenderImageOptions } from '#options.js';
 import type { RawRendererHandle } from '#renderer.js';
 import {
   createRendererRaw,
   describeAdapterRaw,
+  isNodeRuntime,
   renderManyRaw,
   renderPixelsRaw,
   renderRaw,
@@ -23,6 +24,7 @@ vi.mock('#renderer.js', () => ({
   renderPixelsRaw: vi.fn(),
   createRendererRaw: vi.fn(),
   describeAdapterRaw: vi.fn(),
+  isNodeRuntime: vi.fn(),
 }));
 
 const singular = vi.mocked(renderRaw);
@@ -30,6 +32,8 @@ const plural = vi.mocked(renderManyRaw);
 const pixels = vi.mocked(renderPixelsRaw);
 const createRaw = vi.mocked(createRendererRaw);
 const adapter = vi.mocked(describeAdapterRaw);
+const node = vi.mocked(isNodeRuntime);
+const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
 const glb = new Uint8Array([1, 2, 3]);
 
 beforeEach(() => {
@@ -38,6 +42,15 @@ beforeEach(() => {
   pixels.mockReset();
   createRaw.mockReset();
   adapter.mockReset();
+  node.mockReset();
+});
+
+afterEach(() => {
+  if (originalNavigator === undefined) {
+    Reflect.deleteProperty(globalThis, 'navigator');
+    return;
+  }
+  Object.defineProperty(globalThis, 'navigator', originalNavigator);
 });
 
 describe('renderImage', () => {
@@ -283,12 +296,123 @@ describe('renderPixels', () => {
 });
 
 describe('describeAdapter', () => {
-  it('should pass the description through and wrap failures', async () => {
-    adapter.mockResolvedValue('Metal / Apple M2 Pro (IntegratedGpu)');
-    await expect(describeAdapter()).resolves.toBe('Metal / Apple M2 Pro (IntegratedGpu)');
+  const stubGpu = (value: unknown): ReturnType<typeof vi.fn> => {
+    const requestAdapter = vi.fn(() => Promise.resolve(value));
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: { gpu: { requestAdapter } },
+    });
+    return requestAdapter;
+  };
+
+  it('should parse the native structure and wrap failures', async () => {
+    node.mockReturnValue(true);
+    adapter.mockResolvedValue('{"backend":"metal","name":"Apple M2 Pro","deviceType":"integrated-gpu"}');
+
+    await expect(describeAdapter()).resolves.toEqual({
+      backend: 'metal',
+      name: 'Apple M2 Pro',
+      deviceType: 'integrated-gpu',
+    });
+    expect(adapter).toHaveBeenCalledWith(undefined);
 
     adapter.mockRejectedValue(new Error('adapter-unavailable: none'));
     await expect(describeAdapter()).rejects.toMatchObject({ code: 'adapter-unavailable' });
+  });
+
+  it('should describe the adapter the requested power preference binds', async () => {
+    node.mockReturnValue(true);
+    adapter.mockResolvedValue('{"backend":"vulkan","name":"","deviceType":"cpu"}');
+
+    await expect(describeAdapter({ powerPreference: 'low-power' })).resolves.toEqual({
+      backend: 'vulkan',
+      name: '',
+      deviceType: 'cpu',
+    });
+    expect(adapter).toHaveBeenCalledWith('{"powerPreference":"low-power"}');
+  });
+
+  it('should reject options the renderer would reject', async () => {
+    node.mockReturnValue(true);
+
+    // @ts-expect-error powerPreference is a closed union
+    await expect(describeAdapter({ powerPreference: 'turbo' })).rejects.toMatchObject({
+      code: 'parse',
+      message: 'parse: powerPreference must be high-performance or low-power',
+    });
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['{"backend":"opengl","name":"","deviceType":"cpu"}'],
+    ['{"backend":"metal","name":"","deviceType":"software"}'],
+    ['{"backend":"metal","deviceType":"cpu"}'],
+  ])('should refuse an unrecognizable native description: %s', async (payload) => {
+    node.mockReturnValue(true);
+    adapter.mockResolvedValue(payload);
+
+    await expect(describeAdapter()).rejects.toMatchObject({
+      code: 'unknown',
+      message: `unrecognized adapter description: ${payload}`,
+    });
+  });
+
+  it.each([
+    // Chrome fills vendor and architecture, Firefox blanks every field, and
+    // Safari repeats one word across all of them.
+    [{ vendor: 'apple', architecture: 'metal-3', description: '' }, 'apple metal-3'],
+    [{ vendor: '', architecture: '', description: '' }, ''],
+    [{ vendor: 'apple', architecture: 'apple', description: 'apple' }, 'apple'],
+  ])('should read the browser adapter without touching the wasm binding: %o', async (info, name) => {
+    node.mockReturnValue(false);
+    const requestAdapter = stubGpu({ info: { ...info, isFallbackAdapter: false } });
+
+    await expect(describeAdapter()).resolves.toEqual({
+      backend: 'webgpu',
+      name,
+      deviceType: 'unknown',
+    });
+    expect(requestAdapter).toHaveBeenCalledWith(undefined);
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it('should read a fallback browser adapter as a cpu device', async () => {
+    node.mockReturnValue(false);
+    const requestAdapter = stubGpu({
+      info: {
+        vendor: 'google',
+        architecture: 'swiftshader',
+        description: '',
+        isFallbackAdapter: true,
+      },
+    });
+
+    await expect(describeAdapter({ powerPreference: 'high-performance' })).resolves.toEqual({
+      backend: 'webgpu',
+      name: 'google swiftshader',
+      deviceType: 'cpu',
+    });
+    expect(requestAdapter).toHaveBeenCalledWith({ powerPreference: 'high-performance' });
+  });
+
+  it('should report a browser without WebGPU as adapter-unavailable', async () => {
+    node.mockReturnValue(false);
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {} });
+
+    await expect(describeAdapter()).rejects.toMatchObject({
+      code: 'adapter-unavailable',
+      message: 'adapter-unavailable: this environment exposes no navigator.gpu',
+    });
+  });
+
+  it('should report a browser that hands out no adapter as adapter-unavailable', async () => {
+    node.mockReturnValue(false);
+    stubGpu(null);
+
+    await expect(describeAdapter()).rejects.toMatchObject({
+      code: 'adapter-unavailable',
+      message: 'adapter-unavailable: navigator.gpu returned no adapter',
+    });
   });
 });
 

@@ -90,10 +90,15 @@ const adapter = await describeAdapter().catch(() => undefined);
 
 if (adapter === undefined) {
   // adapter-unavailable: fall back now, nothing will render.
-} else if (adapter.includes('(Cpu)')) {
+} else if (adapter.deviceType === 'cpu') {
   // Renders work; budget ~10x the usual latency or reduce sizes.
 }
 ```
+
+`backend` and `name` round out the answer for a bug report. In browsers
+`deviceType` is `'unknown'` unless the adapter declares itself a fallback:
+WebGPU withholds the class, and a browser with only software support usually
+returns no adapter at all.
 
 ## Variations
 

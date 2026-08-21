@@ -8,7 +8,7 @@
 fn main() {
     let glb_path = std::env::args().nth(1).expect("usage: bench <in.glb>");
     let glb = std::fs::read(&glb_path).expect("read glb");
-    let adapter = pollster::block_on(render_core::describe_adapter()).expect("adapter");
+    let adapter = pollster::block_on(render_core::describe_adapter(None)).expect("adapter");
     eprintln!("adapter: {adapter}");
 
     let epoch = std::time::Instant::now();

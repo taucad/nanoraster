@@ -32,11 +32,15 @@ const sizes = {
 // createRenderer request struct's serde), the plan executor with its
 // pipelined readback, and per-view override resolution. Pixel and byte
 // output are unchanged (verified against the previous build's addon).
+// Structured-AdapterInfo build (W5): raw 915,476, gzip-9 366,233, brotli-11
+// 289,985 on macOS, against 918,021 / 366,752 / 291,416 for the handles-first
+// build — -2,545 raw (-0.3%). The browser reads `navigator.gpu` in TypeScript
+// now, so `describe_adapter` and its wasm-bindgen glue are gone from here.
 // Ceilings are the measured figure plus ~1%. The gate runs on Linux CI, whose
 // figure has not been re-measured since the PBR build (315,196 gzip-9 there
 // against 312,881 on macOS) — gzip9 carries extra slack until a CI run
 // re-anchors it.
-const ceilings = { raw: 927_000, gzip9: 370_500, brotli11: 294_200 };
+const ceilings = { raw: 924_600, gzip9: 369_900, brotli11: 292_800 };
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {

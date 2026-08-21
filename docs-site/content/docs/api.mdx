@@ -197,18 +197,28 @@ Contract points:
 
 ### `describeAdapter`
 
-Report the backend and device name of the adapter the environment selects,
-e.g. `"Metal / Apple M2 Pro (IntegratedGpu)"`.
+Describe the adapter a renderer created with these options would bind. Pass
+the same `powerPreference` you would pass `createRenderer`, or nothing for the
+`'high-performance'` default the one-shot functions use.
 
 ```typescript
-export declare const describeAdapter: () => Promise<string>;
+export declare const describeAdapter: (options?: CreateRendererOptions) => Promise<AdapterInfo>;
 ```
 
-A `(Cpu)` device type means software rasterization (SwiftShader, lavapipe,
+`deviceType === 'cpu'` means software rasterization (SwiftShader, lavapipe,
 WARP): renders work but run an order of magnitude slower. `navigator.gpu`
 existing does not rule this out, so use this as the preflight when performance
 matters — [Handle render failures](guides/handle-render-failures) shows the
 pattern.
+
+Native hosts report the full device class. Browsers report `'unknown'` unless
+the adapter is a declared fallback, because WebGPU deliberately withholds it;
+a browser with only software support usually hands out no adapter at all, so
+`describeAdapter` rejects with `adapter-unavailable` instead of describing one.
+
+### `AdapterInfo`
+
+<auto-type-table path="./props.ts" name="AdapterInfo" caption="AdapterInfo properties" />
 
 ## Options held in a variable
 

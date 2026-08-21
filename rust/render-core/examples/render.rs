@@ -27,7 +27,7 @@ fn main() {
         options.background = Some([1.0, 1.0, 1.0, 1.0]);
     }
 
-    let adapter = pollster::block_on(render_core::describe_adapter()).expect("adapter");
+    let adapter = pollster::block_on(render_core::describe_adapter(None)).expect("adapter");
     eprintln!("adapter: {adapter}");
 
     let glb = std::fs::read(&input).expect("read glb");

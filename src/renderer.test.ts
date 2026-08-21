@@ -49,14 +49,17 @@ describe('renderer binding selection', () => {
     };
     const native = {
       createRenderer: vi.fn(() => Promise.resolve(nativeRenderer)),
-      describeAdapter: vi.fn(() => 'Metal / Test (IntegratedGpu)'),
+      describeAdapter: vi.fn(() => '{"backend":"metal","name":"Test","deviceType":"integrated-gpu"}'),
     };
     const require = vi.fn(() => native);
     vi.doMock('node:module', () => ({ createRequire: vi.fn(() => require) }));
     const { createRendererRaw, describeAdapterRaw } = await import('#renderer.js');
     const glb = new Uint8Array([9]);
 
-    await expect(describeAdapterRaw()).resolves.toBe('Metal / Test (IntegratedGpu)');
+    await expect(describeAdapterRaw('{"powerPreference":"low-power"}')).resolves.toBe(
+      '{"backend":"metal","name":"Test","deviceType":"integrated-gpu"}',
+    );
+    expect(native.describeAdapter).toHaveBeenCalledWith('{"powerPreference":"low-power"}');
 
     const handle = await createRendererRaw('{"powerPreference":"low-power"}');
     expect(native.createRenderer).toHaveBeenCalledWith('{"powerPreference":"low-power"}');
@@ -90,10 +93,9 @@ describe('renderer binding selection', () => {
     const create = vi.fn(() => Promise.resolve(wasmRenderer));
     vi.doMock('./wasm/render_wasm.js', () => ({
       default: initialize,
-      describe_adapter: vi.fn(() => Promise.resolve('WebGPU / Test (Other)')),
       Renderer: { create },
     }));
-    const { createRendererRaw, describeAdapterRaw, renderManyRaw, renderPixelsRaw, renderRaw } =
+    const { createRendererRaw, isNodeRuntime, renderManyRaw, renderPixelsRaw, renderRaw } =
       await import('#renderer.js');
     const glb = new Uint8Array([9]);
 
@@ -110,7 +112,9 @@ describe('renderer binding selection', () => {
     });
     expect(create).toHaveBeenCalledOnce();
     expect(wasmRenderer.trim_targets).toHaveBeenCalledTimes(3);
-    await expect(describeAdapterRaw()).resolves.toBe('WebGPU / Test (Other)');
+    // The adapter probe never reaches this artifact: browsers read
+    // `navigator.gpu` in TypeScript instead.
+    expect(isNodeRuntime()).toBe(false);
 
     const handle = await createRendererRaw(undefined);
     expect(create).toHaveBeenLastCalledWith(undefined);

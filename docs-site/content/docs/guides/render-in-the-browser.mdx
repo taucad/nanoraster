@@ -25,7 +25,8 @@ if (!supported) {
 
 `navigator.gpu` is necessary but not sufficient: a browser can expose the API
 and still fail to produce an adapter on a particular machine — or hand you a
-software one. `describeAdapter()` names what you actually got; a `(Cpu)`
+software one. `describeAdapter()` names what you actually got, reading
+`navigator.gpu` directly, so the check costs no wasm download. A `'cpu'`
 device type means SwiftShader-class rasterization, roughly an order of
 magnitude slower. Handle [`adapter-unavailable`](handle-render-failures) too.
 
@@ -33,10 +34,15 @@ magnitude slower. Handle [`adapter-unavailable`](handle-render-failures) too.
 import { describeAdapter } from 'nanoraster';
 
 const adapter = await describeAdapter();
-if (adapter.includes('(Cpu)')) {
-  console.warn(`software rasterizer: ${adapter}`);
+if (adapter.deviceType === 'cpu') {
+  console.warn(`software rasterizer: ${adapter.name}`);
 }
 ```
+
+Browsers report `deviceType: 'unknown'` unless the adapter declares itself a
+fallback — the WebGPU specification withholds the class deliberately. The
+`name` is what the browser discloses: `"google swiftshader"` in headless
+Chrome, `"apple"` in Safari, `""` in Firefox.
 
 ### 2. Render from bytes you already hold
 

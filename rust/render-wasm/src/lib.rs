@@ -287,11 +287,3 @@ pub fn codec_conformance() -> Result<String, JsError> {
         .map(|report| report.to_string())
         .map_err(|error| JsError::new(&error.to_string()))
 }
-
-/// Backend + device name of the adapter the browser hands us.
-#[wasm_bindgen]
-pub async fn describe_adapter() -> Result<String, JsError> {
-    render_core::describe_adapter()
-        .await
-        .map_err(|e| JsError::new(&e.to_string()))
-}

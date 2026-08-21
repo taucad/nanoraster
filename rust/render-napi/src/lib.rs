@@ -332,10 +332,10 @@ pub fn codec_conformance() -> Result<String> {
         .map_err(map_error)
 }
 
-/// Backend + device name of the selected adapter, e.g.
-/// "Metal / Apple M2 Pro (IntegratedGpu)". A "(Cpu)" device type means
-/// software rasterization.
+/// The adapter a renderer created with `options_json` would bind, as JSON:
+/// `{"backend","name","deviceType"}`. `"deviceType":"cpu"` means software
+/// rasterization.
 #[napi]
-pub fn describe_adapter() -> Result<String> {
-    pollster::block_on(render_core::describe_adapter()).map_err(map_error)
+pub fn describe_adapter(options_json: Option<String>) -> Result<String> {
+    pollster::block_on(render_core::describe_adapter(options_json.as_deref())).map_err(map_error)
 }

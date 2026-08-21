@@ -37,6 +37,7 @@ const tableNames = [
   'RenderLightingRig',
   'RenderLight',
   'CreateRendererOptions',
+  'AdapterInfo',
   'RenderTimings',
   'RenderViewTimings',
 ] as const;
@@ -79,6 +80,7 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
   RenderLightingRig: ['lights', 'ambient', 'environment', 'space', 'exposure'],
   RenderLight: ['direction', 'color'],
   CreateRendererOptions: ['powerPreference'],
+  AdapterInfo: ['backend', 'name', 'deviceType'],
   RenderTimings: ['parse', 'setup', 'views'],
   RenderViewTimings: ['id', 'render', 'overlay', 'encode'],
 };

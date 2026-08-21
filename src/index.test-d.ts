@@ -24,6 +24,7 @@ expectTypeOf<
     | 'renderManyRaw'
     | 'renderPixelsRaw'
     | 'renderRaw'
+    | 'serializeCreateOptions'
     | 'serializeImageOptions'
     | 'serializeImagesOptions'
     | 'serializePixelsOptions'

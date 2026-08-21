@@ -33,7 +33,6 @@ export type RawRendererHandle = {
 
 type RendererBindings = {
   readonly createRenderer: (optionsJson: string | undefined) => Promise<RawRendererHandle>;
-  readonly describeAdapter: () => Promise<string>;
 };
 
 type WasmImagesResult = {
@@ -51,7 +50,6 @@ type WasmRenderer = {
 
 type WasmModule = {
   default: (init: { module_or_path: URL }) => Promise<unknown>;
-  describe_adapter: () => Promise<string>;
   Renderer: {
     create: (optionsJson?: string) => Promise<WasmRenderer>;
   };
@@ -72,7 +70,7 @@ type NapiRenderer = {
 
 type NapiModule = {
   createRenderer: (optionsJson?: string) => Promise<NapiRenderer>;
-  describeAdapter: () => string;
+  describeAdapter: (optionsJson?: string) => string;
 };
 
 const nativePackages = {
@@ -85,8 +83,10 @@ export const nativePackageName = (platform: string, architecture: string): strin
   nativePackages[`${platform}-${architecture}` as keyof typeof nativePackages];
 
 let cachedBindings: Promise<RendererBindings> | undefined;
+let cachedNative: Promise<NapiModule> | undefined;
 
-const isNodeRuntime = (): boolean => {
+/** `true` in Node, `false` wherever `navigator.gpu` exists. @internal */
+export const isNodeRuntime = (): boolean => {
   const nav = (globalThis as { navigator?: { gpu?: unknown } }).navigator;
   if (nav?.gpu !== undefined) {
     return false;
@@ -121,11 +121,10 @@ const loadWasmBindings = async (): Promise<RendererBindings> => {
         },
       };
     },
-    describeAdapter: async () => wasm.describe_adapter(),
   };
 };
 
-const loadNapiBindings = async (): Promise<RendererBindings> => {
+const loadNativeModule = async (): Promise<NapiModule> => {
   const { createRequire } = await import('node:module');
   const require = createRequire(import.meta.url);
   const packageName = nativePackageName(process.platform, process.arch);
@@ -135,9 +134,8 @@ const loadNapiBindings = async (): Promise<RendererBindings> => {
       `native render addon is not published for ${process.platform}-${process.arch}`,
     );
   }
-  let native: NapiModule;
   try {
-    native = require(packageName) as NapiModule;
+    return require(packageName) as NapiModule;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new RenderError(
@@ -146,6 +144,15 @@ const loadNapiBindings = async (): Promise<RendererBindings> => {
         `Install the optional ${packageName} package or build it with \`pnpm nx run nanoraster:build:napi\`.`,
     );
   }
+};
+
+const nativeModule = async (): Promise<NapiModule> => {
+  cachedNative ??= loadNativeModule();
+  return cachedNative;
+};
+
+const loadNapiBindings = async (): Promise<RendererBindings> => {
+  const native = await nativeModule();
   return {
     createRenderer: async (optionsJson) => {
       const renderer = await native.createRenderer(optionsJson);
@@ -161,7 +168,6 @@ const loadNapiBindings = async (): Promise<RendererBindings> => {
         },
       };
     },
-    describeAdapter: () => Promise.resolve(native.describeAdapter()),
   };
 };
 
@@ -222,7 +228,9 @@ export const createRendererRaw = async (optionsJson: string | undefined): Promis
   return renderer.createRenderer(optionsJson);
 };
 
-export const describeAdapterRaw = async (): Promise<string> => {
-  const renderer = await bindings();
-  return renderer.describeAdapter();
-};
+/**
+ * The native addon's adapter description, as JSON. Browsers never reach this:
+ * they read `navigator.gpu` in TypeScript instead. @internal
+ */
+export const describeAdapterRaw = async (optionsJson: string | undefined): Promise<string> =>
+  (await nativeModule()).describeAdapter(optionsJson);

@@ -667,16 +667,31 @@ pub async fn render_pixels_request(
     render_rgba(glb, &options).await
 }
 
-/// Report the adapter wgpu selects (backend + device name) — lets consumers
-/// distinguish absent WebGPU from a software "(Cpu)" adapter before
-/// committing, and lets CI assert the expected backend (Metal/lavapipe/WARP).
-pub async fn describe_adapter() -> Result<String, RenderError> {
-    let adapter = render::request_adapter(wgpu::PowerPreference::HighPerformance).await?;
+/// Describe the adapter a [`Renderer`] built from `options_json` would bind,
+/// as JSON: `{"backend","name","deviceType"}`. Lets consumers distinguish
+/// absent WebGPU from a software (`"cpu"`) adapter before committing, and lets
+/// CI assert the expected backend (Metal/lavapipe/WARP).
+pub async fn describe_adapter(options_json: Option<&str>) -> Result<String, RenderError> {
+    let power = CreateRendererRequest::from_json(options_json)?.resolve()?;
+    let adapter = render::request_adapter(power).await?;
     let info = adapter.get_info();
-    Ok(format!(
-        "{:?} / {} ({:?})",
-        info.backend, info.name, info.device_type
-    ))
+    Ok(serde_json::json!({
+        "backend": info.backend.to_str(),
+        "name": info.name,
+        "deviceType": device_type_name(info.device_type),
+    })
+    .to_string())
+}
+
+/// wgpu's device classes under the names the published `AdapterInfo` uses.
+fn device_type_name(device_type: wgpu::DeviceType) -> &'static str {
+    match device_type {
+        wgpu::DeviceType::DiscreteGpu => "discrete-gpu",
+        wgpu::DeviceType::IntegratedGpu => "integrated-gpu",
+        wgpu::DeviceType::VirtualGpu => "virtual-gpu",
+        wgpu::DeviceType::Cpu => "cpu",
+        wgpu::DeviceType::Other => "unknown",
+    }
 }
 
 #[cfg(test)]
@@ -1038,15 +1053,53 @@ mod tests {
         .expect("pixels request");
         assert_eq!(pixels.width, 192);
         assert_eq!(pixels.rgba.len(), 192 * 192 * 4);
+        let adapter: serde_json::Value = serde_json::from_str(
+            &pollster::block_on(describe_adapter(Some(r#"{"powerPreference":"low-power"}"#)))
+                .expect("adapter description"),
+        )
+        .expect("adapter JSON");
         assert!(
-            pollster::block_on(describe_adapter())
-                .expect("adapter description")
-                .contains('/')
+            ["metal", "vulkan", "dx12", "webgpu"].contains(&adapter["backend"].as_str().expect("backend"))
+        );
+        assert!(adapter["name"].is_string());
+        assert!(
+            [
+                "discrete-gpu",
+                "integrated-gpu",
+                "virtual-gpu",
+                "cpu",
+                "unknown"
+            ]
+            .contains(&adapter["deviceType"].as_str().expect("deviceType"))
         );
 
         let benchmark = pollster::block_on(bench::bench_multi_view(FIXTURE, 192, 192, &clock))
             .expect("multi-view benchmark");
         assert_eq!(benchmark["variants"].as_array().map(Vec::len), Some(8));
+    }
+
+    #[test]
+    fn device_types_map_to_the_published_kebab_case_names() {
+        let names: Vec<&str> = [
+            wgpu::DeviceType::DiscreteGpu,
+            wgpu::DeviceType::IntegratedGpu,
+            wgpu::DeviceType::VirtualGpu,
+            wgpu::DeviceType::Cpu,
+            wgpu::DeviceType::Other,
+        ]
+        .into_iter()
+        .map(device_type_name)
+        .collect();
+        assert_eq!(
+            names,
+            [
+                "discrete-gpu",
+                "integrated-gpu",
+                "virtual-gpu",
+                "cpu",
+                "unknown"
+            ]
+        );
     }
 
     #[test]
