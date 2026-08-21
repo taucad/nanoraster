@@ -566,10 +566,7 @@ fn instant_clock() -> impl Fn() -> f64 + Sync {
 }
 
 /// Render a kernel GLB to straight-alpha RGBA8 (sRGB-encoded) pixels.
-pub async fn render_rgba(
-    glb: &[u8],
-    options: &RenderOptions,
-) -> Result<Rendered, RenderError> {
+pub async fn render_rgba(glb: &[u8], options: &RenderOptions) -> Result<Rendered, RenderError> {
     validate_options(options)?;
     // Reject before any GPU work: parse and prepare precede device creation.
     let parsed = parse_glb(glb).map_err(RenderError::Parse)?;
@@ -599,8 +596,7 @@ pub async fn render_image(
     format: ImageFormat,
 ) -> Result<Vec<u8>, RenderError> {
     let view = singular_view(options);
-    let mut images =
-        render_images(glb, options, format, std::slice::from_ref(&view)).await?;
+    let mut images = render_images(glb, options, format, std::slice::from_ref(&view)).await?;
     Ok(images.remove(0))
 }
 
@@ -987,8 +983,7 @@ mod tests {
             ..view("front", 90.0, 0.0)
         }];
 
-        let rendered =
-            pollster::block_on(render_rgba(FIXTURE, &options)).expect("RGBA render");
+        let rendered = pollster::block_on(render_rgba(FIXTURE, &options)).expect("RGBA render");
         assert_eq!(rendered.width, 192);
         assert_eq!(rendered.height, 192);
         let material_options = RenderOptions {
@@ -996,18 +991,14 @@ mod tests {
             height: 192,
             ..Default::default()
         };
-        let baseline = pollster::block_on(render_rgba(FIXTURE, &material_options))
-            .expect("baseline material");
-        let polished_metal = pollster::block_on(render_rgba(
-            &material_variant(1.0, 0.05),
-            &material_options,
-        ))
-        .expect("polished metal material");
-        let polished_metal_repeat = pollster::block_on(render_rgba(
-            &material_variant(1.0, 0.05),
-            &material_options,
-        ))
-        .expect("repeated polished metal material");
+        let baseline =
+            pollster::block_on(render_rgba(FIXTURE, &material_options)).expect("baseline material");
+        let polished_metal =
+            pollster::block_on(render_rgba(&material_variant(1.0, 0.05), &material_options))
+                .expect("polished metal material");
+        let polished_metal_repeat =
+            pollster::block_on(render_rgba(&material_variant(1.0, 0.05), &material_options))
+                .expect("repeated polished metal material");
         assert_ne!(baseline.rgba, polished_metal.rgba);
         assert_eq!(polished_metal.rgba, polished_metal_repeat.rgba);
 
