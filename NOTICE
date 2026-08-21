@@ -6,7 +6,11 @@ Vercel in collaboration with basement.studio, licensed under the SIL Open Font
 License 1.1. Source and license text are retained under
 rust/render-core/assets/geist/.
 
-This product includes a modified fork of image-webp 0.2.4 from the image-rs
-project. The fork is licensed under MIT OR Apache-2.0. Its source, license text,
-and deterministic Huffman tie-break modifications are retained under
+This product includes a modified fork of image-webp from the image-rs project,
+licensed under MIT OR Apache-2.0. The fork branches from image-rs/image-webp at
+commit f4d80bd (after the 0.2.4 release) and adds seventeen commits: a VP8 lossy
+still-image encoder — per-macroblock intra prediction chosen by rate-distortion
+cost, coefficient-free macroblock skipping, a nonlinear quality-to-quantizer
+curve, and quantizer-proportional loop filtering — alongside lossless encoder,
+decoder, and animation fixes. Its source and license text are retained under
 rust/vendor/image-webp/.
