@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   demoControls,
+  isPixelsDemo,
   readDemoLights,
   readDemoLabel,
   readDemoOptions,
@@ -13,6 +14,7 @@ import {
   type DemoValue,
 } from '@/lib/demo-options';
 import { angleKeys, buildDemoRequest } from '@/lib/demo-request';
+import { falseColour } from '@/lib/false-colour';
 import { hexToLinear, linearToHex, patchMaterialFactors } from '@/lib/glb-material';
 import { hasWebGpu, loadDemoModel, loadWasmRenderer } from '@/lib/wasm-renderer';
 
@@ -72,13 +74,16 @@ export const RenderDemo = ({
   const lights = useMemo(() => readDemoLights(code), [code]);
   const label = useMemo(() => readDemoLabel(code), [code]);
   const batch = views.length > 0;
+  const pixels = isPixelsDemo(code);
   const controls = demoControls(code).filter((control) => !batch || !angleKeys.has(control.key));
   const [values, setValues] = useState<Record<string, DemoValue>>(() => readDemoOptions(code));
   const [state, setState] = useState<State>('idle');
   const [message, setMessage] = useState('');
   const [srcs, setSrcs] = useState<readonly string[]>([]);
+  const [frame, setFrame] = useState<ImageData | undefined>();
   const [evidence, setEvidence] = useState<Evidence | undefined>();
   const urlsRef = useRef<readonly string[]>([]);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // At most one render is in flight; the newest values always render last.
   // Renders are not cancellable, so without the guard a drag would stack
   // concurrent renders and the intermediate frames would waste GPU time the
@@ -109,6 +114,19 @@ export const RenderDemo = ({
 
           const json = JSON.stringify(request);
           const started = performance.now();
+
+          // The pixels entry resolves the shared request and encodes nothing,
+          // so the `format` the demo always sends is read and ignored there —
+          // the timing below is render and readback with no encoder in it.
+          if (pixels) {
+            const raw = await renderer.render_pixels(glb, json);
+            const ms = Math.round(performance.now() - started);
+            setFrame(falseColour(raw));
+            setEvidence({ mime: 'raw rgba', ms, sizes: [raw.rgba.byteLength] });
+            setState('idle');
+            return;
+          }
+
           const bytes = batch
             ? (await renderer.render_images(glb, json)).images
             : [await renderer.render_image(glb, json)];
@@ -138,8 +156,18 @@ export const RenderDemo = ({
         inFlightRef.current = false;
       }
     },
-    [batch, label, lights, views],
+    [batch, label, lights, pixels, views],
   );
+
+  // The canvas only exists once there is a frame to paint, so the paint waits
+  // for the element the frame put on the page.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (frame === undefined || canvas === null) return;
+    canvas.width = frame.width;
+    canvas.height = frame.height;
+    canvas.getContext('2d')?.putImageData(frame, 0, 0);
+  }, [frame]);
 
   // Only the first paint is automatic; later renders follow a control change.
   const drawnOnce = useRef(false);
@@ -172,6 +200,17 @@ export const RenderDemo = ({
         {evidence.mime} · {((evidence.sizes[index] ?? 0) / 1024).toFixed(1)} KB · {evidence.ms} ms
       </p>
     );
+
+  // Raw pixels have no file to point an <img> at: the frame is painted into a
+  // canvas, false-coloured, and captioned so nobody mistakes the ramp for what
+  // the renderer produced.
+  const painted = (
+    <figure className={styles.single}>
+      <canvas className={styles.image} ref={canvasRef} />
+      <figcaption className={styles.caption}>false colour · luma ramp applied in the page</figcaption>
+      {badge(0)}
+    </figure>
+  );
 
   // One image per declared view, captioned with the angles the code states.
   const sheet = batch ? (
@@ -208,6 +247,12 @@ export const RenderDemo = ({
             </p>
           ) : state === 'failed' ? (
             <p className={styles.notice}>Render failed: {message}</p>
+          ) : pixels ? (
+            frame === undefined ? (
+              <p className={styles.notice}>Rendering…</p>
+            ) : (
+              painted
+            )
           ) : srcs.length > 0 ? (
             sheet
           ) : (

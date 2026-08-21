@@ -7,6 +7,7 @@ import {
   demoControls,
   isLightingKey,
   isMaterialKey,
+  isPixelsDemo,
   readDemoLabel,
   readDemoLights,
   readDemoOptions,
@@ -257,6 +258,33 @@ describe('interactive demo projections', () => {
     expect(readDemoLights('lights: [{ direction: [0, 1, 0.4], color: [3, 2.9, 2.7] }]')).toEqual([
       { direction: [0, 1, 0.4], color: [3, 2.9, 2.7] },
     ]);
+  });
+
+  it('routes the raw-pixels example to the canvas tile', () => {
+    // The demo tells an unencoded example from an encoded one the way it tells
+    // a batch from a singular render: by what the example itself calls.
+    const raw = demos.filter(({ code }) => isPixelsDemo(code));
+    expect(raw.map(({ path }) => path)).toEqual(['guides/work-with-raw-pixels.mdx']);
+
+    for (const { path, code } of raw) {
+      // Nothing is encoded here, so an encoded-only key would document an
+      // option `renderPixels` ignores — and would offer a control that moves
+      // no pixel.
+      const options = readDemoOptions(code);
+      expect(options['format'], `${path} sets a format on a pixels example`).toBeUndefined();
+      expect(options['quality'], `${path} sets a quality on a pixels example`).toBeUndefined();
+
+      // The tile paints what the example says it paints: the result shape
+      // destructured, arithmetic over the array, one `putImageData`.
+      expect(code, path).toContain('const { rgba, width, height } = await renderPixels(');
+      expect(code, path).toContain('putImageData');
+      expect(demoControls(code).length, `${path} offers no controls`).toBeGreaterThan(0);
+    }
+
+    // Every other example encodes, and would hang on a canvas that never paints.
+    for (const { path, code } of demos.filter(({ code }) => !isPixelsDemo(code))) {
+      expect(code, `${path} renders pixels through the image tile`).not.toContain('renderPixels');
+    }
   });
 
   it('leaves a batch demo with controls after the angles are dropped', () => {

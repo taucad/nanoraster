@@ -125,6 +125,14 @@ export const demoControls = (code: string): readonly DemoControl[] => {
     .map((key) => catalogue[key]);
 };
 
+/**
+ * True when an example renders raw pixels rather than an encoded file, which
+ * is what the example itself calls. The demo reads its mode out of the code
+ * the same way it reads a batch out of a `views: [ … ]` literal: nothing about
+ * a tile is declared twice.
+ */
+export const isPixelsDemo = (code: string): boolean => /\brenderPixels\b/u.test(code);
+
 /** True when a value belongs in the model rather than in the render request. */
 export const isMaterialKey = (key: string): boolean =>
   key in catalogue && catalogue[key].scope === 'material';

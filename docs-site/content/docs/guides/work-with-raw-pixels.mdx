@@ -50,7 +50,52 @@ For scaled display, build an `ImageBitmap` instead and let the browser resample:
 const bitmap = await createImageBitmap(imageData, { resizeQuality: 'high' });
 ```
 
-### 3. Know the shape
+### 3. Compute on the frame
+
+Between the render and the paint sits the whole reason to skip the encoder: the
+frame is a plain array, and anything you can write in a loop is available. The
+tile below runs live in this page. It maps each pixel's luma through a colour
+ramp — over the same memory the renderer filled, with no second buffer — and
+paints the result. No decoder produced that picture and no CSS filter could
+have: it came out of the arithmetic beside it. Move the camera and the loop
+runs again on the new frame.
+
+<RenderDemo>
+
+```typescript
+import { renderPixels } from 'nanoraster';
+
+const { rgba, width, height } = await renderPixels(glb, {
+  phi: 62,
+  theta: -38,
+  margin: 0.08,
+});
+
+// No copy and no decode: the ImageData reads the bytes the renderer wrote.
+const frame = new ImageData(new Uint8ClampedArray(rgba.buffer), width, height);
+const { data } = frame;
+
+// One pass over that same memory: luma per pixel, then a heat ramp.
+// Uint8ClampedArray rounds and clamps, so the ramp needs no bounds of its own.
+for (let index = 0; index < data.length; index += 4) {
+  const luma = (0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2]) / 255;
+  data[index] = 255 * Math.min(1, luma * 2.4);
+  data[index + 1] = 255 * (luma * 1.8 - 0.6);
+  data[index + 2] = 255 * (0.7 - Math.abs(luma - 0.25) * 2.4);
+}
+
+const canvas = document.querySelector('canvas');
+canvas.width = width;
+canvas.height = height;
+canvas.getContext('2d').putImageData(frame, 0, 0);
+```
+
+</RenderDemo>
+
+The badge under the tile counts the raw bytes and the wall time of the render
+call alone — no encoder is in that number.
+
+### 4. Know the shape
 
 `rgba` is `width * height * 4` bytes: row-major, top row first, four bytes per
 pixel, no padding. A 640×480 render is exactly 1,228,800 bytes. The pixels are
@@ -58,7 +103,7 @@ identical to what the encoded paths compress — the same determinism rules from
 [How it works](../how-it-works) apply, so two renders of one request on one
 host are byte-equal before any encoder gets involved.
 
-### 4. Compare renders perceptually
+### 5. Compare renders perceptually
 
 [How it works](../how-it-works#determinism) advises comparing renders
 perceptually across hosts rather than by hash; raw pixels are the tooling path
