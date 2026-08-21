@@ -1,6 +1,6 @@
 ---
 title: API reference
-description: Every public export of nanoraster — the two render calls, the option helpers, the request and result types, the failure codes, and the validation constants.
+description: Every public export of nanoraster — the three render calls, the renderer handle, the request and result types, the failure codes, and the validation constants.
 ---
 
 Everything below is imported from `nanoraster`. GLB bytes you pass in are owned by
@@ -71,14 +71,16 @@ and `quality`, so one call renders a whole resolution or format ladder.
 export declare const renderImages: <const Options extends RenderImagesOptions>(
   glb: Uint8Array<ArrayBuffer>,
   options: StrictRenderImagesOptions<Options>,
-) => Promise<RenderedImages<Options['views'], Options['format']>>;
+) => Promise<RenderedImagesResult<Options>>;
 ```
 
-`StrictRenderImagesOptions` is the package's internal exactness check: callers
-pass `RenderImagesOptions`, while TypeScript rejects extra keys, empty view
-tuples, and misplaced per-view settings. With `profile: true` in the options,
-the resolved tuple additionally carries a [`RenderProfile`](#renderprofile) as
-its `profile` property.
+[`StrictRenderImagesOptions`](#strictrenderimagesoptions) is the exactness
+check: callers pass `RenderImagesOptions`, while TypeScript rejects extra
+keys, empty view tuples, and misplaced per-view settings.
+[`RenderedImagesResult`](#renderedimagesresult) is the
+[`RenderedImages`](#renderedimages) tuple, plus a
+[`RenderProfile`](#renderprofile) on its `profile` property when the options
+literal set `profile: true`.
 
 - **Parameters:** owned GLB bytes and shared settings with a non-empty view tuple.
 - **Returns:** a tuple with the input view IDs and order preserved; each
@@ -167,7 +169,7 @@ export type Renderer = {
   readonly renderImages: <const Options extends RenderImagesOptions>(
     glb: Uint8Array<ArrayBuffer>,
     options: StrictRenderImagesOptions<Options>,
-  ) => Promise<RenderedImages<Options['views'], Options['format']>>;
+  ) => Promise<RenderedImagesResult<Options>>;
   readonly renderPixels: (
     glb: Uint8Array<ArrayBuffer>,
     options: RenderPixelsOptions,
@@ -209,51 +211,29 @@ existing does not rule this out, so use this as the preflight when performance
 matters — [Handle render failures](guides/handle-render-failures) shows the
 pattern.
 
-## Option helpers
+## Options held in a variable
 
-Both helpers return their argument unchanged and add no runtime work. They stop
-TypeScript widening literal values when options are assigned to a variable
-before the call.
-
-### `createRenderImageOptions`
-
-Preserve literal singular option values while rejecting misspelled keys.
-`NoExtraKeys` is an internal compile-time check.
+Passing an object literal straight to a render call keeps every literal type.
+Assigning it to a variable first does not: TypeScript widens `'png'` to
+`string` and the view IDs with it, so the result tuple loses its names. Write
+`as const satisfies` on the variable to keep the literals and still have the
+keys checked. There is no helper to import and nothing is added to the bundle
+— the whole thing is compile-time.
 
 ```typescript
-export declare const createRenderImageOptions: <const Options extends RenderImageOptions>(
-  options: NoExtraKeys<Options, RenderImageOptions>,
-) => Options;
-```
+import { renderImages, type RenderImagesOptions } from 'nanoraster';
 
-```typescript
-import { createRenderImageOptions, renderImage } from 'nanoraster';
-
-const options = createRenderImageOptions({ format: 'webp', quality: 0.8 });
-const image = await renderImage(glb, options);
-```
-
-### `createRenderImagesOptions`
-
-Preserve literal view IDs and tuple order while rejecting misplaced or
-misspelled keys.
-
-```typescript
-export declare const createRenderImagesOptions: <const Options extends RenderImagesOptions>(
-  options: StrictRenderImagesOptions<Options>,
-) => Options;
-```
-
-```typescript
-import { createRenderImagesOptions, renderImages } from 'nanoraster';
-
-const options = createRenderImagesOptions({
+const options = {
   format: 'png',
   views: [{ id: 'iso', phi: 60, theta: -45 }],
-});
+} as const satisfies RenderImagesOptions;
 
 const [iso] = await renderImages(glb, options);
 ```
+
+`satisfies RenderImageOptions` does the same for the singular call. Both
+reject misspelled keys (`includeAxis`), misplaced ones (a per-view `phi` at
+call level), and missing required ones, at the property that is wrong.
 
 ## Options
 
@@ -315,6 +295,38 @@ tuple that enforces that relationship without losing IDs or order.
 without changing what is rendered.
 
 <auto-type-table path="./props.ts" name="RenderImagesOptions" caption="RenderImagesOptions properties" />
+
+### `StrictRenderImagesOptions`
+
+The exact parameter type of [`renderImages`](#renderimages) and
+`Renderer.renderImages`: `RenderImagesOptions` narrowed so extra keys, empty
+view tuples, and per-view settings placed at call level are compile errors.
+
+```typescript
+export type StrictRenderImagesOptions<Options extends RenderImagesOptions> = NoExtraKeys<
+  Options,
+  RenderImagesOptions
+> & {
+  readonly views: StrictViews<Options['views']>;
+  readonly lighting?: StrictLighting<Options['lighting']>;
+};
+```
+
+Callers write plain `RenderImagesOptions` object literals and never name this
+type — reach for it only to forward the plan call through your own generic
+wrapper, where the parameter type has to be spelled out:
+
+```typescript
+import { renderImages, type RenderImagesOptions, type StrictRenderImagesOptions } from 'nanoraster';
+
+const renderCatalogue = async <const Options extends RenderImagesOptions>(
+  glb: Uint8Array<ArrayBuffer>,
+  options: StrictRenderImagesOptions<Options>,
+) => renderImages(glb, options);
+```
+
+`NoExtraKeys`, `StrictViews`, and `StrictLighting` are internal compile-time
+checks with no runtime form.
 
 ### `RenderPixelsOptions`
 
@@ -384,7 +396,7 @@ the matching view.
 
 ### `RenderedImages`
 
-The tuple returned by [`renderImages`](#renderimages).
+The ordered tuple inside every plan-call result.
 
 ```typescript
 export type RenderedImages<
@@ -416,6 +428,35 @@ const [iso, top] = await renderImages(glb, {
 
 console.log(iso.id, iso.file.name); // 'iso' 'render-iso.png'
 console.log(top.id, top.file.name); // 'top' 'render-top.png'
+```
+
+### `RenderedImagesResult`
+
+What [`renderImages`](#renderimages) and `Renderer.renderImages` actually
+resolve to: the [`RenderedImages`](#renderedimages) tuple, and — only when the
+options literal set `profile: true` — a [`RenderProfile`](#renderprofile) on
+its `profile` property. Reading `profile` without having asked for it is a
+compile error, so the flag and the field cannot drift apart.
+
+```typescript
+export type RenderedImagesResult<Options extends RenderImagesOptions> = RenderedImages<
+  Options['views'],
+  Options['format']
+> &
+  (Options extends { readonly profile: true } ? { readonly profile: RenderProfile } : unknown);
+```
+
+```typescript
+import { renderImages, type RenderedImagesResult, type RenderImagesOptions } from 'nanoraster';
+
+const options = {
+  format: 'png',
+  profile: true,
+  views: [{ id: 'iso', phi: 60, theta: -45 }],
+} as const satisfies RenderImagesOptions;
+
+const result: RenderedImagesResult<typeof options> = await renderImages(glb, options);
+console.log(result[0].file.name, result.profile.parseMs); // 'render-iso.png' 0.42
 ```
 
 ### `RenderedPixels`

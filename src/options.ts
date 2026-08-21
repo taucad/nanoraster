@@ -228,9 +228,11 @@ export type RenderedImages<
 
 /**
  * Result of one plan call: the ordered tuple, plus the parsed profile when
- * the options literal set `profile: true`.
+ * the options literal set `profile: true`. This is what
+ * `renderImages`/`Renderer.renderImages` resolve to, so consumers can name
+ * their own return types.
  *
- * @internal
+ * @public
  */
 export type RenderedImagesResult<Options extends RenderImagesOptions> = RenderedImages<
   Options['views'],
@@ -286,9 +288,12 @@ type StrictViews<Views extends readonly RenderImageView[]> = Views['length'] ext
     };
 
 /**
- * Internal exact form used by the façade.
+ * The exact form `renderImages` accepts: {@link RenderImagesOptions} plus
+ * compile-time rejection of extra keys, empty view tuples, and misplaced
+ * per-view settings. Name it when wrapping the plan call in your own generic
+ * function.
  *
- * @internal
+ * @public
  */
 export type StrictRenderImagesOptions<Options extends RenderImagesOptions> = NoExtraKeys<
   Options,
@@ -297,30 +302,6 @@ export type StrictRenderImagesOptions<Options extends RenderImagesOptions> = NoE
   readonly views: StrictViews<Options['views']>;
   readonly lighting?: StrictLighting<Options['lighting']>;
 };
-
-/**
- * Preserve literal singular option values while rejecting misspelled keys.
- *
- * @public
- * @param options - Singular image settings
- * @returns The same settings with literal types preserved
- */
-export const createRenderImageOptions = <const Options extends RenderImageOptions>(
-  options: NoExtraKeys<Options, RenderImageOptions> & {
-    readonly lighting?: StrictLighting<Options['lighting']>;
-  },
-): Options => options;
-
-/**
- * Preserve literal view IDs and order while rejecting misplaced or misspelled keys.
- *
- * @public
- * @param options - Shared settings and ordered views
- * @returns The same settings with literal view IDs and order preserved
- */
-export const createRenderImagesOptions = <const Options extends RenderImagesOptions>(
-  options: StrictRenderImagesOptions<Options>,
-): Options => options;
 
 const singularKeys = new Set([
   'format',

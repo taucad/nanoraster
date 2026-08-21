@@ -1,7 +1,12 @@
 import { expectTypeOf } from 'vitest';
 import * as renderModule from '#index.js';
 
-const { createRenderImageOptions, createRenderImagesOptions, renderImage, renderImages } = renderModule;
+const { renderImage, renderImages } = renderModule;
+// `as const satisfies` replaces the deleted option-identity helpers: it keeps
+// literal view IDs and formats while still rejecting misspelled or misplaced
+// keys, and it costs no runtime call.
+type ImageOptions = renderModule.RenderImageOptions;
+type ImagesOptions = renderModule.RenderImagesOptions;
 type RenderModule = typeof renderModule;
 expectTypeOf<
   Extract<
@@ -11,8 +16,6 @@ expectTypeOf<
     | 'RawImagesResult'
     | 'RawPixelsResult'
     | 'RawRendererHandle'
-    | 'RenderedImagesResult'
-    | 'StrictRenderImagesOptions'
     | 'assembleRenderedImages'
     | 'createRendererRaw'
     | 'describeAdapterRaw'
@@ -33,13 +36,13 @@ expectTypeOf<
 
 const glb = new Uint8Array([1, 2, 3]);
 
-const singular = createRenderImageOptions({
+const singular = {
   format: 'webp',
   label: 'Isometric',
   includeAxes: true,
   includeLabel: true,
   includeScale: true,
-});
+} as const satisfies ImageOptions;
 expectTypeOf(singular).toEqualTypeOf<{
   readonly format: 'webp';
   readonly label: 'Isometric';
@@ -56,7 +59,7 @@ type TauExportFileShape = {
 };
 expectTypeOf<renderModule.RenderedImageFile>().toExtend<TauExportFileShape>();
 
-const options = createRenderImagesOptions({
+const options = {
   format: 'png',
   includeAxes: true,
   includeLabel: true,
@@ -65,7 +68,7 @@ const options = createRenderImagesOptions({
     { id: 'front', label: 'Front', phi: 90, theta: 0 },
     { id: 'top', label: 'Top', phi: 0, theta: 0 },
   ],
-});
+} as const satisfies ImagesOptions;
 const rendered = renderImages(glb, options);
 expectTypeOf(rendered).toEqualTypeOf<
   Promise<readonly [renderModule.RenderedImage<'front', 'png'>, renderModule.RenderedImage<'top', 'png'>]>
@@ -136,9 +139,13 @@ void renderImages(glb, {
   ],
 });
 // @ts-expect-error includeLabel true requires a singular label
-createRenderImageOptions({ format: 'png', includeLabel: true });
+void ({ format: 'png', includeLabel: true } as const satisfies ImageOptions);
 // @ts-expect-error includeLabel true requires every batch view label
-createRenderImagesOptions({ format: 'png', includeLabel: true, views: [{ id: 'front', phi: 90, theta: 0 }] });
+void ({
+  format: 'png',
+  includeLabel: true,
+  views: [{ id: 'front', phi: 90, theta: 0 }],
+} as const satisfies ImagesOptions);
 void renderImages(glb, {
   format: 'png',
   views: [
@@ -152,27 +159,45 @@ void renderImages(glb, {
   ],
 });
 // @ts-expect-error singular label is not a batch-level property
-createRenderImagesOptions({ format: 'png', label: 'Front', views: [{ id: 'front', phi: 90, theta: 0 }] });
+void ({
+  format: 'png',
+  label: 'Front',
+  views: [{ id: 'front', phi: 90, theta: 0 }],
+} as const satisfies ImagesOptions);
 // Per-view output overrides are part of the plan-entry schema (R15).
-createRenderImagesOptions({ format: 'png', views: [{ id: 'front', phi: 90, theta: 0, format: 'webp' }] });
+void ({
+  format: 'png',
+  views: [{ id: 'front', phi: 90, theta: 0, format: 'webp' }],
+} as const satisfies ImagesOptions);
 // @ts-expect-error unknown per-view format
-createRenderImagesOptions({ format: 'png', views: [{ id: 'front', phi: 90, theta: 0, format: 'gif' }] });
+void ({
+  format: 'png',
+  views: [{ id: 'front', phi: 90, theta: 0, format: 'gif' }],
+} as const satisfies ImagesOptions);
 // @ts-expect-error plural angles belong on each view
-createRenderImagesOptions({ format: 'png', phi: 90, views: [{ id: 'front', phi: 90, theta: 0 }] });
+void ({
+  format: 'png',
+  phi: 90,
+  views: [{ id: 'front', phi: 90, theta: 0 }],
+} as const satisfies ImagesOptions);
 // @ts-expect-error missing theta
-createRenderImagesOptions({ format: 'png', views: [{ id: 'front', phi: 90 }] });
+void ({ format: 'png', views: [{ id: 'front', phi: 90 }] } as const satisfies ImagesOptions);
 // @ts-expect-error misspelled singular option
-createRenderImageOptions({ format: 'png', includeAxis: true });
+void ({ format: 'png', includeAxis: true } as const satisfies ImageOptions);
 // @ts-expect-error misspelled plural option
-createRenderImagesOptions({ format: 'png', includeAxis: true, views: [{ id: 'front', phi: 90, theta: 0 }] });
+void ({
+  format: 'png',
+  includeAxis: true,
+  views: [{ id: 'front', phi: 90, theta: 0 }],
+} as const satisfies ImagesOptions);
 // @ts-expect-error missing singular format
-createRenderImageOptions({ includeAxes: true });
+void ({ includeAxes: true } as const satisfies ImageOptions);
 void renderImages(glb, {
   format: 'png',
   lighting: 'studio',
   views: [{ id: 'front', phi: 90, theta: 0 }],
 });
-const lit = createRenderImageOptions({
+const lit = {
   format: 'png',
   lighting: {
     lights: [{ direction: [-0.45, 0.61, 0.63], color: [2.09, 2.09, 2.09] }],
@@ -181,27 +206,27 @@ const lit = createRenderImageOptions({
     space: 'world',
     exposure: 1.5,
   },
-});
+} as const satisfies ImageOptions;
 expectTypeOf(lit.lighting).toExtend<renderModule.RenderLighting | undefined>();
-createRenderImageOptions({
+void ({
   format: 'png',
   // @ts-expect-error unknown preset name
   lighting: 'sunset',
-});
-createRenderImageOptions({
+} as const satisfies ImageOptions);
+void ({
   format: 'png',
   lighting: {
     lights: [],
     // @ts-expect-error misspelled rig property
     ambien: 0.02,
   },
-});
-createRenderImageOptions({
+} as const satisfies ImageOptions);
+void ({
   format: 'png',
   // @ts-expect-error direction needs three components
   lighting: { lights: [{ direction: [0, 1], color: [1, 1, 1] }] },
-});
-createRenderImagesOptions({
+} as const satisfies ImageOptions);
+void ({
   format: 'png',
   lighting: {
     lights: [],
@@ -209,7 +234,7 @@ createRenderImagesOptions({
     environment: 'sunset',
   },
   views: [{ id: 'front', phi: 90, theta: 0 }],
-});
+} as const satisfies ImagesOptions);
 void renderImages(glb, { format: 'png', views: [{ id: 'front', phi: 90, theta: 0, width: 320 }] });
 // @ts-expect-error missing view id
-createRenderImagesOptions({ format: 'png', views: [{ phi: 90, theta: 0 }] });
+void ({ format: 'png', views: [{ phi: 90, theta: 0 }] } as const satisfies ImagesOptions);

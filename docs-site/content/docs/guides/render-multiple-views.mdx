@@ -81,19 +81,21 @@ views still need 192 pixels each way.
 
 ### 4. Preserve literal types across a variable
 
-Assigning options to a variable widens the literals and loses the IDs;
-`createRenderImagesOptions` prevents that without changing runtime behaviour.
+Assigning options to a variable widens the literals and loses the IDs.
+`as const satisfies RenderImagesOptions` prevents that: `as const` keeps every
+literal, and `satisfies` still rejects misspelled or misplaced keys — all at
+compile time, with nothing added to the bundle.
 
 ```typescript
-import { createRenderImagesOptions, renderImages } from 'nanoraster';
+import { renderImages, type RenderImagesOptions } from 'nanoraster';
 
-const options = createRenderImagesOptions({
+const options = {
   format: 'png',
   views: [
     { id: 'iso', phi: 60, theta: -45 },
     { id: 'top', phi: 0, theta: 0 },
   ],
-});
+} as const satisfies RenderImagesOptions;
 
 const images = await renderImages(glb, options);
 ```

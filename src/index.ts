@@ -18,7 +18,6 @@ export { RenderError } from '#render-error.js';
 export type { RenderFailureCode } from '#render-error.js';
 export { imageMimeTypes } from '#image-file.js';
 export type { RenderedImageFile, RenderedPixels } from '#image-file.js';
-export { createRenderImageOptions, createRenderImagesOptions } from '#options.js';
 export {
   renderImageAmbientRange,
   renderImageAnnotatedMinDimension,
@@ -42,7 +41,9 @@ export type {
   RenderViewProfile,
   RenderedImage,
   RenderedImages,
+  RenderedImagesResult,
   RenderLight,
   RenderLighting,
   RenderLightingRig,
+  StrictRenderImagesOptions,
 } from '#options.js';

@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RenderImageOptions, RenderImagesOptions } from '#options.js';
 import {
-  createRenderImageOptions,
-  createRenderImagesOptions,
   imageFileName,
   imageViewFileName,
   toImageRequestJson,
@@ -143,17 +141,6 @@ describe('image request serialization', () => {
     expect(() => toImagesRequestJson(null as unknown as RenderImagesOptions)).toThrow(
       'options must be an object',
     );
-  });
-
-  it('should preserve tuple literals in the option helpers', () => {
-    const singular = createRenderImageOptions({ format: 'png', width: 256 });
-    const plural = createRenderImagesOptions({
-      format: 'png',
-      views: [{ id: 'front', phi: 90, theta: 0 }] as const,
-    });
-
-    expect(singular).toEqual({ format: 'png', width: 256 });
-    expect(plural.views[0].id).toBe('front');
   });
 
   it('should normalize opaque hex and preserve tuple backgrounds', () => {
