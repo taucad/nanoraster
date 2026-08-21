@@ -76,7 +76,7 @@ const dynamic = renderImages(glb, { format: 'png', views: dynamicViews });
 expectTypeOf(dynamic).toEqualTypeOf<Promise<readonly renderModule.RenderedImage<string, 'png'>[]>>();
 
 // Per-view output overrides flow into each entry's mime type (R15), and
-// profile: true adds a typed profile to the result.
+// timings: true adds typed timings to the result.
 const ladder = renderImages(glb, {
   format: 'webp',
   views: [
@@ -92,18 +92,18 @@ expectTypeOf(cardFile.mimeType).toEqualTypeOf<'image/webp'>();
 declare const heroFile: Awaited<typeof ladder>[1]['file'];
 expectTypeOf(heroFile.mimeType).toEqualTypeOf<'image/png'>();
 
-const profiled = renderImages(glb, {
+const timed = renderImages(glb, {
   format: 'png',
-  profile: true,
+  timings: true,
   views: [{ id: 'front', phi: 90, theta: 0 }],
 });
-expectTypeOf((await profiled).profile).toEqualTypeOf<renderModule.RenderProfile>();
-const unprofiled = await renderImages(glb, {
+expectTypeOf((await timed).timings).toEqualTypeOf<renderModule.RenderTimings>();
+const untimed = await renderImages(glb, {
   format: 'png',
   views: [{ id: 'front', phi: 90, theta: 0 }],
 });
-// @ts-expect-error no profile without profile: true
-void unprofiled.profile;
+// @ts-expect-error no timings without timings: true
+void untimed.timings;
 
 // Renderer handles mirror the module-level surface.
 declare const renderer: renderModule.Renderer;

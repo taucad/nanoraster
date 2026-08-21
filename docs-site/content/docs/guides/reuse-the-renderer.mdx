@@ -91,18 +91,18 @@ the same handle — there is nothing to recreate yourself.
 
 ### 5. Verify the reuse when it matters
 
-`profile: true` on a plan call attaches stage timings and lets you confirm the
+`timings: true` on a plan call attaches stage timings and lets you confirm the
 device actually carried over: a warm renderer reports the parse and per-view
 work, while setup stays near zero after the first call.
 
 ```typescript
 const results = await renderer.renderImages(glb, {
   format: 'webp',
-  profile: true,
+  timings: true,
   views: [{ id: 'iso', phi: 60, theta: -45 }],
 });
 
-console.log(results.profile.setupMs, results.profile.views[0].renderMs);
+console.log(results.timings.setup, results.timings.views[0].render);
 ```
 
 ## Variations

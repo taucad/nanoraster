@@ -5,7 +5,7 @@ import { RenderError } from '#render-error.js';
 import type {
   RenderImageView,
   RenderImagesOptions,
-  RenderProfile,
+  RenderTimings,
   RenderedImagesResult,
   StrictRenderImagesOptions,
 } from '#options.js';
@@ -30,31 +30,31 @@ export const serializeImagesOptions = (options: RenderImagesOptions): string => 
   }
 };
 
-const parseProfile = (json: string): RenderProfile => {
+const parseTimings = (json: string): RenderTimings => {
   const raw = JSON.parse(json) as {
-    parseMs: number;
-    setupMs: number;
-    views: Array<{ id: string; renderMs: number; overlayMs: number; encodeMs: number }>;
+    parse: number;
+    setup: number;
+    views: Array<{ id: string; render: number; overlay: number; encode: number }>;
   };
   return {
-    parseMs: raw.parseMs,
-    setupMs: raw.setupMs,
-    views: raw.views.map(({ id, renderMs, overlayMs, encodeMs }) => ({
+    parse: raw.parse,
+    setup: raw.setup,
+    views: raw.views.map(({ id, render, overlay, encode }) => ({
       id,
-      renderMs,
-      overlayMs,
-      encodeMs,
+      render,
+      overlay,
+      encode,
     })),
   };
 };
 
 /**
  * Map a raw binding result onto the typed, named result tuple (with the
- * parsed profile attached when the call requested one).
+ * parsed timings attached when the call requested them).
  *
  * @internal
  * @param options - The validated options the raw result answers
- * @param raw - Binding-level images plus optional profile JSON
+ * @param raw - Binding-level images plus optional timings JSON
  * @returns The ordered result tuple
  */
 export const assembleRenderedImages = <const Options extends RenderImagesOptions>(
@@ -76,7 +76,7 @@ export const assembleRenderedImages = <const Options extends RenderImagesOptions
     };
   });
   const result =
-    raw.profile === undefined ? images : Object.assign(images, { profile: parseProfile(raw.profile) });
+    raw.timings === undefined ? images : Object.assign(images, { timings: parseTimings(raw.timings) });
   return result as RenderedImagesResult<Options>;
 };
 

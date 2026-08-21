@@ -23,13 +23,13 @@ fn disposed() -> Error {
     Error::from_reason("gpu: renderer disposed")
 }
 
-/// Ordered encoded images plus the optional profile from `profile: true`.
+/// Ordered encoded images plus the optional timings from `timings: true`.
 #[napi(object)]
 pub struct RenderImagesResult {
     pub images: Vec<Buffer>,
     /// JSON-serialized stage timings and resource counters, present when the
-    /// request set `profile: true`.
-    pub profile: Option<String>,
+    /// request set `timings: true`.
+    pub timings: Option<String>,
 }
 
 /// Straight-alpha sRGB RGBA8 rows, tightly packed.
@@ -41,11 +41,11 @@ pub struct RenderPixelsResult {
 }
 
 fn images_result(
-    (images, profile): (Vec<Vec<u8>>, Option<render_core::RenderBatchProfile>),
+    (images, timings): (Vec<Vec<u8>>, Option<render_core::RenderBatchTimings>),
 ) -> RenderImagesResult {
     RenderImagesResult {
         images: images.into_iter().map(Into::into).collect(),
-        profile: profile.map(|profile| profile.to_json()),
+        timings: timings.map(|timings| timings.to_json()),
     }
 }
 
@@ -95,7 +95,7 @@ pub struct RenderImagesTask {
 }
 
 impl Task for RenderImagesTask {
-    type Output = (Vec<Vec<u8>>, Option<render_core::RenderBatchProfile>);
+    type Output = (Vec<Vec<u8>>, Option<render_core::RenderBatchTimings>);
     type JsValue = RenderImagesResult;
 
     fn compute(&mut self) -> Result<Self::Output> {
@@ -306,11 +306,11 @@ pub fn bench_codecs(glb: Uint8Array, width: u32, height: u32) -> Result<String> 
     let started = std::time::Instant::now();
     let rendered =
         pollster::block_on(render_core::render_rgba(&glb, &options)).map_err(map_error)?;
-    let render_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let render_duration = started.elapsed().as_secs_f64() * 1000.0;
     let epoch = std::time::Instant::now();
     let now = move || epoch.elapsed().as_secs_f64() * 1000.0;
     let mut report = render_core::bench_encodes(&rendered, &now).map_err(map_error)?;
-    report["renderMs"] = ((render_ms * 100.0).round() / 100.0).into();
+    report["render"] = ((render_duration * 100.0).round() / 100.0).into();
     Ok(report.to_string())
 }
 

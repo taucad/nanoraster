@@ -32,7 +32,7 @@ const image = await renderImage(glb, {
 `renderImages` takes the same shared keys, minus `phi`, `theta` and `label`,
 plus `views: [{ id, label?, phi, theta, width?, height?, format?, quality? }]`:
 one entry per image, in result order, where each view may override the shared
-output settings. It also accepts `profile: true` to attach stage timings to the
+output settings. It also accepts `timings: true` to attach stage timings to the
 result. `renderPixels` takes the singular keys minus `format` and
 `quality` — nothing is encoded.
 
@@ -78,8 +78,8 @@ check: callers pass `RenderImagesOptions`, while TypeScript rejects extra
 keys, empty view tuples, and misplaced per-view settings.
 [`RenderedImagesResult`](#renderedimagesresult) is the
 [`RenderedImages`](#renderedimages) tuple, plus a
-[`RenderProfile`](#renderprofile) on its `profile` property when the options
-literal set `profile: true`.
+[`RenderTimings`](#rendertimings) on its `timings` property when the options
+literal set `timings: true`.
 
 - **Parameters:** owned GLB bytes and shared settings with a non-empty view tuple.
 - **Returns:** a tuple with the input view IDs and order preserved; each
@@ -281,14 +281,14 @@ type.
 ```typescript
 export type RenderImagesOptions<Views extends readonly RenderImageView[] = readonly RenderImageView[]> =
   RenderImageSharedOptions & {
-    readonly profile?: boolean;
+    readonly timings?: boolean;
     readonly views: Views;
   };
 ```
 
 `views` must be a non-empty ordered tuple with unique IDs. A view is labelled
 when its own entry sets `label`, so a sheet can label some views and not
-others. `profile: true` attaches a [`RenderProfile`](#renderprofile) to the
+others. `timings: true` attaches a [`RenderTimings`](#rendertimings) to the
 result without changing what is rendered.
 
 <auto-type-table path="./props.ts" name="RenderImagesOptions" caption="RenderImagesOptions properties" />
@@ -420,8 +420,8 @@ console.log(top.id, top.file.name); // 'top' 'render-top.png'
 
 What [`renderImages`](#renderimages) and `Renderer.renderImages` actually
 resolve to: the [`RenderedImages`](#renderedimages) tuple, and — only when the
-options literal set `profile: true` — a [`RenderProfile`](#renderprofile) on
-its `profile` property. Reading `profile` without having asked for it is a
+options literal set `timings: true` — a [`RenderTimings`](#rendertimings) on
+its `timings` property. Reading `timings` without having asked for it is a
 compile error, so the flag and the field cannot drift apart.
 
 ```typescript
@@ -429,12 +429,12 @@ import { renderImages, type RenderedImagesResult, type RenderImagesOptions } fro
 
 const options = {
   format: 'png',
-  profile: true,
+  timings: true,
   views: [{ id: 'iso', phi: 60, theta: -45 }],
 } as const satisfies RenderImagesOptions;
 
 const result: RenderedImagesResult<typeof options> = await renderImages(glb, options);
-console.log(result[0].file.name, result.profile.parseMs); // 'render-iso.png' 0.42
+console.log(result[0].file.name, result.timings.parse); // 'render-iso.png' 0.42
 ```
 
 ### `RenderedPixels`
@@ -446,21 +446,21 @@ tightly packed (`width * height * 4` bytes) — exactly what a canvas
 
 <auto-type-table path="./props.ts" name="RenderedPixels" caption="RenderedPixels properties" />
 
-### `RenderProfile`
+### `RenderTimings`
 
-Attached to a plan call's result when the options set `profile: true`. The
+Attached to a plan call's result when the options set `timings: true`. The
 fields map onto the pipeline stages [How it works](how-it-works) documents:
 parse, setup (device acquisition plus geometry upload), then per-view
-rasterise and encode. Timings are milliseconds on the host's clock.
+rasterise and encode. Every duration is milliseconds on the host's clock.
 
-<auto-type-table path="./props.ts" name="RenderProfile" caption="RenderProfile properties" />
+<auto-type-table path="./props.ts" name="RenderTimings" caption="RenderTimings properties" />
 
-### `RenderViewProfile`
+### `RenderViewTimings`
 
-One view's stage timings within a [`RenderProfile`](#renderprofile), in plan
+One view's stage timings within a [`RenderTimings`](#rendertimings), in plan
 order.
 
-<auto-type-table path="./props.ts" name="RenderViewProfile" caption="RenderViewProfile properties" />
+<auto-type-table path="./props.ts" name="RenderViewTimings" caption="RenderViewTimings properties" />
 
 ### `imageMimeTypes`
 

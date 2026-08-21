@@ -199,41 +199,46 @@ impl std::error::Error for RenderError {}
 
 /// Host clock supplying monotonic milliseconds. `Sync` because the native plan
 /// executor reads stage timings from encode worker threads.
-pub type ProfileClock = dyn Fn() -> f64 + Sync;
+pub type TimingsClock = dyn Fn() -> f64 + Sync;
 
-/// Per-view timings recorded by profiled plan calls.
+/// Per-view timings recorded by timed plan calls.
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderViewProfile {
+pub struct RenderViewTimings {
     pub id: String,
-    pub render_ms: f64,
-    pub overlay_ms: f64,
-    pub encode_ms: f64,
+    /// Milliseconds. GPU render, resolve, and pixel readback for this view.
+    pub render: f64,
+    /// Milliseconds. Annotation stamping (zero when nothing is stamped).
+    pub overlay: f64,
+    /// Milliseconds. Image encoding in this view's format.
+    pub encode: f64,
 }
 
 /// Batch setup/resource evidence recorded without changing the render path.
-/// The resource counters attribute acquisitions to the profiled call, so a
+/// The resource counters attribute acquisitions to the timed call, so a
 /// warm renderer reports zero device requests while the one-shot sugar
 /// reports one.
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderBatchProfile {
-    pub parse_ms: f64,
-    pub setup_ms: f64,
+pub struct RenderBatchTimings {
+    /// Milliseconds. GLB parse, validation, and world-bounds computation.
+    pub parse: f64,
+    /// Milliseconds. Renderer acquisition plus scene upload for this call.
+    pub setup: f64,
     pub peak_readback_bytes: u64,
     pub glb_parses: u32,
     pub adapter_device_requests: u32,
     pub pipeline_sets: u32,
     pub scene_uploads: u32,
     pub target_allocations: u32,
-    pub views: Vec<RenderViewProfile>,
+    pub views: Vec<RenderViewTimings>,
 }
 
-impl RenderBatchProfile {
+impl RenderBatchTimings {
     /// Camel-cased JSON for the bindings' wire shape.
     #[must_use]
     pub fn to_json(&self) -> String {
-        serde_json::to_string(self).expect("profile fields always serialize")
+        serde_json::to_string(self).expect("timings fields always serialize")
     }
 }
 
@@ -297,7 +302,7 @@ pub(crate) fn with_view_result<T>(
     }
 }
 
-fn clock_ms(now: Option<&ProfileClock>) -> f64 {
+fn clock(now: Option<&TimingsClock>) -> f64 {
     now.map_or(0.0, |clock| clock())
 }
 
@@ -343,25 +348,25 @@ fn build_plan(
 }
 
 /// Upload the parsed scene and run the plan on a ready renderer, assembling
-/// the profile from the executor's timings and the renderer's counter deltas.
+/// the timings from the executor's stages and the renderer's counter deltas.
 async fn run_plan(
     renderer: &mut Renderer,
     counters_start: render::Counters,
     parsed: glb::Scene,
     plan: Vec<render::PlanEntry>,
-    now: Option<&ProfileClock>,
-    parse_ms: f64,
+    now: Option<&TimingsClock>,
+    parse: f64,
     setup_started: f64,
-) -> Result<(Vec<Vec<u8>>, Option<RenderBatchProfile>), RenderError> {
+) -> Result<(Vec<Vec<u8>>, Option<RenderBatchTimings>), RenderError> {
     let mut scene = render::Scene::new(parsed);
     let buffers = renderer.ensure_uploaded(&mut scene)?;
-    let setup_ms = clock_ms(now) - setup_started;
-    let (images, timings) = renderer.execute_plan(buffers, &plan, now).await?;
-    let profile = now.map(|_| {
+    let setup = clock(now) - setup_started;
+    let (images, view_stages) = renderer.execute_plan(buffers, &plan, now).await?;
+    let timings = now.map(|_| {
         let delta = renderer.counters().since(counters_start);
-        RenderBatchProfile {
-            parse_ms,
-            setup_ms,
+        RenderBatchTimings {
+            parse,
+            setup,
             peak_readback_bytes: plan
                 .iter()
                 .map(|entry| u64::from(entry.options.width) * u64::from(entry.options.height) * 4)
@@ -374,17 +379,17 @@ async fn run_plan(
             target_allocations: delta.target_allocations,
             views: plan
                 .iter()
-                .zip(timings)
-                .map(|(entry, view_timings)| RenderViewProfile {
+                .zip(view_stages)
+                .map(|(entry, stages)| RenderViewTimings {
                     id: entry.id.clone(),
-                    render_ms: view_timings.render_ms,
-                    overlay_ms: view_timings.overlay_ms,
-                    encode_ms: view_timings.encode_ms,
+                    render: stages.render,
+                    overlay: stages.overlay,
+                    encode: stages.encode,
                 })
                 .collect(),
         }
     });
-    Ok((images, profile))
+    Ok((images, timings))
 }
 
 /// One-shot sugar: create a renderer, run the plan, destroy the device.
@@ -393,18 +398,18 @@ async fn render_once(
     options: &RenderOptions,
     format: ImageFormat,
     views: &[RenderView],
-    now: Option<&ProfileClock>,
-) -> Result<(Vec<Vec<u8>>, Option<RenderBatchProfile>), RenderError> {
+    now: Option<&TimingsClock>,
+) -> Result<(Vec<Vec<u8>>, Option<RenderBatchTimings>), RenderError> {
     validate_options(options)?;
     if views.is_empty() {
         return Err(RenderError::Parse(
             "views must contain at least one view".into(),
         ));
     }
-    let parse_started = clock_ms(now);
+    let parse_started = clock(now);
     let scene = parse_glb(glb).map_err(RenderError::Parse)?;
-    let parse_ms = clock_ms(now) - parse_started;
-    let setup_started = clock_ms(now);
+    let parse = clock(now) - parse_started;
+    let setup_started = clock(now);
     let plan = build_plan(&scene, options, format, views)?;
     let mut renderer = Renderer::new(wgpu::PowerPreference::HighPerformance).await?;
     let result = run_plan(
@@ -413,7 +418,7 @@ async fn render_once(
         scene,
         plan,
         now,
-        parse_ms,
+        parse,
         setup_started,
     )
     .await;
@@ -438,8 +443,8 @@ impl Renderer {
         options: &RenderOptions,
         format: ImageFormat,
         views: &[RenderView],
-        now: Option<&ProfileClock>,
-    ) -> Result<(Vec<Vec<u8>>, Option<RenderBatchProfile>), RenderError> {
+        now: Option<&TimingsClock>,
+    ) -> Result<(Vec<Vec<u8>>, Option<RenderBatchTimings>), RenderError> {
         validate_options(options)?;
         if views.is_empty() {
             return Err(RenderError::Parse(
@@ -448,21 +453,12 @@ impl Renderer {
         }
         let counters_start = self.counters();
         self.recover_if_lost().await?;
-        let parse_started = clock_ms(now);
+        let parse_started = clock(now);
         let scene = parse_glb(glb).map_err(RenderError::Parse)?;
-        let parse_ms = clock_ms(now) - parse_started;
-        let setup_started = clock_ms(now);
+        let parse = clock(now) - parse_started;
+        let setup_started = clock(now);
         let plan = build_plan(&scene, options, format, views)?;
-        run_plan(
-            self,
-            counters_start,
-            scene,
-            plan,
-            now,
-            parse_ms,
-            setup_started,
-        )
-        .await
+        run_plan(self, counters_start, scene, plan, now, parse, setup_started).await
     }
 
     /// Render one view on this renderer's warm device straight to
@@ -503,19 +499,19 @@ impl Renderer {
     }
 
     /// Binding surface: plural render-request JSON on a warm renderer. The
-    /// request's `profile: true` flag opts into stage timings; `now` supplies
+    /// request's `timings: true` flag opts into stage timings; `now` supplies
     /// the clock on wasm (native self-clocks via `Instant`).
     pub async fn render_images_request(
         &mut self,
         glb: &[u8],
         options_json: &str,
-        now: Option<&ProfileClock>,
-    ) -> Result<(Vec<Vec<u8>>, Option<RenderBatchProfile>), RenderError> {
-        let (options, format, views, want_profile) =
+        now: Option<&TimingsClock>,
+    ) -> Result<(Vec<Vec<u8>>, Option<RenderBatchTimings>), RenderError> {
+        let (options, format, views, want_timings) =
             RenderImagesRequest::from_json(options_json)?.resolve()?;
         #[cfg(not(target_arch = "wasm32"))]
         let fallback = instant_clock();
-        let clock: Option<&ProfileClock> = if want_profile {
+        let stage_clock: Option<&TimingsClock> = if want_timings {
             match now {
                 Some(clock) => Some(clock),
                 #[cfg(not(target_arch = "wasm32"))]
@@ -523,14 +519,14 @@ impl Renderer {
                 #[cfg(target_arch = "wasm32")]
                 None => {
                     return Err(RenderError::Parse(
-                        "profile requires a host clock on wasm".into(),
+                        "timings require a host clock on wasm".into(),
                     ));
                 }
             }
         } else {
             None
         };
-        self.render_images(glb, &options, format, &views, clock)
+        self.render_images(glb, &options, format, &views, stage_clock)
             .await
     }
 
@@ -613,15 +609,15 @@ pub async fn render_images(
 }
 
 /// Benchmark entry using the production batch path plus a caller-provided clock.
-pub async fn render_images_profiled(
+pub async fn render_images_timed(
     glb: &[u8],
     options: &RenderOptions,
     format: ImageFormat,
     views: &[RenderView],
-    now: &ProfileClock,
-) -> Result<(Vec<Vec<u8>>, RenderBatchProfile), RenderError> {
-    let (images, profile) = render_once(glb, options, format, views, Some(now)).await?;
-    Ok((images, profile.expect("profile requested")))
+    now: &TimingsClock,
+) -> Result<(Vec<Vec<u8>>, RenderBatchTimings), RenderError> {
+    let (images, timings) = render_once(glb, options, format, views, Some(now)).await?;
+    Ok((images, timings.expect("timings requested")))
 }
 
 /// One-call surface for the wasm/napi bindings: parse the TS façade's JSON
@@ -632,18 +628,18 @@ pub async fn render_image_request(glb: &[u8], options_json: &str) -> Result<Vec<
 }
 
 /// Binding surface for an ordered plural request. The request's
-/// `profile: true` flag opts into stage timings; `now` supplies the clock on
+/// `timings: true` flag opts into stage timings; `now` supplies the clock on
 /// wasm (native self-clocks via `Instant`).
 pub async fn render_images_request(
     glb: &[u8],
     options_json: &str,
-    now: Option<&ProfileClock>,
-) -> Result<(Vec<Vec<u8>>, Option<RenderBatchProfile>), RenderError> {
-    let (options, format, views, want_profile) =
+    now: Option<&TimingsClock>,
+) -> Result<(Vec<Vec<u8>>, Option<RenderBatchTimings>), RenderError> {
+    let (options, format, views, want_timings) =
         RenderImagesRequest::from_json(options_json)?.resolve()?;
     #[cfg(not(target_arch = "wasm32"))]
     let fallback = instant_clock();
-    let clock: Option<&ProfileClock> = if want_profile {
+    let stage_clock: Option<&TimingsClock> = if want_timings {
         match now {
             Some(clock) => Some(clock),
             #[cfg(not(target_arch = "wasm32"))]
@@ -651,14 +647,14 @@ pub async fn render_images_request(
             #[cfg(target_arch = "wasm32")]
             None => {
                 return Err(RenderError::Parse(
-                    "profile requires a host clock on wasm".into(),
+                    "timings require a host clock on wasm".into(),
                 ));
             }
         }
     } else {
         None
     };
-    render_once(glb, &options, format, &views, clock).await
+    render_once(glb, &options, format, &views, stage_clock).await
 }
 
 /// Binding surface for a singular raw-pixels request (`format`/`quality` in
@@ -897,7 +893,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            pollster::block_on(render_images_profiled(
+            pollster::block_on(render_images_timed(
                 b"bad",
                 &RenderOptions::default(),
                 ImageFormat::Png,
@@ -968,7 +964,7 @@ mod tests {
     }
 
     #[test]
-    fn gpu_public_surface_renders_and_profiles() {
+    fn gpu_public_surface_renders_and_times_stages() {
         let options = RenderOptions {
             width: 192,
             height: 192,
@@ -1017,19 +1013,19 @@ mod tests {
 
         let tick = AtomicU64::new(0);
         let clock = move || (tick.fetch_add(1, Ordering::Relaxed) + 1) as f64;
-        let (_, profile) = pollster::block_on(render_images_profiled(
+        let (_, timings) = pollster::block_on(render_images_timed(
             FIXTURE,
             &options,
             ImageFormat::Png,
             &views,
             &clock,
         ))
-        .expect("profiled render");
-        assert_eq!(profile.glb_parses, 1);
-        assert_eq!(profile.adapter_device_requests, 1);
-        assert_eq!(profile.scene_uploads, 1);
-        assert_eq!(profile.views[0].id, "front");
-        assert!(profile.views[0].encode_ms > 0.0);
+        .expect("timed render");
+        assert_eq!(timings.glb_parses, 1);
+        assert_eq!(timings.adapter_device_requests, 1);
+        assert_eq!(timings.scene_uploads, 1);
+        assert_eq!(timings.views[0].id, "front");
+        assert!(timings.views[0].encode > 0.0);
 
         let request = r#"{"format":"png","width":192,"height":192,"background":[1,1,1,1]}"#;
         assert!(pollster::block_on(render_image_request(FIXTURE, request)).is_ok());
@@ -1054,27 +1050,27 @@ mod tests {
     }
 
     #[test]
-    fn profile_serializes_camel_cased_json() {
-        let profile = RenderBatchProfile {
-            parse_ms: 1.5,
-            setup_ms: 2.0,
+    fn timings_serialize_camel_cased_json() {
+        let timings = RenderBatchTimings {
+            parse: 1.5,
+            setup: 2.0,
             peak_readback_bytes: 4096,
             glb_parses: 1,
             adapter_device_requests: 0,
             pipeline_sets: 0,
             scene_uploads: 1,
             target_allocations: 0,
-            views: vec![RenderViewProfile {
+            views: vec![RenderViewTimings {
                 id: "front".into(),
-                render_ms: 3.0,
-                overlay_ms: 0.0,
-                encode_ms: 4.0,
+                render: 3.0,
+                overlay: 0.0,
+                encode: 4.0,
             }],
         };
-        let json: serde_json::Value = serde_json::from_str(&profile.to_json()).expect("valid JSON");
-        assert_eq!(json["parseMs"], 1.5);
+        let json: serde_json::Value = serde_json::from_str(&timings.to_json()).expect("valid JSON");
+        assert_eq!(json["parse"], 1.5);
         assert_eq!(json["adapterDeviceRequests"], 0);
-        assert_eq!(json["views"][0]["encodeMs"], 4.0);
+        assert_eq!(json["views"][0]["encode"], 4.0);
     }
 
     #[test]
@@ -1118,20 +1114,20 @@ mod tests {
         .expect("warm render");
         assert_eq!(cold, warm);
 
-        // The second call reuses the device: profiled counters attribute zero
+        // The second call reuses the device: the timed counters attribute zero
         // adapter/device requests and zero pipeline builds to the call.
-        let plural = r#"{"format":"png","width":192,"height":192,"profile":true,"views":[{"id":"front","phi":90,"theta":0},{"id":"top","phi":0,"theta":0}]}"#;
-        let (images, profile) =
+        let plural = r#"{"format":"png","width":192,"height":192,"timings":true,"views":[{"id":"front","phi":90,"theta":0},{"id":"top","phi":0,"theta":0}]}"#;
+        let (images, timings) =
             pollster::block_on(renderer.render_images_request(FIXTURE, plural, None))
                 .expect("warm batch");
         assert_eq!(images.len(), 2);
-        let profile = profile.expect("profile requested");
-        assert_eq!(profile.adapter_device_requests, 0);
-        assert_eq!(profile.pipeline_sets, 0);
-        assert_eq!(profile.target_allocations, 0);
-        assert_eq!(profile.scene_uploads, 1);
-        assert_eq!(profile.views.len(), 2);
-        assert!(profile.views[0].encode_ms > 0.0);
+        let timings = timings.expect("timings requested");
+        assert_eq!(timings.adapter_device_requests, 0);
+        assert_eq!(timings.pipeline_sets, 0);
+        assert_eq!(timings.target_allocations, 0);
+        assert_eq!(timings.scene_uploads, 1);
+        assert_eq!(timings.views.len(), 2);
+        assert!(timings.views[0].encode > 0.0);
 
         // R15: per-view output overrides — a mixed-size, mixed-format ladder
         // in one plan call, byte-identical to the equivalent singular calls.
@@ -1166,26 +1162,25 @@ mod tests {
         // A caller-supplied clock takes precedence over the native fallback,
         // on both the warm-renderer and one-shot request paths.
         let host_clock = || 42.0;
-        let profiled_request = r#"{"format":"png","width":192,"height":192,"profile":true,"views":[{"id":"front","phi":90,"theta":0}]}"#;
+        let timed_request = r#"{"format":"png","width":192,"height":192,"timings":true,"views":[{"id":"front","phi":90,"theta":0}]}"#;
         let (_, hosted) = pollster::block_on(renderer.render_images_request(
             FIXTURE,
-            profiled_request,
+            timed_request,
             Some(&host_clock),
         ))
-        .expect("hosted clock profile");
-        assert_eq!(hosted.expect("profile").parse_ms, 0.0);
+        .expect("hosted clock timings");
+        assert_eq!(hosted.expect("timings").parse, 0.0);
         let (_, free_hosted) = pollster::block_on(render_images_request(
             FIXTURE,
-            profiled_request,
+            timed_request,
             Some(&host_clock),
         ))
-        .expect("free hosted clock profile");
-        assert_eq!(free_hosted.expect("profile").parse_ms, 0.0);
+        .expect("free hosted clock timings");
+        assert_eq!(free_hosted.expect("timings").parse, 0.0);
         // Without a host clock, native self-clocks via Instant.
-        let (_, fallback) =
-            pollster::block_on(render_images_request(FIXTURE, profiled_request, None))
-                .expect("fallback clock profile");
-        assert!(fallback.expect("profile").views[0].encode_ms >= 0.0);
+        let (_, fallback) = pollster::block_on(render_images_request(FIXTURE, timed_request, None))
+            .expect("fallback clock timings");
+        assert!(fallback.expect("timings").views[0].encode >= 0.0);
 
         // The typed warm entry rejects an empty plan before any GPU work.
         assert!(

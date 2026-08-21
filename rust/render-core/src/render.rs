@@ -130,7 +130,7 @@ struct InFlightView {
     padded_bytes_per_row: u32,
 }
 
-/// Cumulative resource-acquisition counters; profile reporting snapshots them
+/// Cumulative resource-acquisition counters; timings reporting snapshots them
 /// around a plan to attribute work to that call.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Counters {
@@ -193,9 +193,12 @@ pub(crate) struct PlanEntry {
 /// Per-view stage timings produced by the plan executor (zero when no clock).
 #[derive(Clone, Copy, Default)]
 pub(crate) struct ViewTimings {
-    pub(crate) render_ms: f64,
-    pub(crate) overlay_ms: f64,
-    pub(crate) encode_ms: f64,
+    /// Milliseconds. GPU render, resolve, and pixel readback for this view.
+    pub(crate) render: f64,
+    /// Milliseconds. Annotation stamping (zero when nothing is stamped).
+    pub(crate) overlay: f64,
+    /// Milliseconds. Image encoding in this view's format.
+    pub(crate) encode: f64,
 }
 
 /// An explicit destroy() is the caller's own teardown, not a loss.
@@ -1368,11 +1371,11 @@ impl Renderer {
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
                             receiver.recv()
                         };
-                        let Ok((index, rendered, render_ms)) = job else {
+                        let Ok((index, rendered, render)) = job else {
                             return;
                         };
                         let result =
-                            encode_entry(&plan[index], rendered, render_ms, now, &mut scratch);
+                            encode_entry(&plan[index], rendered, render, now, &mut scratch);
                         results
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner)[index] =
@@ -1381,7 +1384,7 @@ impl Renderer {
                 });
             }
 
-            let mut render = |sender: &std::sync::mpsc::Sender<(usize, Rendered, f64)>| {
+            let mut submit = |sender: &std::sync::mpsc::Sender<(usize, Rendered, f64)>| {
                 let mut pending: Option<(usize, f64, InFlightView)> = None;
                 for (index, entry) in plan.iter().enumerate() {
                     let started = clock(now);
@@ -1391,7 +1394,7 @@ impl Renderer {
                 }
                 self.resolve_pending(plan, pending.take(), sender, now)
             };
-            let outcome = render(&sender);
+            let outcome = submit(&sender);
             drop(sender);
             outcome
         });
@@ -1467,7 +1470,7 @@ impl Renderer {
 fn encode_entry(
     entry: &PlanEntry,
     mut rendered: Rendered,
-    render_ms: f64,
+    render: f64,
     now: Option<&(dyn Fn() -> f64 + Sync)>,
     scratch: &mut Vec<u8>,
 ) -> Result<(Vec<u8>, ViewTimings), RenderError> {
@@ -1476,15 +1479,15 @@ fn encode_entry(
     if crate::annotated(&entry.options) {
         crate::capture_overlay::stamp_capture_overlay(&mut rendered, &entry.prepared, scratch);
     }
-    let overlay_ms = clock(now) - overlay_started;
+    let overlay = clock(now) - overlay_started;
     let encode_started = clock(now);
     let bytes = with_view_result(encode(&rendered, entry.format), &entry.id)?;
     Ok((
         bytes,
         ViewTimings {
-            render_ms,
-            overlay_ms,
-            encode_ms: clock(now) - encode_started,
+            render,
+            overlay,
+            encode: clock(now) - encode_started,
         },
     ))
 }

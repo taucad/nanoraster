@@ -20,7 +20,7 @@ fn reflect_set(target: &js_sys::Object, key: &str, value: &JsValue) -> Result<()
 
 fn images_result(
     images: Vec<Vec<u8>>,
-    profile: Option<render_core::RenderBatchProfile>,
+    timings: Option<render_core::RenderBatchTimings>,
 ) -> Result<JsValue, JsValue> {
     let array = js_sys::Array::new();
     for image in images {
@@ -28,8 +28,8 @@ fn images_result(
     }
     let result = js_sys::Object::new();
     reflect_set(&result, "images", &array)?;
-    if let Some(profile) = profile {
-        reflect_set(&result, "profile", &JsValue::from_str(&profile.to_json()))?;
+    if let Some(timings) = timings {
+        reflect_set(&result, "timings", &JsValue::from_str(&timings.to_json()))?;
     }
     Ok(result.into())
 }
@@ -144,8 +144,8 @@ impl Renderer {
                 .render_images_request(&glb, &options_json, Some(&js_sys::Date::now))
                 .await;
             shared.check_in(renderer);
-            let (images, profile) = outcome.map_err(to_js_error)?;
-            images_result(images, profile)
+            let (images, timings) = outcome.map_err(to_js_error)?;
+            images_result(images, timings)
         })
     }
 
@@ -188,8 +188,8 @@ impl Renderer {
 
 #[wasm_bindgen(typescript_custom_section)]
 const RENDERER_TYPES: &str = r#"
-/** Ordered encoded images plus the optional JSON profile from `profile: true`. */
-export type RenderImagesResult = { images: Array<Uint8Array>; profile?: string };
+/** Ordered encoded images plus the optional JSON timings from `timings: true`. */
+export type RenderImagesResult = { images: Array<Uint8Array>; timings?: string };
 /** Straight-alpha sRGB RGBA8 rows, tightly packed. */
 export type RenderPixelsResult = { rgba: Uint8Array; width: number; height: number };
 /**
@@ -225,11 +225,11 @@ pub async fn render_image(glb: Vec<u8>, options_json: String) -> Result<Vec<u8>,
 /// Render ordered identified views through one batch-scoped plan call.
 #[wasm_bindgen(skip_typescript)]
 pub async fn render_images(glb: Vec<u8>, options_json: String) -> Result<JsValue, JsValue> {
-    let (images, profile) =
+    let (images, timings) =
         render_core::render_images_request(&glb, &options_json, Some(&js_sys::Date::now))
             .await
             .map_err(to_js_error)?;
-    images_result(images, profile)
+    images_result(images, timings)
 }
 
 /// Render a kernel GLB to raw straight-alpha RGBA8 pixels (no encode).
@@ -264,10 +264,10 @@ pub async fn bench_codecs(glb: Vec<u8>, width: u32, height: u32) -> Result<Strin
     let rendered = render_core::render_rgba(&glb, &options)
         .await
         .map_err(|e| JsError::new(&e.to_string()))?;
-    let render_ms = js_sys::Date::now() - start;
+    let render_duration = js_sys::Date::now() - start;
     let mut report = render_core::bench_encodes(&rendered, &js_sys::Date::now)
         .map_err(|e| JsError::new(&e.to_string()))?;
-    report["renderMs"] = render_ms.round().into();
+    report["render"] = render_duration.round().into();
     Ok(report.to_string())
 }
 

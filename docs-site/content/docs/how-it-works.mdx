@@ -47,11 +47,11 @@ code names the stage that rejected the work, the
 guess.
 
 [`renderImages`](api#renderimages) parses and uploads once, then fits,
-rasterises and encodes once per view. A profiled call's
-[`RenderProfile`](api#renderprofile) fields map one-to-one onto these stages —
-`parseMs` for parse and fit, `setupMs` for device acquisition and upload, then
-per-view `renderMs` and `encodeMs` — so the stage narrative above doubles as
-the profile-field reference.
+rasterises and encodes once per view. A timed call's
+[`RenderTimings`](api#rendertimings) fields map one-to-one onto these stages —
+`parse` for parse and fit, `setup` for device acquisition and upload, then
+per-view `render` and `encode` — so the stage narrative above doubles as
+the timings-field reference.
 
 [Both hosts](install), Node.js native and
 [browser WebGPU](guides/render-in-the-browser), wrap the same Rust core and

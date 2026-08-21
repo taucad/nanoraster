@@ -5,7 +5,7 @@
 
 use crate::{
     ImageFormat, RenderError, RenderOptions, RenderView, Rendered, encode, render_image,
-    render_images_profiled,
+    render_images_timed,
 };
 
 /// FNV-1a 64 — enough to compare artifacts for equality across legs.
@@ -100,7 +100,7 @@ pub async fn bench_multi_view(
     glb: &[u8],
     width: u32,
     height: u32,
-    now: &crate::ProfileClock,
+    now: &crate::TimingsClock,
 ) -> Result<serde_json::Value, RenderError> {
     let view = |id: &str, label: &str, phi_deg: f32, theta_deg: f32| RenderView {
         id: id.into(),
@@ -143,7 +143,7 @@ pub async fn bench_multi_view(
             .collect();
         let singular_started = now();
         let mut singular = Vec::with_capacity(views.len());
-        let mut singular_ms = Vec::with_capacity(views.len());
+        let mut view_durations = Vec::with_capacity(views.len());
         for view in &views {
             let mut view_options = options.clone();
             view_options.phi_deg = view.phi_deg;
@@ -152,13 +152,13 @@ pub async fn bench_multi_view(
             let started = now();
             let bytes =
                 render_image(glb, &view_options, ImageFormat::WebP { quality: 100 }).await?;
-            singular_ms.push(now() - started);
+            view_durations.push(now() - started);
             singular.push(bytes);
         }
-        let singular_wall_ms = now() - singular_started;
+        let singular_wall = now() - singular_started;
 
         let batch_started = now();
-        let (batch, profile) = render_images_profiled(
+        let (batch, timings) = render_images_timed(
             glb,
             &options,
             ImageFormat::WebP { quality: 100 },
@@ -166,7 +166,7 @@ pub async fn bench_multi_view(
             now,
         )
         .await?;
-        let batch_wall_ms = now() - batch_started;
+        let batch_wall = now() - batch_started;
         ensure_batch_matches(&batch, &singular)?;
         let fingerprints: Vec<String> = batch
             .iter()
@@ -177,14 +177,14 @@ pub async fn bench_multi_view(
             "label": labeled,
             "scaleBar": scale_bar,
             "singular": {
-                "wallMs": singular_wall_ms,
-                "viewMs": singular_ms,
+                "wall": singular_wall,
+                "view": view_durations,
                 "glbParses": views.len(),
                 "renderSessions": views.len(),
             },
             "batch": {
-                "wallMs": batch_wall_ms,
-                "profile": profile,
+                "wall": batch_wall,
+                "timings": timings,
             },
             "fingerprints": fingerprints,
         }));

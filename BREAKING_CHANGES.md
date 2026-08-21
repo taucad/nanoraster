@@ -34,3 +34,10 @@ The package has no compatibility commitments before its first stable release.
   no longer exported. Name the literal unions they stood for:
   `'png' | 'webp' | 'jpeg' | 'jpg'`, `'x' | 'y' | 'z'` and
   `'perspective' | 'orthographic'`.
+- The `profile` option and the `profile` result property are now `timings`, and
+  the `RenderProfile` / `RenderViewProfile` types are `RenderTimings` /
+  `RenderViewTimings`. Every duration field drops its unit suffix: `parseMs` and
+  `setupMs` are `parse` and `setup`; a view's `renderMs`, `overlayMs` and
+  `encodeMs` are `render`, `overlay` and `encode`. The values are unchanged —
+  still milliseconds. Direct consumers of the native addon or the wasm class
+  rename the wire fields too.

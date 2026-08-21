@@ -109,7 +109,7 @@ pub struct RenderImagesRequest {
     pub axes: Option<bool>,
     pub scale_bar: Option<bool>,
     pub lighting: Option<LightingRequest>,
-    pub profile: Option<bool>,
+    pub timings: Option<bool>,
     pub views: Vec<RenderImageViewRequest>,
 }
 
@@ -288,7 +288,7 @@ impl RenderImagesRequest {
                 format: view_format,
             });
         }
-        Ok((options, format, views, self.profile.unwrap_or(false)))
+        Ok((options, format, views, self.timings.unwrap_or(false)))
     }
 
     fn common(&self) -> CommonRequest<'_> {
@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn plural_resolves_shared_settings_and_ordered_views() {
-        let (options, format, views, profile) = RenderImagesRequest::from_json(
+        let (options, format, views, timings) = RenderImagesRequest::from_json(
             r#"{"format":"webp","axes":true,"scaleBar":true,"views":[{"id":"front","label":"Front","phi":90,"theta":0},{"id":"top","label":"Top","phi":0,"theta":0}]}"#,
         )
         .expect("parse")
@@ -609,7 +609,7 @@ mod tests {
         .expect("resolve");
         assert!(options.axes);
         assert!(options.scale_bar);
-        assert!(!profile);
+        assert!(!timings);
         assert_eq!(views[0].label.as_deref(), Some("Front"));
         assert_eq!(format, ImageFormat::WebP { quality: 100 });
         assert_eq!(views[0].id, "front");
@@ -620,8 +620,8 @@ mod tests {
 
     #[test]
     fn plural_resolves_per_view_output_overrides() {
-        let (options, format, views, profile) = RenderImagesRequest::from_json(
-            r#"{"format":"webp","quality":0.9,"width":768,"height":432,"profile":true,"views":[
+        let (options, format, views, timings) = RenderImagesRequest::from_json(
+            r#"{"format":"webp","quality":0.9,"width":768,"height":432,"timings":true,"views":[
                 {"id":"card","phi":60,"theta":-45},
                 {"id":"og","phi":60,"theta":-45,"width":1536,"height":804},
                 {"id":"hero","phi":60,"theta":-45,"format":"png"},
@@ -632,7 +632,7 @@ mod tests {
         .expect("parse")
         .resolve()
         .expect("resolve");
-        assert!(profile);
+        assert!(timings);
         // Shared pair: lossy webp at 0.9.
         assert_eq!(format, ImageFormat::WebP { quality: 90 });
         // No overrides: shared values apply.

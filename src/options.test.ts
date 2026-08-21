@@ -241,13 +241,13 @@ describe('image request serialization', () => {
     }
   });
 
-  it('should serialize per-view output overrides and the profile flag', () => {
+  it('should serialize per-view output overrides and the timings flag', () => {
     expect(
       parse(
         toImagesRequestJson({
           format: 'webp',
           quality: 0.9,
-          profile: true,
+          timings: true,
           views: [
             { id: 'card', phi: 60, theta: -45 },
             { id: 'og', phi: 60, theta: -45, width: 1536, height: 804 },
@@ -259,7 +259,7 @@ describe('image request serialization', () => {
     ).toEqual({
       format: 'webp',
       quality: 0.9,
-      profile: true,
+      timings: true,
       views: [
         { id: 'card', phi: 60, theta: -45 },
         { id: 'og', phi: 60, theta: -45, width: 1536, height: 804 },
@@ -269,7 +269,7 @@ describe('image request serialization', () => {
     });
   });
 
-  it('should reject invalid per-view overrides and profile values by path', () => {
+  it('should reject invalid per-view overrides and timings values by path', () => {
     const cases: readonly (readonly [Record<string, unknown>, string])[] = [
       [{ id: 'front', phi: 90, theta: 0, width: 15 }, 'views[0].width must be between 16 and 4096'],
       [{ id: 'front', phi: 90, theta: 0, height: 4097 }, 'views[0].height must be between 16 and 4096'],
@@ -291,10 +291,17 @@ describe('image request serialization', () => {
     expect(() =>
       toImagesRequestJson({
         format: 'png',
-        profile: 'yes',
+        timings: 'yes',
         views: [{ id: 'front', phi: 90, theta: 0 }],
       } as unknown as RenderImagesOptions),
-    ).toThrow('profile must be a boolean');
+    ).toThrow('timings must be a boolean');
+    expect(() =>
+      toImagesRequestJson({
+        format: 'png',
+        profile: true,
+        views: [{ id: 'front', phi: 90, theta: 0 }],
+      } as unknown as RenderImagesOptions),
+    ).toThrow('options contains unknown property "profile"');
   });
 
   it('should serialize pixels requests without an encoder pair', () => {

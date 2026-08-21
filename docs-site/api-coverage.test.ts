@@ -37,8 +37,8 @@ const tableNames = [
   'RenderLightingRig',
   'RenderLight',
   'CreateRendererOptions',
-  'RenderProfile',
-  'RenderViewProfile',
+  'RenderTimings',
+  'RenderViewTimings',
 ] as const;
 const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
   RenderedImageFile: ['name', 'bytes', 'mimeType'],
@@ -72,15 +72,15 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'axes',
     'scaleBar',
     'lighting',
-    'profile',
+    'timings',
     'views',
   ],
   RenderImageView: ['id', 'label', 'phi', 'theta', 'width', 'height', 'format', 'quality'],
   RenderLightingRig: ['lights', 'ambient', 'environment', 'space', 'exposure'],
   RenderLight: ['direction', 'color'],
   CreateRendererOptions: ['powerPreference'],
-  RenderProfile: ['parseMs', 'setupMs', 'views'],
-  RenderViewProfile: ['id', 'renderMs', 'overlayMs', 'encodeMs'],
+  RenderTimings: ['parse', 'setup', 'views'],
+  RenderViewTimings: ['id', 'render', 'overlay', 'encode'],
 };
 const defaults = {
   width: '768',

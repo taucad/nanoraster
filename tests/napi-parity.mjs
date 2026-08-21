@@ -26,11 +26,11 @@ const native =
   /**
    * @type {{
    *   renderImage: (glb: Buffer, optionsJson: string) => Promise<Buffer>,
-   *   renderImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], profile?: string }>,
+   *   renderImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], timings?: string }>,
    *   renderPixels: (glb: Buffer, optionsJson: string) => Promise<{ rgba: Buffer, width: number, height: number }>,
    *   createRenderer: (optionsJson?: string) => Promise<{
    *     renderImage: (glb: Buffer, optionsJson: string) => Promise<Buffer>,
-   *     renderImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], profile?: string }>,
+   *     renderImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], timings?: string }>,
    *     renderPixels: (glb: Buffer, optionsJson: string) => Promise<{ rgba: Buffer, width: number, height: number }>,
    *     dispose: () => void,
    *   }>,
@@ -432,7 +432,7 @@ if (!atomicError.startsWith('encode: view "isometric":')) {
 }
 
 // Handles-first surface (R1): a warm renderer must produce byte-identical
-// output to the one-shot sugar, and its profiled counters must prove reuse.
+// output to the one-shot sugar, and its timed counters must prove reuse.
 const renderer = await native.createRenderer();
 const warmPng = await renderer.renderImage(glb, JSON.stringify({ ...shared }));
 if (!warmPng.equals(png)) throw new Error('warm renderer bytes differ from one-shot bytes');
@@ -468,14 +468,17 @@ if (!ladder[1].equals(bigSingular) || !ladder[2].equals(lossySingular)) {
   throw new Error('ladder overrides differ from their singular equivalents');
 }
 if (ladder[2].toString('latin1', 0, 4) !== 'RIFF') throw new Error('per-view webp override missing');
-// R13: profile rides the plan call; a warm renderer reports zero device requests.
-const profiled = await renderer.renderImages(glb, JSON.stringify({ ...shared, profile: true, views }));
-const profile = JSON.parse(profiled.profile ?? '{}');
-if (profile.adapterDeviceRequests !== 0 || profile.views.length !== views.length) {
-  throw new Error(`warm profile must attribute zero device requests: ${profiled.profile}`);
+// R13: timings ride the plan call; a warm renderer reports zero device requests.
+const timed = await renderer.renderImages(glb, JSON.stringify({ ...shared, timings: true, views }));
+const timings = JSON.parse(timed.timings ?? '{}');
+if (timings.adapterDeviceRequests !== 0 || timings.views.length !== views.length) {
+  throw new Error(`warm timings must attribute zero device requests: ${timed.timings}`);
 }
-if (profiled.images.some((image, index) => !image.equals(batch[index]))) {
-  throw new Error('profiled bytes differ from unprofiled bytes');
+if (timed.images.some((image, index) => !image.equals(batch[index]))) {
+  throw new Error('timed bytes differ from untimed bytes');
+}
+if (typeof timings.views[0].encode !== 'number' || typeof timings.parse !== 'number') {
+  throw new Error(`timings fields must be suffix-less durations: ${timed.timings}`);
 }
 // R11: raw pixels stop before encode.
 const pixelsOut = await renderer.renderPixels(glb, JSON.stringify({ width: 192, height: 192 }));
@@ -493,7 +496,7 @@ try {
 if (!disposedError.startsWith('gpu: renderer disposed')) {
   throw new Error(`expected a disposed rejection, got: ${disposedError || 'no error'}`);
 }
-console.log('warm renderer: byte parity, ladder overrides, zero-device-request profile, pixels, dispose');
+console.log('warm renderer: byte parity, ladder overrides, zero-device-request timings, pixels, dispose');
 
 mkdirSync(join(here, 'out'), { recursive: true });
 writeFileSync(join(here, 'out', 'napi.png'), png);

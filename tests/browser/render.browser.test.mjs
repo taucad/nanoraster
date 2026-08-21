@@ -45,7 +45,7 @@ test('a warm renderer produces byte-identical output and disposes cleanly', asyn
       width: 192,
       height: 192,
       format: 'png',
-      profile: true,
+      timings: true,
       views: [
         { id: 'front', phi: 90, theta: 0 },
         { id: 'big', phi: 90, theta: 0, width: 256, height: 256 },
@@ -53,9 +53,11 @@ test('a warm renderer produces byte-identical output and disposes cleanly', asyn
     }),
   );
   expect(batch.images).toHaveLength(2);
-  const profile = JSON.parse(batch.profile ?? '{}');
-  expect(profile.adapterDeviceRequests).toBe(0);
-  expect(profile.views).toHaveLength(2);
+  const timings = JSON.parse(batch.timings ?? '{}');
+  expect(timings.adapterDeviceRequests).toBe(0);
+  expect(timings.views).toHaveLength(2);
+  expect(typeof timings.parse).toBe('number');
+  expect(typeof timings.views[0].encode).toBe('number');
 
   // The one-shot façade's retention guard: trimming keeps the device warm and
   // changes no pixels, whether or not anything was retained.

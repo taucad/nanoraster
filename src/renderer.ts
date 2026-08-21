@@ -5,10 +5,10 @@
 
 import { RenderError } from '#render-error.js';
 
-/** Ordered encoded images plus the optional profile JSON. @internal */
+/** Ordered encoded images plus the optional timings JSON. @internal */
 export type RawImagesResult = {
   readonly images: ReadonlyArray<Uint8Array<ArrayBuffer>>;
-  readonly profile?: string;
+  readonly timings?: string;
 };
 
 /** Raw pixels result shared by both bindings. @internal */
@@ -38,7 +38,7 @@ type RendererBindings = {
 
 type WasmImagesResult = {
   images: Array<Uint8Array<ArrayBuffer>>;
-  profile?: string;
+  timings?: string;
 };
 
 type WasmRenderer = {
@@ -59,7 +59,7 @@ type WasmModule = {
 
 type NapiImagesResult = {
   images: Array<Uint8Array<ArrayBuffer>>;
-  profile?: string | null;
+  timings?: string | null;
 };
 
 type NapiRenderer = {
@@ -97,10 +97,10 @@ const isNodeRuntime = (): boolean => {
 
 const normalizeImagesResult = (result: {
   images: Array<Uint8Array<ArrayBuffer>>;
-  profile?: string | null;
+  timings?: string | null;
 }): RawImagesResult => ({
   images: [...result.images],
-  ...(typeof result.profile === 'string' ? { profile: result.profile } : {}),
+  ...(typeof result.timings === 'string' ? { timings: result.timings } : {}),
 });
 
 const loadWasmBindings = async (): Promise<RendererBindings> => {

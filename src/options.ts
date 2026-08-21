@@ -148,11 +148,11 @@ export type RenderImagesOptions<Views extends readonly RenderImageView[] = reado
   RenderImageSharedOptions & {
     /**
      * Attach stage timings (parse, setup, per-view render/overlay/encode) to
-     * the result as a `profile` property. Rendering is unchanged.
+     * the result as a `timings` property. Rendering is unchanged.
      *
      * @default false
      */
-    readonly profile?: boolean;
+    readonly timings?: boolean;
     /** Non-empty ordered view tuple with unique IDs. */
     readonly views: Views;
   };
@@ -200,8 +200,8 @@ export type RenderedImages<
 };
 
 /**
- * Result of one plan call: the ordered tuple, plus the parsed profile when
- * the options literal set `profile: true`. This is what
+ * Result of one plan call: the ordered tuple, plus the parsed timings when
+ * the options literal set `timings: true`. This is what
  * `renderImages`/`Renderer.renderImages` resolve to, so consumers can name
  * their own return types.
  *
@@ -211,39 +211,38 @@ export type RenderedImagesResult<Options extends RenderImagesOptions> = Rendered
   Options['views'],
   Options['format']
 > &
-  (Options extends { readonly profile: true } ? { readonly profile: RenderProfile } : unknown);
+  (Options extends { readonly timings: true } ? { readonly timings: RenderTimings } : unknown);
 
 /**
- * Stage timings for one rendered view within a profiled plan call, in
- * milliseconds.
+ * Stage timings for one rendered view within a timed plan call.
  *
  * @public
  */
-export type RenderViewProfile = {
+export type RenderViewTimings = {
   /** Identity copied from the corresponding input view. */
   readonly id: string;
-  /** GPU render, resolve, and pixel readback for this view. */
-  readonly renderMs: number;
-  /** Annotation stamping (zero when no annotations were requested). */
-  readonly overlayMs: number;
-  /** Image encoding in the requested format. */
-  readonly encodeMs: number;
+  /** Milliseconds. GPU render, resolve, and pixel readback for this view. */
+  readonly render: number;
+  /** Milliseconds. Annotation stamping (zero when no annotations were requested). */
+  readonly overlay: number;
+  /** Milliseconds. Image encoding in the requested format. */
+  readonly encode: number;
 };
 
 /**
- * Stage timings for one profiled plan call, in milliseconds. The fields map
- * onto the render pipeline's stages: parse, setup (device acquisition and
- * geometry upload), then per-view rasterise and encode.
+ * Stage timings for one timed plan call. The fields map onto the render
+ * pipeline's stages: parse, setup (device acquisition and geometry upload),
+ * then per-view rasterise and encode.
  *
  * @public
  */
-export type RenderProfile = {
-  /** GLB parse, validation, and world-bounds computation. */
-  readonly parseMs: number;
-  /** Renderer acquisition plus scene upload for this call. */
-  readonly setupMs: number;
+export type RenderTimings = {
+  /** Milliseconds. GLB parse, validation, and world-bounds computation. */
+  readonly parse: number;
+  /** Milliseconds. Renderer acquisition plus scene upload for this call. */
+  readonly setup: number;
   /** Per-view render/overlay/encode timings in plan order. */
-  readonly views: readonly RenderViewProfile[];
+  readonly views: readonly RenderViewTimings[];
 };
 
 type NoExtraKeys<Value, Shape> = Value & Record<Exclude<keyof Value, keyof Shape>, never>;
@@ -305,7 +304,7 @@ const pluralKeys = new Set([
   'axes',
   'scaleBar',
   'lighting',
-  'profile',
+  'timings',
   'views',
 ]);
 
@@ -623,7 +622,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
   }
   assertKnownKeys(input, pluralKeys, 'options');
   validateCommon(options);
-  assertOptionalBoolean(options.profile, 'profile');
+  assertOptionalBoolean(options.timings, 'timings');
   const sharedAnnotated = options.axes === true || options.scaleBar === true;
   const { views } = input;
   if (!isUnknownArray(views) || views.length === 0) {
@@ -694,7 +693,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     axes: options.axes,
     scaleBar: options.scaleBar,
     lighting: options.lighting,
-    profile: options.profile,
+    timings: options.timings,
     views: normalizedViews,
   });
 };

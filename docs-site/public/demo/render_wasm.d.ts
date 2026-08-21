@@ -1,8 +1,8 @@
 /* tslint:disable */
 /* eslint-disable */
 
-/** Ordered encoded images plus the optional JSON profile from `profile: true`. */
-export type RenderImagesResult = { images: Array<Uint8Array>; profile?: string };
+/** Ordered encoded images plus the optional JSON timings from `timings: true`. */
+export type RenderImagesResult = { images: Array<Uint8Array>; timings?: string };
 /** Straight-alpha sRGB RGBA8 rows, tightly packed. */
 export type RenderPixelsResult = { rgba: Uint8Array; width: number; height: number };
 /**

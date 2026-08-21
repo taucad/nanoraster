@@ -8,7 +8,7 @@ export type WasmRendererHandle = {
   readonly render_images: (
     glb: Uint8Array<ArrayBuffer>,
     optionsJson: string,
-  ) => Promise<{ readonly images: Uint8Array<ArrayBuffer>[]; readonly profile?: string }>;
+  ) => Promise<{ readonly images: Uint8Array<ArrayBuffer>[]; readonly timings?: string }>;
 };
 
 type WasmModule = {

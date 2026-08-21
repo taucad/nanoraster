@@ -131,7 +131,7 @@ describe('renderImages', () => {
     expect(results.map(({ file }) => file.name)).toEqual(['render-front.png', 'render-top.png']);
     expect(results[0].file.bytes).toBe(front);
     expect(results[1].file.bytes).toBe(top);
-    expect('profile' in results).toBe(false);
+    expect('timings' in results).toBe(false);
     expect(plural).toHaveBeenCalledOnce();
   });
 
@@ -160,27 +160,27 @@ describe('renderImages', () => {
     );
   });
 
-  it('should attach the parsed profile when the call requested one', async () => {
+  it('should attach the parsed timings when the call requested them', async () => {
     plural.mockResolvedValue({
       images: [new Uint8Array([1])],
-      profile: JSON.stringify({
-        parseMs: 0.5,
-        setupMs: 2,
+      timings: JSON.stringify({
+        parse: 0.5,
+        setup: 2,
         peakReadbackBytes: 4,
-        views: [{ id: 'front', renderMs: 1, overlayMs: 0, encodeMs: 3 }],
+        views: [{ id: 'front', render: 1, overlay: 0, encode: 3 }],
       }),
     });
 
     const results = await renderImages(glb, {
       format: 'png',
-      profile: true,
+      timings: true,
       views: [{ id: 'front', phi: 90, theta: 0 }],
     });
 
-    expect(results.profile).toEqual({
-      parseMs: 0.5,
-      setupMs: 2,
-      views: [{ id: 'front', renderMs: 1, overlayMs: 0, encodeMs: 3 }],
+    expect(results.timings).toEqual({
+      parse: 0.5,
+      setup: 2,
+      views: [{ id: 'front', render: 1, overlay: 0, encode: 3 }],
     });
     expect(results[0].file.name).toBe('render-front.png');
   });
