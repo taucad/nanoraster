@@ -52,7 +52,7 @@ import { renderImage } from 'nanoraster';
 import { readFile } from 'node:fs/promises';
 
 const glb = Uint8Array.from(await readFile('model.glb'));
-const image = await renderImage(glb, { format: 'png' });
+const image = await renderImage(glb, { format: 'webp' });
 
 console.log(image.name, image.bytes.length, image.mimeType);
 ```
@@ -60,7 +60,7 @@ console.log(image.name, image.bytes.length, image.mimeType);
 ### Expected output
 
 ```console
-render.png 29965 image/png
+render.webp 21208 image/webp
 ```
 
 The exact byte count depends on your model; what matters is that a name, a

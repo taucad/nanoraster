@@ -32,7 +32,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 const glb = Uint8Array.from(await readFile('model.glb'));
 
 const image = await renderImage(glb, {
-  format: 'png',
+  format: 'webp',
   width: 512,
   height: 512,
   phi: 60,
@@ -48,7 +48,7 @@ console.log(`wrote ${image.name} (${image.bytes.length} bytes, ${image.mimeType}
 ## Expected output
 
 ```console
-wrote render.png (29965 bytes, image/png)
+wrote render.webp (26628 bytes, image/webp)
 ```
 
 The result is a plain object with three fields: `name`, `bytes` and

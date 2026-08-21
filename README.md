@@ -34,7 +34,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 
 const glb = Uint8Array.from(await readFile('model.glb'));
 const image = await renderImage(glb, {
-  format: 'png',
+  format: 'webp',
   width: 512,
   height: 512,
 });

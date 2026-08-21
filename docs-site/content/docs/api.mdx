@@ -12,10 +12,10 @@ the call; the bytes you get back are newly allocated and yours.
 import { renderImage } from 'nanoraster';
 
 const image = await renderImage(glb, {
-  format: 'png', // required
+  format: 'webp', // required
   width: 768, // default
   height: 432, // default
-  quality: 0.92, // jpeg default; webp defaults to 1 (lossless); png ignores it
+  quality: 1, // webp default (lossless); jpeg defaults to 0.92; png ignores it
   margin: 0.1, // default
   up: 'y', // default
   projection: 'perspective', // default
@@ -57,7 +57,7 @@ export declare const renderImage: (
 ```typescript
 import { renderImage } from 'nanoraster';
 
-const image = await renderImage(glb, { format: 'png', width: 512 });
+const image = await renderImage(glb, { format: 'webp', width: 512 });
 ```
 
 ### `renderImages`
@@ -91,7 +91,7 @@ literal set `timings: true`.
 import { renderImages } from 'nanoraster';
 
 const [iso, front] = await renderImages(glb, {
-  format: 'png',
+  format: 'webp',
   views: [
     { id: 'iso', phi: 60, theta: -45 },
     { id: 'front', phi: 90, theta: 0 },
@@ -150,7 +150,7 @@ export declare const createRenderer: (options?: CreateRendererOptions) => Promis
 import { createRenderer } from 'nanoraster';
 
 using renderer = await createRenderer({ powerPreference: 'low-power' });
-const image = await renderer.renderImage(glb, { format: 'png' });
+const image = await renderer.renderImage(glb, { format: 'webp' });
 ```
 
 ### `Renderer`
@@ -223,7 +223,7 @@ a browser with only software support usually hands out no adapter at all, so
 ## Options held in a variable
 
 Passing an object literal straight to a render call keeps every literal type.
-Assigning it to a variable first does not: TypeScript widens `'png'` to
+Assigning it to a variable first does not: TypeScript widens `'webp'` to
 `string` and the view IDs with it, so the result tuple loses its names. Write
 `as const satisfies` on the variable to keep the literals and still have the
 keys checked. There is no helper to import and nothing is added to the bundle
@@ -233,7 +233,7 @@ keys checked. There is no helper to import and nothing is added to the bundle
 import { renderImages, type RenderImagesOptions } from 'nanoraster';
 
 const options = {
-  format: 'png',
+  format: 'webp',
   views: [{ id: 'iso', phi: 60, theta: -45 }],
 } as const satisfies RenderImagesOptions;
 
@@ -379,7 +379,7 @@ import { renderImage } from 'nanoraster';
 
 import { writeFile } from 'node:fs/promises';
 
-const image = await renderImage(glb, { format: 'png' });
+const image = await renderImage(glb, { format: 'webp' });
 await writeFile(image.name, image.bytes);
 ```
 
@@ -415,15 +415,15 @@ conditional that picks the override when one exists.
 import { renderImages } from 'nanoraster';
 
 const [iso, top] = await renderImages(glb, {
-  format: 'png',
+  format: 'webp',
   views: [
     { id: 'iso', phi: 60, theta: -45 },
     { id: 'top', phi: 0, theta: 0 },
   ],
 });
 
-console.log(iso.id, iso.file.name); // 'iso' 'render-iso.png'
-console.log(top.id, top.file.name); // 'top' 'render-top.png'
+console.log(iso.id, iso.file.name); // 'iso' 'render-iso.webp'
+console.log(top.id, top.file.name); // 'top' 'render-top.webp'
 ```
 
 ### `RenderedImagesResult`
@@ -438,13 +438,13 @@ compile error, so the flag and the field cannot drift apart.
 import { renderImages, type RenderedImagesResult, type RenderImagesOptions } from 'nanoraster';
 
 const options = {
-  format: 'png',
+  format: 'webp',
   timings: true,
   views: [{ id: 'iso', phi: 60, theta: -45 }],
 } as const satisfies RenderImagesOptions;
 
 const result: RenderedImagesResult<typeof options> = await renderImages(glb, options);
-console.log(result[0].file.name, result.timings.parse); // 'render-iso.png' 0.42
+console.log(result[0].file.name, result.timings.parse); // 'render-iso.webp' 0.42
 ```
 
 ### `RenderedPixels`
@@ -538,7 +538,7 @@ export declare class RenderError extends Error {
 import { RenderError, renderImage } from 'nanoraster';
 
 try {
-  await renderImage(glb, { format: 'png' });
+  await renderImage(glb, { format: 'webp' });
 } catch (error) {
   const failure = RenderError.from(error);
   if (!failure.isGpuFault) throw failure;

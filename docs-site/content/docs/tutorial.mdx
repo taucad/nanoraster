@@ -22,19 +22,19 @@ import { readFile, writeFile } from 'node:fs/promises';
 const glb = Uint8Array.from(await readFile('model.glb'));
 
 const front = await renderImage(glb, {
-  format: 'png',
+  format: 'webp',
   width: 512,
   height: 512,
   phi: 90,
   theta: 0,
 });
 
-await writeFile('front.png', front.bytes);
+await writeFile('front.webp', front.bytes);
 ```
 
 </RenderDemo>
 
-**Verify**: `front.png` shows the gear face-on, teeth all round the rim.
+**Verify**: `front.webp` shows the gear face-on, teeth all round the rim.
 
 ## Step 2: Switch to the batch call
 
@@ -53,7 +53,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 const glb = Uint8Array.from(await readFile('model.glb'));
 
 const sheet = await renderImages(glb, {
-  format: 'png',
+  format: 'webp',
   width: 512,
   height: 512,
   margin: 0.05,
@@ -75,8 +75,8 @@ for (const { id, file } of sheet) {
 declared them:
 
 ```console
-front render-front.png
-right render-right.png
+front render-front.webp
+right render-right.webp
 ```
 
 The result filename carries the view `id`, not a counter.
@@ -91,7 +91,7 @@ orients the top view once it is on its own.
 
 ```typescript
 const sheet = await renderImages(glb, {
-  format: 'png',
+  format: 'webp',
   width: 512,
   height: 512,
   margin: 0.05,
@@ -107,7 +107,7 @@ const sheet = await renderImages(glb, {
 
 </RenderDemo>
 
-**Verify**: four files. `render-top.png` looks down at the model, and `render-iso.png` uses
+**Verify**: four files. `render-top.webp` looks down at the model, and `render-iso.webp` uses
 [the quick start's angles](/docs), because those are the defaults.
 
 ## Step 4: Label each view
@@ -121,7 +121,7 @@ bottom-left bar, so the finished sheet carries its own units too.
 
 ```typescript
 const sheet = await renderImages(glb, {
-  format: 'png',
+  format: 'webp',
   width: 512,
   height: 512,
   margin: 0.05,

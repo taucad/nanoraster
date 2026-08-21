@@ -15,7 +15,7 @@ lights and inherits every value it leaves out.
 import { renderImage } from 'nanoraster';
 
 const image = await renderImage(glb, {
-  format: 'png',
+  format: 'webp',
   lighting: {
     lights: [
       { direction: [-0.5, 0.6, 0.6], color: [3, 2.9, 2.7] },
@@ -50,7 +50,7 @@ The studio preset, for reference (`ambient: 0.02`, analytic environment):
 
 ```typescript
 const image = await renderImage(glb, {
-  format: 'png',
+  format: 'webp',
   lighting: {
     lights: [],
     ambient: 0,
@@ -75,7 +75,7 @@ subject is black.
 
 ```typescript
 const images = await renderImages(glb, {
-  format: 'png',
+  format: 'webp',
   lighting: {
     lights: [{ direction: [1, 0.4, 0], color: [3, 2.9, 2.7] }],
     space: 'world',
@@ -100,7 +100,7 @@ contact sheets.
 
 ```typescript
 const image = await renderImage(glb, {
-  format: 'png',
+  format: 'webp',
   lighting: 'studio',
 });
 ```

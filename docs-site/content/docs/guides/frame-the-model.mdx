@@ -17,7 +17,7 @@ You choose the direction the model is seen from, not the distance.
 import { renderImage } from 'nanoraster';
 
 const image = await renderImage(glb, {
-  format: 'png',
+  format: 'webp',
   phi: 60,
   theta: -45,
 });
@@ -45,7 +45,7 @@ transforming geometry.
 
 ```typescript
 const image = await renderImage(glb, {
-  format: 'png',
+  format: 'webp',
   up: 'x',
   phi: 60,
   theta: -45,
@@ -65,7 +65,7 @@ looking down onto its face.
 
 ```typescript
 const image = await renderImage(glb, {
-  format: 'png',
+  format: 'webp',
   projection: 'orthographic',
 });
 ```
@@ -85,7 +85,7 @@ camera radius is solved from the bounds and `margin` together.
 
 ```typescript
 const image = await renderImage(glb, {
-  format: 'png',
+  format: 'webp',
   margin: 0.02,
 });
 ```
