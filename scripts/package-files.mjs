@@ -4,7 +4,7 @@ import path from 'node:path';
 // explicit admission. 2026-08-20: +6 for the handles-first surface
 // (create-renderer, raw-pixels, describe-adapter modules). 2026-08-22: -2 as
 // `format: 'raw'` folded the raw-pixels module into the image paths.
-const PACKAGE_FILE_COUNT_CEILING = 32;
+const PACKAGE_FILE_COUNT_CEILING = 30;
 
 export const PACKAGE_FILES = [
   'BREAKING_CHANGES.md',
