@@ -17,10 +17,8 @@ const image = await renderImage(glb, {
   projection: 'perspective',
   up: 'y',
   background: '#101418',
-  includeAxes: false,
-  includeScale: false,
-  includeLabel: false,
-  label: 'gear',
+  axes: false,
+  scaleBar: false,
 });`;
 
 /** Render the nanoraster homepage and its live demo. */

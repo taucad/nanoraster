@@ -47,9 +47,8 @@ const catalogue: Record<string, DemoControl> = {
     choices: ['#00000000', '#101418', '#ffffff', '#1d4ed8'],
     labels: ['transparent', 'dark', 'white', 'blue'],
   },
-  includeAxes: { kind: 'toggle', key: 'includeAxes', scope: 'option' },
-  includeScale: { kind: 'toggle', key: 'includeScale', scope: 'option' },
-  includeLabel: { kind: 'toggle', key: 'includeLabel', scope: 'option' },
+  axes: { kind: 'toggle', key: 'axes', scope: 'option' },
+  scaleBar: { kind: 'toggle', key: 'scaleBar', scope: 'option' },
   // Rig values. Ranges stay inside renderImageAmbientRange / renderImageExposureRange
   // but stop where the picture stops changing usefully.
   ambient: { kind: 'range', key: 'ambient', scope: 'lighting', min: 0, max: 1, step: 0.01 },
@@ -148,8 +147,10 @@ const formatValue = (value: DemoValue): string => {
  * The span of a `views: [ … ]` literal. Angles declared there belong to one
  * view rather than to the shared request, so substitution steps over them.
  */
+const viewsLiteral = /\bviews\s*:\s*\[[^\]]*\]/u;
+
 const viewsSpan = (code: string): { readonly start: number; readonly end: number } | undefined => {
-  const match = /\bviews\s*:\s*\[[^\]]*\]/u.exec(code);
+  const match = viewsLiteral.exec(code);
   return match === null ? undefined : { start: match.index, end: match.index + match[0].length };
 };
 
@@ -223,6 +224,16 @@ export const readDemoViews = (code: string): readonly DemoView[] => {
     return [{ id, phi, theta, ...(label === undefined ? {} : { label }) }];
   });
 };
+
+/**
+ * The singular `label` an example sets. A label's presence is its own switch,
+ * so it carries no control — the demo reads whatever the example states, the
+ * way it reads views and lights. The `views: [ … ]` literal is cut out first:
+ * the labels inside it belong to one view each, and a shared `label` on a
+ * batch request is an unknown key the renderer rejects.
+ */
+export const readDemoLabel = (code: string): string | undefined =>
+  unquote(/\blabel\s*:\s*(["'][^"']*["'])/u.exec(code.replace(viewsLiteral, ''))?.[1]);
 
 /** One directional light an example declares inside its `lights: [ … ]` literal. */
 export type DemoLight = {

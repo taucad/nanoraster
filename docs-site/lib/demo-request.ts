@@ -26,10 +26,12 @@ const hexToRgba = (hex: string): readonly number[] => {
 export const buildDemoRequest = (
   current: Record<string, DemoValue>,
   {
+    label,
     views,
     lights,
     size,
   }: {
+    readonly label: string | undefined;
     readonly views: readonly DemoView[];
     readonly lights: readonly DemoLight[] | undefined;
     readonly size: { readonly height: number; readonly width: number };
@@ -43,24 +45,21 @@ export const buildDemoRequest = (
     entries.filter(([key]) => !isMaterialKey(key) && !isLightingKey(key) && !(batch && angleKeys.has(key))),
   );
 
-  // Labels are required on every view once they are switched on, so a view
-  // that declares none falls back to its own identifier.
-  const labelled = views.map((view) => {
-    const label = view.label ?? (current['includeLabel'] === true ? view.id : undefined);
-    return {
-      id: view.id,
-      phi: view.phi,
-      theta: view.theta,
-      ...(label === undefined ? {} : { label }),
-    };
-  });
+  // A view is labelled when it says so and not otherwise, so this is the
+  // example's own list with nothing filled in.
+  const labelled = views.map((view) => ({
+    id: view.id,
+    phi: view.phi,
+    theta: view.theta,
+    ...(view.label === undefined ? {} : { label: view.label }),
+  }));
 
   const request: Record<string, unknown> = {
     background: [0.04, 0.06, 0.08, 1],
     format: 'png',
     ...options,
     ...size,
-    ...(current['includeLabel'] === true && !batch ? { label: 'gear' } : {}),
+    ...(label === undefined || batch ? {} : { label }),
     ...(batch ? { views: labelled } : {}),
     ...(lights === undefined ? {} : { lighting: { lights, ...rig } }),
   };

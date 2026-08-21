@@ -20,11 +20,10 @@ const image = await renderImage(glb, {
   up: 'y', // default
   projection: 'perspective', // default
   background: undefined, // default (transparent)
-  includeAxes: false, // default
-  includeLabel: false, // default
-  includeScale: false, // default
+  axes: false, // default
+  scaleBar: false, // default
   lighting: 'studio', // default
-  label: undefined, // required only when includeLabel is true
+  label: undefined, // default (no label drawn)
   phi: 60, // default
   theta: -45, // default
 });
@@ -281,18 +280,16 @@ type.
 
 ```typescript
 export type RenderImagesOptions<Views extends readonly RenderImageView[] = readonly RenderImageView[]> =
-  RenderImageSharedOptions &
-    (
-      | { readonly includeLabel: true; readonly views: LabeledViews<Views> }
-      | { readonly includeLabel?: false; readonly views: Views }
-    );
+  RenderImageSharedOptions & {
+    readonly profile?: boolean;
+    readonly views: Views;
+  };
 ```
 
-`views` must be a non-empty ordered tuple with unique IDs. When `includeLabel`
-is `true`, every view must carry a label. `LabeledViews` is the internal mapped
-tuple that enforces that relationship without losing IDs or order.
-`profile: true` attaches a [`RenderProfile`](#renderprofile) to the result
-without changing what is rendered.
+`views` must be a non-empty ordered tuple with unique IDs. A view is labelled
+when its own entry sets `label`, so a sheet can label some views and not
+others. `profile: true` attaches a [`RenderProfile`](#renderprofile) to the
+result without changing what is rendered.
 
 <auto-type-table path="./props.ts" name="RenderImagesOptions" caption="RenderImagesOptions properties" />
 

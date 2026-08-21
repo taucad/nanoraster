@@ -74,9 +74,8 @@ pub struct RenderRequest {
     pub projection: Option<String>,
     pub background: Option<[f32; 4]>,
     pub label: Option<String>,
-    pub include_axes: Option<bool>,
-    pub include_label: Option<bool>,
-    pub include_scale: Option<bool>,
+    pub axes: Option<bool>,
+    pub scale_bar: Option<bool>,
     pub lighting: Option<LightingRequest>,
 }
 
@@ -107,9 +106,8 @@ pub struct RenderImagesRequest {
     pub up: Option<String>,
     pub projection: Option<String>,
     pub background: Option<[f32; 4]>,
-    pub include_axes: Option<bool>,
-    pub include_label: Option<bool>,
-    pub include_scale: Option<bool>,
+    pub axes: Option<bool>,
+    pub scale_bar: Option<bool>,
     pub lighting: Option<LightingRequest>,
     pub profile: Option<bool>,
     pub views: Vec<RenderImageViewRequest>,
@@ -164,9 +162,11 @@ struct CommonRequest<'a> {
     up: Option<&'a str>,
     projection: Option<&'a str>,
     background: Option<[f32; 4]>,
-    include_axes: Option<bool>,
-    include_label: Option<bool>,
-    include_scale: Option<bool>,
+    axes: Option<bool>,
+    /// Whether a label will be drawn, so the annotated-minimum rule sees it.
+    /// Singular requests carry their own; a batch labels each view instead.
+    labeled: bool,
+    scale_bar: Option<bool>,
     lighting: Option<&'a LightingRequest>,
 }
 
@@ -178,11 +178,6 @@ impl RenderRequest {
     pub fn resolve(&self) -> Result<(RenderOptions, ImageFormat), RenderError> {
         let (mut options, format) = resolve_common(self.common())?;
         validate_optional_label(self.label.as_deref(), "label")?;
-        if options.include_label && self.label.is_none() {
-            return Err(RenderError::Parse(
-                "label is required when includeLabel is true".into(),
-            ));
-        }
         options.label.clone_from(&self.label);
         options.phi_deg = finite_or_default(self.phi, options.phi_deg, "phi")?;
         options.theta_deg = finite_or_default(self.theta, options.theta_deg, "theta")?;
@@ -199,9 +194,9 @@ impl RenderRequest {
             up: self.up.as_deref(),
             projection: self.projection.as_deref(),
             background: self.background,
-            include_axes: self.include_axes,
-            include_label: self.include_label,
-            include_scale: self.include_scale,
+            axes: self.axes,
+            labeled: self.label.is_some(),
+            scale_bar: self.scale_bar,
             lighting: self.lighting.as_ref(),
         }
     }
@@ -222,7 +217,7 @@ impl RenderImagesRequest {
             ));
         }
         let shared_format_name = self.format.as_deref().unwrap_or("png");
-        let annotated = options.include_axes || options.include_label || options.include_scale;
+        let shared_annotated = options.axes || options.scale_bar;
         let mut ids = HashSet::with_capacity(self.views.len());
         let mut views = Vec::with_capacity(self.views.len());
         for (index, view) in self.views.iter().enumerate() {
@@ -256,7 +251,7 @@ impl RenderImagesRequest {
                     )));
                 }
             }
-            if annotated
+            if (shared_annotated || view.label.is_some())
                 && (view.width.unwrap_or(options.width) < ANNOTATED_MIN_DIMENSION
                     || view.height.unwrap_or(options.height) < ANNOTATED_MIN_DIMENSION)
             {
@@ -283,11 +278,6 @@ impl RenderImagesRequest {
                 None
             };
             validate_optional_label(view.label.as_deref(), &format!("views[{index}].label"))?;
-            if options.include_label && view.label.is_none() {
-                return Err(RenderError::Parse(format!(
-                    "views[{index}].label is required when includeLabel is true"
-                )));
-            }
             views.push(RenderView {
                 id: view.id.clone(),
                 label: view.label.clone(),
@@ -311,9 +301,9 @@ impl RenderImagesRequest {
             up: self.up.as_deref(),
             projection: self.projection.as_deref(),
             background: self.background,
-            include_axes: self.include_axes,
-            include_label: self.include_label,
-            include_scale: self.include_scale,
+            axes: self.axes,
+            labeled: false,
+            scale_bar: self.scale_bar,
             lighting: self.lighting.as_ref(),
         }
     }
@@ -330,10 +320,9 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
             "dimensions {width}x{height} outside {MIN_DIMENSION}..={MAX_DIMENSION}"
         )));
     }
-    let include_axes = request.include_axes.unwrap_or(false);
-    let include_label = request.include_label.unwrap_or(false);
-    let include_scale = request.include_scale.unwrap_or(false);
-    if (include_axes || include_label || include_scale)
+    let axes = request.axes.unwrap_or(false);
+    let scale_bar = request.scale_bar.unwrap_or(false);
+    if (axes || scale_bar || request.labeled)
         && (width < ANNOTATED_MIN_DIMENSION || height < ANNOTATED_MIN_DIMENSION)
     {
         return Err(RenderError::Parse(format!(
@@ -387,9 +376,8 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
             up,
             projection,
             background: request.background,
-            include_axes,
-            include_label,
-            include_scale,
+            axes,
+            scale_bar,
             lighting,
             ..defaults
         },
@@ -555,17 +543,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn singular_defaults_include_axes_off() {
+    fn singular_defaults_annotations_off() {
         let (options, format) = RenderRequest::from_json("{}")
             .expect("parse")
             .resolve()
             .expect("resolve");
         assert_eq!((options.width, options.height), (768, 432));
         assert_eq!((options.phi_deg, options.theta_deg), (60.0, -45.0));
-        assert!(!options.include_axes);
-        assert!(!options.include_label);
-        assert!(!options.include_scale);
+        assert!(!options.axes);
+        assert!(options.label.is_none());
+        assert!(!options.scale_bar);
         assert_eq!(format, ImageFormat::Png);
+    }
+
+    #[test]
+    fn a_label_alone_switches_the_label_annotation_on() {
+        let (options, _) = RenderRequest::from_json(r#"{"label":"gear"}"#)
+            .expect("parse")
+            .resolve()
+            .expect("resolve");
+        assert_eq!(options.label.as_deref(), Some("gear"));
+        assert_eq!(
+            RenderRequest::from_json(r#"{"label":"gear","width":191}"#)
+                .expect("parse")
+                .resolve()
+                .unwrap_err()
+                .to_string(),
+            "parse: annotated images must be at least 192x192"
+        );
+        assert_eq!(
+            RenderImagesRequest::from_json(
+                r#"{"views":[{"id":"front","label":"Front","phi":90,"theta":0,"width":191}]}"#
+            )
+            .expect("parse")
+            .resolve()
+            .unwrap_err()
+            .to_string(),
+            "parse: views[0]: annotated images must be at least 192x192"
+        );
     }
 
     #[test]
@@ -587,14 +602,13 @@ mod tests {
     #[test]
     fn plural_resolves_shared_settings_and_ordered_views() {
         let (options, format, views, profile) = RenderImagesRequest::from_json(
-            r#"{"format":"webp","includeAxes":true,"includeLabel":true,"includeScale":true,"views":[{"id":"front","label":"Front","phi":90,"theta":0},{"id":"top","label":"Top","phi":0,"theta":0}]}"#,
+            r#"{"format":"webp","axes":true,"scaleBar":true,"views":[{"id":"front","label":"Front","phi":90,"theta":0},{"id":"top","label":"Top","phi":0,"theta":0}]}"#,
         )
         .expect("parse")
         .resolve()
         .expect("resolve");
-        assert!(options.include_axes);
-        assert!(options.include_label);
-        assert!(options.include_scale);
+        assert!(options.axes);
+        assert!(options.scale_bar);
         assert!(!profile);
         assert_eq!(views[0].label.as_deref(), Some("Front"));
         assert_eq!(format, ImageFormat::WebP { quality: 100 });
@@ -647,8 +661,7 @@ mod tests {
             r#"{"format":"gif"}"#,
             r#"{"background":[2.0,0.0,0.0,1.0]}"#,
             r#"{"zoomLevel":1.8}"#,
-            r#"{"includeLabel":true}"#,
-            r#"{"includeAxes":true,"width":191}"#,
+            r#"{"axes":true,"width":191}"#,
             r#"{"label":"snowman ☃"}"#,
             "not json",
         ] {
@@ -668,7 +681,7 @@ mod tests {
             r#"{"views":[{"id":"front","phi":90,"theta":0},{"id":"front","phi":0,"theta":0}]}"#,
             r#"{"views":[{"id":"front","phi":90,"theta":0,"zoom":2}]}"#,
             r#"{"phi":90,"views":[{"id":"front","phi":90,"theta":0}]}"#,
-            r#"{"includeLabel":true,"views":[{"id":"front","phi":90,"theta":0}]}"#,
+            r#"{"label":"shared","views":[{"id":"front","phi":90,"theta":0}]}"#,
         ] {
             assert!(
                 RenderImagesRequest::from_json(json)
@@ -698,7 +711,7 @@ mod tests {
                 "parse: views[0]: format \"gif\" not png/webp/jpeg/jpg",
             ),
             (
-                r#"{"includeAxes":true,"views":[{"id":"front","phi":90,"theta":0,"width":191}]}"#,
+                r#"{"axes":true,"views":[{"id":"front","phi":90,"theta":0,"width":191}]}"#,
                 "parse: views[0]: annotated images must be at least 192x192",
             ),
         ];
@@ -755,7 +768,7 @@ mod tests {
     fn resolves_every_common_option_variant() {
         for up in ["x", "y", "z"] {
             let json = format!(
-                r#"{{"format":"jpeg","quality":0.8,"width":192,"height":193,"margin":0.2,"up":"{up}","projection":"orthographic","background":[0,0.25,0.5,1],"label":"µ—−","includeLabel":true}}"#
+                r#"{{"format":"jpeg","quality":0.8,"width":192,"height":193,"margin":0.2,"up":"{up}","projection":"orthographic","background":[0,0.25,0.5,1],"label":"µ—−","axes":true,"scaleBar":true}}"#
             );
             let (options, format) = RenderRequest::from_json(&json)
                 .expect("parse")
@@ -763,6 +776,8 @@ mod tests {
                 .expect("resolve");
             assert_eq!(options.width, 192);
             assert_eq!(options.height, 193);
+            assert!(options.axes);
+            assert!(options.scale_bar);
             assert_eq!(options.projection, Projection::Orthographic);
             assert_eq!(format, ImageFormat::Jpeg { quality: 80 });
         }

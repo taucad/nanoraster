@@ -39,16 +39,14 @@ const glb = new Uint8Array([1, 2, 3]);
 const singular = {
   format: 'webp',
   label: 'Isometric',
-  includeAxes: true,
-  includeLabel: true,
-  includeScale: true,
+  axes: true,
+  scaleBar: true,
 } as const satisfies ImageOptions;
 expectTypeOf(singular).toEqualTypeOf<{
   readonly format: 'webp';
   readonly label: 'Isometric';
-  readonly includeAxes: true;
-  readonly includeLabel: true;
-  readonly includeScale: true;
+  readonly axes: true;
+  readonly scaleBar: true;
 }>();
 expectTypeOf(renderImage(glb, singular)).toEqualTypeOf<Promise<renderModule.RenderedImageFile>>();
 
@@ -61,9 +59,8 @@ expectTypeOf<renderModule.RenderedImageFile>().toExtend<TauExportFileShape>();
 
 const options = {
   format: 'png',
-  includeAxes: true,
-  includeLabel: true,
-  includeScale: true,
+  axes: true,
+  scaleBar: true,
   views: [
     { id: 'front', label: 'Front', phi: 90, theta: 0 },
     { id: 'top', label: 'Top', phi: 0, theta: 0 },
@@ -133,18 +130,20 @@ void renderImages(glb, {
       id: 'front',
       phi: 90,
       theta: 0,
-      // @ts-expect-error includeAxes is shared, not per view
-      includeAxes: true,
+      // @ts-expect-error axes is shared, not per view
+      axes: true,
     },
   ],
 });
-// @ts-expect-error includeLabel true requires a singular label
-void ({ format: 'png', includeLabel: true } as const satisfies ImageOptions);
+// A label's presence is its own switch: it stands alone, and a batch labels
+// whichever views it chooses to.
+void ({ format: 'png', label: 'Isometric' } as const satisfies ImageOptions);
 void ({
   format: 'png',
-  includeLabel: true,
-  views: [{ id: 'front', phi: 90, theta: 0 }],
-  // @ts-expect-error includeLabel true requires every batch view label
+  views: [
+    { id: 'front', label: 'Front', phi: 90, theta: 0 },
+    { id: 'top', phi: 0, theta: 0 },
+  ],
 } as const satisfies ImagesOptions);
 void renderImages(glb, {
   format: 'png',
@@ -153,8 +152,8 @@ void renderImages(glb, {
       id: 'front',
       phi: 90,
       theta: 0,
-      // @ts-expect-error includeScale is shared, not per view
-      includeScale: true,
+      // @ts-expect-error scaleBar is shared, not per view
+      scaleBar: true,
     },
   ],
 });
@@ -183,15 +182,15 @@ void ({
 // @ts-expect-error missing theta
 void ({ format: 'png', views: [{ id: 'front', phi: 90 }] } as const satisfies ImagesOptions);
 // @ts-expect-error misspelled singular option
-void ({ format: 'png', includeAxis: true } as const satisfies ImageOptions);
+void ({ format: 'png', axis: true } as const satisfies ImageOptions);
 void ({
   format: 'png',
   // @ts-expect-error misspelled plural option
-  includeAxis: true,
+  axis: true,
   views: [{ id: 'front', phi: 90, theta: 0 }],
 } as const satisfies ImagesOptions);
 // @ts-expect-error missing singular format
-void ({ includeAxes: true } as const satisfies ImageOptions);
+void ({ axes: true } as const satisfies ImageOptions);
 void renderImages(glb, {
   format: 'png',
   lighting: 'studio',

@@ -75,18 +75,16 @@ type RenderImageSharedOptions = {
   readonly projection?: 'perspective' | 'orthographic';
   /** Transparent by default; otherwise `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. @default transparent */
   readonly background?: readonly [number, number, number, number] | string;
-  /** Include the bottom-right camera-aware XYZ indicator and front-on depth marker. @default false */
-  readonly includeAxes?: boolean;
-  /** Include the top-left caller-authored label verbatim. Requires `label` on every rendered view. @default false */
-  readonly includeLabel?: boolean;
+  /** Draw the bottom-right camera-aware XYZ indicator and front-on depth marker. @default false */
+  readonly axes?: boolean;
   /**
-   * Include a bottom-left physical scale. Perspective labels identify the
+   * Draw a bottom-left physical scale bar. Perspective labels identify the
    * subject-center measurement plane with `@ center`; orthographic scale is
    * depth-invariant.
    *
    * @default false
    */
-  readonly includeScale?: boolean;
+  readonly scaleBar?: boolean;
   /**
    * Studio preset by default; a supplied rig replaces the direct lights and
    * inherits the other studio values. Determinism is unchanged: a fixed rig
@@ -97,29 +95,22 @@ type RenderImageSharedOptions = {
   readonly lighting?: RenderLighting;
 };
 
-type RenderLabelOptions =
-  | {
-      readonly includeLabel: true;
-      /** Screen-upright text; 1–64 supported Unicode code points and required when labels are enabled. */
-      readonly label: string;
-    }
-  | {
-      readonly includeLabel?: false;
-      readonly label?: string;
-    };
+/** The singular camera plus the top-left label, whose presence is its switch. */
+type RenderCameraOptions = {
+  /** Screen-upright text drawn top-left; 1–64 supported Unicode code points. Omit it to draw no label. */
+  readonly label?: string;
+  /** Polar camera angle from the selected up axis, in finite degrees. @default 60 */
+  readonly phi?: number;
+  /** Right-handed camera azimuth around the selected up axis, in finite degrees. @default -45 */
+  readonly theta?: number;
+};
 
 /**
  * Options for one rendered image.
  *
  * @public
  */
-export type RenderImageOptions = RenderImageSharedOptions &
-  RenderLabelOptions & {
-    /** Polar camera angle from the selected up axis, in finite degrees. @default 60 */
-    readonly phi?: number;
-    /** Right-handed camera azimuth around the selected up axis, in finite degrees. @default -45 */
-    readonly theta?: number;
-  };
+export type RenderImageOptions = RenderImageSharedOptions & RenderCameraOptions;
 
 /**
  * One identified camera in a multi-image request: camera identity plus
@@ -132,7 +123,7 @@ export type RenderImageOptions = RenderImageSharedOptions &
 export type RenderImageView<Id extends string = string> = {
   /** Unique result and filename identity matching `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`. */
   readonly id: Id;
-  /** Screen-upright caller-authored text rendered verbatim; required when `includeLabel` is true. */
+  /** Screen-upright caller-authored text rendered verbatim. Its presence draws this view's label. */
   readonly label?: string;
   /** Polar camera angle from the selected up axis, in finite degrees. */
   readonly phi: number;
@@ -146,10 +137,6 @@ export type RenderImageView<Id extends string = string> = {
   readonly format?: 'png' | 'webp' | 'jpeg' | 'jpg';
   /** Encoder quality override for this view with the shared semantics (WebP: 1 is lossless, below 1 is lossy). @default the shared `quality` */
   readonly quality?: number;
-};
-
-type LabeledViews<Views extends readonly RenderImageView[]> = {
-  readonly [Index in keyof Views]: Views[Index] & { readonly label: string };
 };
 
 /**
@@ -166,17 +153,9 @@ export type RenderImagesOptions<Views extends readonly RenderImageView[] = reado
      * @default false
      */
     readonly profile?: boolean;
-  } & (
-      | {
-          readonly includeLabel: true;
-          /** Non-empty ordered view tuple with unique IDs; every view needs a label when labels are enabled. */
-          readonly views: LabeledViews<Views>;
-        }
-      | {
-          readonly includeLabel?: false;
-          readonly views: Views;
-        }
-    );
+    /** Non-empty ordered view tuple with unique IDs. */
+    readonly views: Views;
+  };
 
 /**
  * Options for one raw-pixels render: the singular camera and annotation
@@ -184,13 +163,7 @@ export type RenderImagesOptions<Views extends readonly RenderImageView[] = reado
  *
  * @public
  */
-export type RenderPixelsOptions = Omit<RenderImageSharedOptions, 'format' | 'quality'> &
-  RenderLabelOptions & {
-    /** Polar camera angle from the selected up axis, in finite degrees. @default 60 */
-    readonly phi?: number;
-    /** Right-handed camera azimuth around the selected up axis, in finite degrees. @default -45 */
-    readonly theta?: number;
-  };
+export type RenderPixelsOptions = Omit<RenderImageSharedOptions, 'format' | 'quality'> & RenderCameraOptions;
 
 /**
  * One identified rendered file.
@@ -315,9 +288,8 @@ const singularKeys = new Set([
   'projection',
   'background',
   'label',
-  'includeAxes',
-  'includeLabel',
-  'includeScale',
+  'axes',
+  'scaleBar',
   'lighting',
 ]);
 
@@ -330,9 +302,8 @@ const pluralKeys = new Set([
   'up',
   'projection',
   'background',
-  'includeAxes',
-  'includeLabel',
-  'includeScale',
+  'axes',
+  'scaleBar',
   'lighting',
   'profile',
   'views',
@@ -529,11 +500,11 @@ const parseHexColor = (value: string): readonly [number, number, number, number]
 };
 
 type CameraCommonOptions = Omit<RenderImageSharedOptions, 'format' | 'quality'> & {
-  readonly includeLabel?: boolean;
+  readonly label?: string;
 };
 
 const validateAnnotatedDimensions = (options: CameraCommonOptions): void => {
-  if (![options.includeAxes, options.includeLabel, options.includeScale].includes(true)) {
+  if (options.axes !== true && options.scaleBar !== true && options.label === undefined) {
     return;
   }
   if (
@@ -589,9 +560,8 @@ const validateCameraCommon = (options: CameraCommonOptions): void => {
   if (options.projection !== undefined && !['perspective', 'orthographic'].includes(options.projection)) {
     throw new TypeError('projection must be perspective or orthographic');
   }
-  assertOptionalBoolean(options.includeAxes, 'includeAxes');
-  assertOptionalBoolean(options.includeLabel, 'includeLabel');
-  assertOptionalBoolean(options.includeScale, 'includeScale');
+  assertOptionalBoolean(options.axes, 'axes');
+  assertOptionalBoolean(options.scaleBar, 'scaleBar');
   validateAnnotatedDimensions(options);
   validateBackground(options.background);
   validateLighting(options.lighting);
@@ -619,9 +589,6 @@ export const toImageRequestJson = (options: RenderImageOptions): string => {
   if (options.label !== undefined) {
     assertLabel(options.label, 'label');
   }
-  if (input['includeLabel'] === true && input['label'] === undefined) {
-    throw new TypeError('label is required when includeLabel is true');
-  }
   assertOptionalFinite(options.phi, 'phi');
   assertOptionalFinite(options.theta, 'theta');
   return JSON.stringify({
@@ -636,9 +603,8 @@ export const toImageRequestJson = (options: RenderImageOptions): string => {
     projection: options.projection,
     background: normalizedBackground(options.background),
     label: options.label,
-    includeAxes: options.includeAxes,
-    includeLabel: options.includeLabel,
-    includeScale: options.includeScale,
+    axes: options.axes,
+    scaleBar: options.scaleBar,
     lighting: options.lighting,
   });
 };
@@ -658,7 +624,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
   assertKnownKeys(input, pluralKeys, 'options');
   validateCommon(options);
   assertOptionalBoolean(options.profile, 'profile');
-  const annotated = [options.includeAxes, options.includeLabel, options.includeScale].includes(true);
+  const sharedAnnotated = options.axes === true || options.scaleBar === true;
   const { views } = input;
   if (!isUnknownArray(views) || views.length === 0) {
     throw new TypeError('views must contain at least one view');
@@ -693,7 +659,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
       assertRange(quality, `views[${index}].quality`, renderImageQualityRange);
     }
     if (
-      annotated &&
+      (sharedAnnotated || label !== undefined) &&
       (((width as number | undefined) ?? options.width ?? defaultWidth) < renderImageAnnotatedMinDimension ||
         ((height as number | undefined) ?? options.height ?? defaultHeight) <
           renderImageAnnotatedMinDimension)
@@ -704,9 +670,6 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     }
     if (label !== undefined) {
       assertLabel(label, `views[${index}].label`);
-    }
-    if (options.includeLabel && label === undefined) {
-      throw new TypeError(`views[${index}].label is required when includeLabel is true`);
     }
     normalizedViews.push({
       id,
@@ -728,9 +691,8 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     up: options.up,
     projection: options.projection,
     background: normalizedBackground(options.background),
-    includeAxes: options.includeAxes,
-    includeLabel: options.includeLabel,
-    includeScale: options.includeScale,
+    axes: options.axes,
+    scaleBar: options.scaleBar,
     lighting: options.lighting,
     profile: options.profile,
     views: normalizedViews,
@@ -754,9 +716,6 @@ export const toPixelsRequestJson = (options: RenderPixelsOptions): string => {
   if (options.label !== undefined) {
     assertLabel(options.label, 'label');
   }
-  if (input['includeLabel'] === true && input['label'] === undefined) {
-    throw new TypeError('label is required when includeLabel is true');
-  }
   assertOptionalFinite(options.phi, 'phi');
   assertOptionalFinite(options.theta, 'theta');
   return JSON.stringify({
@@ -769,9 +728,8 @@ export const toPixelsRequestJson = (options: RenderPixelsOptions): string => {
     projection: options.projection,
     background: normalizedBackground(options.background),
     label: options.label,
-    includeAxes: options.includeAxes,
-    includeLabel: options.includeLabel,
-    includeScale: options.includeScale,
+    axes: options.axes,
+    scaleBar: options.scaleBar,
     lighting: options.lighting,
   });
 };

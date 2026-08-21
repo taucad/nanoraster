@@ -11,7 +11,7 @@ single renders never can.
 
 ### 1. Declare the views as a tuple
 
-Each view needs a unique `id` and its own angles. `includeAxes` marks the
+Each view needs a unique `id` and its own angles. `axes` marks the
 orientation of each one, which a set of angles alone does not show.
 
 <RenderDemo>
@@ -27,7 +27,7 @@ const images = await renderImages(glb, {
   format: 'webp',
   width: 640,
   height: 480,
-  includeAxes: true,
+  axes: true,
   views: [
     { id: 'iso', phi: 60, theta: -45 },
     { id: 'front', phi: 90, theta: 0 },
@@ -106,8 +106,8 @@ const images = await renderImages(glb, options);
 tuple and returns a tuple even for one view, under the same
 [exactness rules](../api#renderimages).
 
-**Labels on every view.** `includeLabel: true` makes `label` required on every
-entry; see [Format and annotate](format-and-annotate).
+**Labels per view.** Give an entry a `label` and that view is labelled; leave
+it off and it is not. See [Format and annotate](format-and-annotate).
 
 **Shared-only settings.** `margin`, `up`, `projection`, `background`,
 annotations and `lighting` apply to the whole request; only the camera pair

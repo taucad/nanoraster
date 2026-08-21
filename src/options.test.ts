@@ -11,16 +11,11 @@ import {
 const parse = (json: string): Record<string, unknown> => JSON.parse(json) as Record<string, unknown>;
 
 describe('image request serialization', () => {
-  it('should omit undefined fields and serialize disabled includes', () => {
-    expect(
-      parse(
-        toImageRequestJson({ format: 'webp', includeAxes: false, includeLabel: false, includeScale: false }),
-      ),
-    ).toEqual({
+  it('should omit undefined fields and serialize disabled annotations', () => {
+    expect(parse(toImageRequestJson({ format: 'webp', axes: false, scaleBar: false }))).toEqual({
       format: 'webp',
-      includeAxes: false,
-      includeLabel: false,
-      includeScale: false,
+      axes: false,
+      scaleBar: false,
     });
   });
 
@@ -37,9 +32,8 @@ describe('image request serialization', () => {
       projection: 'orthographic',
       background: '#FF800040',
       label: 'Front',
-      includeAxes: true,
-      includeLabel: true,
-      includeScale: true,
+      axes: true,
+      scaleBar: true,
     };
 
     expect(parse(toImageRequestJson(options))).toEqual({
@@ -54,9 +48,8 @@ describe('image request serialization', () => {
       projection: 'orthographic',
       background: [1, 128 / 255, 0, 64 / 255],
       label: 'Front',
-      includeAxes: true,
-      includeLabel: true,
-      includeScale: true,
+      axes: true,
+      scaleBar: true,
     });
   });
 
@@ -66,7 +59,6 @@ describe('image request serialization', () => {
         toImagesRequestJson({
           format: 'png',
           projection: 'orthographic',
-          includeLabel: true,
           views: [
             { id: 'front', label: 'Front', phi: 90, theta: 0 },
             { id: 'top', label: 'Top', phi: 0, theta: 0 },
@@ -76,7 +68,6 @@ describe('image request serialization', () => {
     ).toEqual({
       format: 'png',
       projection: 'orthographic',
-      includeLabel: true,
       views: [
         { id: 'front', label: 'Front', phi: 90, theta: 0 },
         { id: 'top', label: 'Top', phi: 0, theta: 0 },
@@ -105,10 +96,9 @@ describe('image request serialization', () => {
       { format: 'png', background: [0, 0, 0, Number.NaN] },
       { format: 'png', background: [0, 0, 0, -0.1] },
       { format: 'png', background: [0, 0, 0, 1.1] },
-      { format: 'png', includeAxes: 'yes' },
-      { format: 'png', includeScale: 'yes' },
-      { format: 'png', includeLabel: true },
-      { format: 'png', includeScale: true, width: 191 },
+      { format: 'png', axes: 'yes' },
+      { format: 'png', scaleBar: 'yes' },
+      { format: 'png', scaleBar: true, width: 191 },
       { format: 'png', label: ' ' },
       { format: 'png', label: 'x'.repeat(65) },
       { format: 'png', label: 'snowman ☃' },
@@ -251,16 +241,6 @@ describe('image request serialization', () => {
     }
   });
 
-  it('should reject a missing batch label with a precise path', () => {
-    expect(() =>
-      toImagesRequestJson({
-        format: 'png',
-        includeLabel: true,
-        views: [{ id: 'front', phi: 90, theta: 0 }],
-      } as unknown as RenderImagesOptions),
-    ).toThrow('views[0].label is required when includeLabel is true');
-  });
-
   it('should serialize per-view output overrides and the profile flag', () => {
     expect(
       parse(
@@ -304,7 +284,7 @@ describe('image request serialization', () => {
     expect(() =>
       toImagesRequestJson({
         format: 'png',
-        includeAxes: true,
+        axes: true,
         views: [{ id: 'front', phi: 90, theta: 0, width: 191 }],
       } as unknown as RenderImagesOptions),
     ).toThrow('views[0]: annotated images must be at least 192x192');
@@ -327,7 +307,6 @@ describe('image request serialization', () => {
           theta: 90,
           background: '#0080FF',
           label: 'Front',
-          includeLabel: true,
         }),
       ),
     ).toEqual({
@@ -337,7 +316,6 @@ describe('image request serialization', () => {
       theta: 90,
       background: [0, 128 / 255, 1, 1],
       label: 'Front',
-      includeLabel: true,
     });
     expect(parse(toPixelsRequestJson({}))).toEqual({});
   });
@@ -348,12 +326,48 @@ describe('image request serialization', () => {
       [{ format: 'png' }, 'options contains unknown property "format"'],
       [{ quality: 0.9 }, 'options contains unknown property "quality"'],
       [{ width: 15 }, 'width must be between 16 and 4096'],
-      [{ includeLabel: true }, 'label is required when includeLabel is true'],
+      [{ label: 'Front', width: 191 }, 'annotated images must be at least 192x192'],
       [{ phi: Number.NaN }, 'phi must be a finite number'],
     ];
     for (const [options, message] of invalid) {
       expect(() => toPixelsRequestJson(options as never)).toThrow(message);
     }
+  });
+});
+
+describe('label presence as the annotation switch', () => {
+  it('should draw a label from its presence alone', () => {
+    expect(parse(toImageRequestJson({ format: 'png', label: 'gear' }))).toEqual({
+      format: 'png',
+      label: 'gear',
+    });
+    expect(parse(toPixelsRequestJson({ label: 'gear' }))).toEqual({ label: 'gear' });
+    expect(() => toImageRequestJson({ format: 'png', label: 'gear', width: 191 })).toThrow(
+      'annotated images must be at least 192x192',
+    );
+    expect(() =>
+      toImagesRequestJson({
+        format: 'png',
+        views: [{ id: 'front', label: 'Front', phi: 90, theta: 0, width: 191 }],
+      }),
+    ).toThrow('views[0]: annotated images must be at least 192x192');
+  });
+
+  it('should leave an unlabelled view unannotated beside a labelled one', () => {
+    expect(
+      parse(
+        toImagesRequestJson({
+          format: 'png',
+          views: [
+            { id: 'front', label: 'Front', phi: 90, theta: 0 },
+            { id: 'thumb', phi: 0, theta: 0, width: 64, height: 64 },
+          ],
+        }),
+      )['views'],
+    ).toEqual([
+      { id: 'front', label: 'Front', phi: 90, theta: 0 },
+      { id: 'thumb', phi: 0, theta: 0, width: 64, height: 64 },
+    ]);
   });
 });
 

@@ -120,24 +120,18 @@ for (const [index, view] of views.entries()) {
     throw new Error(`batch view ${view.id} differs from singular bytes`);
   }
 }
-const axesRequest = { ...shared, phi: 60, theta: -45, includeAxes: true };
+const axesRequest = { ...shared, phi: 60, theta: -45, axes: true };
 const explicitAxesOff = await native.renderImage(
   glb,
-  JSON.stringify({ ...shared, phi: 60, theta: -45, includeAxes: false }),
+  JSON.stringify({ ...shared, phi: 60, theta: -45, axes: false }),
 );
 const axes = await native.renderImage(glb, JSON.stringify(axesRequest));
-const hiddenLabelA = await native.renderImage(
-  glb,
-  JSON.stringify({ ...shared, phi: 60, theta: -45, includeLabel: false, label: 'A' }),
-);
-const hiddenLabelB = await native.renderImage(
-  glb,
-  JSON.stringify({ ...shared, phi: 60, theta: -45, includeLabel: false, label: 'B' }),
-);
+const labelA = await native.renderImage(glb, JSON.stringify({ ...shared, phi: 60, theta: -45, label: 'A' }));
+const labelB = await native.renderImage(glb, JSON.stringify({ ...shared, phi: 60, theta: -45, label: 'B' }));
 const axesBatch = (
   await native.renderImages(
     glb,
-    JSON.stringify({ ...shared, includeAxes: true, views: [{ id: 'isometric', phi: 60, theta: -45 }] }),
+    JSON.stringify({ ...shared, axes: true, views: [{ id: 'isometric', phi: 60, theta: -45 }] }),
   )
 ).images;
 if (
@@ -148,8 +142,10 @@ if (
 ) {
   throw new Error('axes output must differ from axes-off and match one-view batch bytes');
 }
-if (!hiddenLabelA.equals(png) || !hiddenLabelB.equals(png)) {
-  throw new Error('disabled labels must not affect output bytes');
+// A label's presence is the switch: an omitted one leaves the bytes alone, and
+// two different labels cannot render the same.
+if (labelA.equals(png) || labelB.equals(png) || labelA.equals(labelB)) {
+  throw new Error('a label must be drawn from its presence alone');
 }
 const annotations = await native.renderImage(
   glb,
@@ -161,9 +157,8 @@ const annotations = await native.renderImage(
     label: 'Front — View From +Z',
     phi: 90,
     theta: 270,
-    includeAxes: true,
-    includeLabel: true,
-    includeScale: true,
+    axes: true,
+    scaleBar: true,
   }),
 );
 // The standing regression test of the façade's one-shot queue: five renders
@@ -189,9 +184,8 @@ const visualCases = [
       label: view.label,
       phi: view.phi,
       theta: view.theta,
-      includeAxes: true,
-      includeLabel: true,
-      includeScale: true,
+      axes: true,
+      scaleBar: true,
     })
   ).bytes,
 }));
@@ -209,9 +203,8 @@ const coldSmallLadder = await native.renderImage(
     label: 'Isometric',
     phi: 60,
     theta: -45,
-    includeAxes: true,
-    includeLabel: true,
-    includeScale: true,
+    axes: true,
+    scaleBar: true,
   }),
 );
 if (!coldSmallLadder.equals(Buffer.from(resolvedVisualCases[0].bytes))) {
@@ -228,15 +221,17 @@ const parityViews = [
   { id: 'bottom', label: 'Bottom — View From −Y', phi: 180, theta: 0 },
 ];
 let parityCases = 0;
+// Labels have no flag of their own any more, so the label leg is spelled by
+// keeping or stripping each view's `label`.
 const annotationCombinations = [
-  { includeAxes: false, includeLabel: false, includeScale: false },
-  { includeAxes: true, includeLabel: false, includeScale: false },
-  { includeAxes: false, includeLabel: true, includeScale: false },
-  { includeAxes: true, includeLabel: true, includeScale: false },
-  { includeAxes: false, includeLabel: false, includeScale: true },
-  { includeAxes: true, includeLabel: false, includeScale: true },
-  { includeAxes: false, includeLabel: true, includeScale: true },
-  { includeAxes: true, includeLabel: true, includeScale: true },
+  { axes: false, labelled: false, scaleBar: false },
+  { axes: true, labelled: false, scaleBar: false },
+  { axes: false, labelled: true, scaleBar: false },
+  { axes: true, labelled: true, scaleBar: false },
+  { axes: false, labelled: false, scaleBar: true },
+  { axes: true, labelled: false, scaleBar: true },
+  { axes: false, labelled: true, scaleBar: true },
+  { axes: true, labelled: true, scaleBar: true },
 ];
 const parityOptions = ['png', 'webp', 'jpeg'].flatMap((format) =>
   ['perspective', 'orthographic'].flatMap((projection) =>
@@ -247,35 +242,32 @@ const parityOptions = ['png', 'webp', 'jpeg'].flatMap((format) =>
     })),
   ),
 );
-for (const { format, projection, includeAxes, includeLabel, includeScale } of parityOptions) {
+for (const { format, projection, axes, labelled, scaleBar } of parityOptions) {
   const common = {
     width: 512,
     height: 384,
     format,
     projection,
     ...(format === 'jpeg' ? { background: [1, 1, 1, 1] } : {}),
-    includeAxes,
-    includeLabel,
-    includeScale,
+    axes,
+    scaleBar,
   };
-  const images = (await native.renderImages(glb, JSON.stringify({ ...common, views: parityViews }))).images;
-  for (const [index, view] of parityViews.entries()) {
+  // `undefined` drops out of JSON.stringify, so this is an absent label.
+  const views = parityViews.map((view) => (labelled ? view : { ...view, label: undefined }));
+  const images = (await native.renderImages(glb, JSON.stringify({ ...common, views }))).images;
+  for (const [index, view] of views.entries()) {
     const one = await native.renderImage(
       glb,
       JSON.stringify({ ...common, label: view.label, phi: view.phi, theta: view.theta }),
     );
     if (!images[index].equals(one)) {
       throw new Error(
-        `${format}/${projection}/annotations=${Number(includeAxes)}${Number(includeLabel)}${Number(includeScale)} view ${view.id} differs`,
+        `${format}/${projection}/annotations=${Number(axes)}${Number(labelled)}${Number(scaleBar)} view ${view.id} differs`,
       );
     }
     parityCases += 1;
   }
-  const reordered = [
-    { ...parityViews[3], id: 'right-first' },
-    parityViews[0],
-    { ...parityViews[3], id: 'right-second' },
-  ];
+  const reordered = [{ ...views[3], id: 'right-first' }, views[0], { ...views[3], id: 'right-second' }];
   const repeated = (await native.renderImages(glb, JSON.stringify({ ...common, views: reordered }))).images;
   if (!repeated[0].equals(repeated[2])) {
     throw new Error(`${format}/${projection} repeated annotated view differs`);
@@ -290,9 +282,8 @@ const canonicalVisuals = (
       format: 'png',
       projection: 'orthographic',
       background: [0.94, 0.97, 0.96, 1],
-      includeAxes: true,
-      includeLabel: true,
-      includeScale: true,
+      axes: true,
+      scaleBar: true,
       views: parityViews.slice(1),
     }),
   )
@@ -308,9 +299,8 @@ const isometricPerspective = await native.renderImage(
     label: 'Isometric',
     phi: 60,
     theta: -45,
-    includeAxes: true,
-    includeLabel: true,
-    includeScale: true,
+    axes: true,
+    scaleBar: true,
   }),
 );
 

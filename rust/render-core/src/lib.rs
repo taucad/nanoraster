@@ -138,16 +138,15 @@ pub struct RenderOptions {
     /// Background clear color as sRGB straight-alpha `[r, g, b, a]` in 0..=1;
     /// `None` renders on transparent. JPEG output requires an opaque one.
     pub background: Option<[f32; 4]>,
-    /// Optional authored view label. It is drawn only when `include_label` is true.
+    /// Optional authored view label. Its presence is the switch: a label is
+    /// stamped top-left whenever one is set.
     pub label: Option<String>,
     /// Whether to stamp the bottom-right XYZ orientation indicator.
-    pub include_axes: bool,
-    /// Whether to stamp the top-left view label.
-    pub include_label: bool,
-    /// Whether to stamp the bottom-left scale. Perspective labels identify
+    pub axes: bool,
+    /// Whether to stamp the bottom-left scale bar. Perspective labels identify
     /// the subject-center plane with `@ center`; orthographic scale is
     /// depth-invariant.
-    pub include_scale: bool,
+    pub scale_bar: bool,
     /// Direct lights, ambient, environment and exposure. Defaults to
     /// [`ResolvedLighting::studio`].
     pub lighting: ResolvedLighting,
@@ -168,9 +167,8 @@ impl Default for RenderOptions {
             projection: Projection::Perspective,
             background: None,
             label: None,
-            include_axes: false,
-            include_label: false,
-            include_scale: false,
+            axes: false,
+            scale_bar: false,
             lighting: ResolvedLighting::studio(),
         }
     }
@@ -239,6 +237,13 @@ impl RenderBatchProfile {
     }
 }
 
+/// Whether anything is stamped over the render. A label's presence is its own
+/// switch, so this is the single definition the overlay, the minimum-dimension
+/// rule, and the plan executor all read.
+pub(crate) fn annotated(options: &RenderOptions) -> bool {
+    options.axes || options.scale_bar || options.label.is_some()
+}
+
 fn validate_options(options: &RenderOptions) -> Result<(), RenderError> {
     if !(options::MIN_DIMENSION..=options::MAX_DIMENSION).contains(&options.width)
         || !(options::MIN_DIMENSION..=options::MAX_DIMENSION).contains(&options.height)
@@ -251,7 +256,7 @@ fn validate_options(options: &RenderOptions) -> Result<(), RenderError> {
             options::MAX_DIMENSION
         )));
     }
-    if (options.include_axes || options.include_label || options.include_scale)
+    if annotated(options)
         && (options.width < options::ANNOTATED_MIN_DIMENSION
             || options.height < options::ANNOTATED_MIN_DIMENSION)
     {
@@ -737,9 +742,9 @@ mod tests {
         assert_eq!(options.projection, Projection::Perspective);
         assert_eq!(options.background, None);
         assert_eq!(options.label, None);
-        assert!(!options.include_axes);
-        assert!(!options.include_label);
-        assert!(!options.include_scale);
+        assert!(!options.axes);
+        assert!(options.label.is_none());
+        assert!(!options.scale_bar);
         assert_eq!(options.lighting, ResolvedLighting::studio());
         assert_eq!(ResolvedLighting::default(), ResolvedLighting::studio());
         assert_eq!(options.lighting.lights.len(), 3);
@@ -785,12 +790,12 @@ mod tests {
             },
             RenderOptions {
                 width: 191,
-                include_axes: true,
+                axes: true,
                 ..Default::default()
             },
             RenderOptions {
                 height: 191,
-                include_scale: true,
+                scale_bar: true,
                 ..Default::default()
             },
             RenderOptions {
@@ -879,16 +884,6 @@ mod tests {
         assert!(pollster::block_on(render_rgba(FIXTURE, &invalid_options)).is_err());
         assert!(pollster::block_on(render_rgba(b"bad", &RenderOptions::default())).is_err());
         assert!(
-            pollster::block_on(render_rgba(
-                FIXTURE,
-                &RenderOptions {
-                    include_label: true,
-                    ..Default::default()
-                }
-            ))
-            .is_err()
-        );
-        assert!(
             pollster::block_on(render_image(
                 b"bad",
                 &RenderOptions::default(),
@@ -956,15 +951,21 @@ mod tests {
             ))
             .is_err()
         );
+        // A per-view overlay that cannot be laid out fails inside `build_plan`,
+        // still before any GPU work.
         assert!(
             pollster::block_on(render_images(
                 FIXTURE,
                 &RenderOptions {
-                    include_label: true,
+                    width: 192,
+                    height: 192,
                     ..Default::default()
                 },
                 ImageFormat::Png,
-                std::slice::from_ref(&front),
+                &[RenderView {
+                    label: Some("W".repeat(64)),
+                    ..front.clone()
+                }],
             ))
             .is_err()
         );
@@ -977,9 +978,8 @@ mod tests {
             height: 192,
             background: Some([1.0, 1.0, 1.0, 1.0]),
             label: Some("Front".into()),
-            include_axes: true,
-            include_label: true,
-            include_scale: true,
+            axes: true,
+            scale_bar: true,
             ..Default::default()
         };
         let views = [RenderView {

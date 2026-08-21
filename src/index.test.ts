@@ -112,9 +112,8 @@ describe('renderImage', () => {
 describe('renderImages', () => {
   const options = {
     format: 'png',
-    includeAxes: true,
-    includeLabel: true,
-    includeScale: true,
+    axes: true,
+    scaleBar: true,
     views: [
       { id: 'front', label: 'Front', phi: 90, theta: 0 },
       { id: 'top', label: 'Top', phi: 0, theta: 0 },
@@ -205,12 +204,12 @@ describe('renderImages', () => {
     await expect(
       renderImages(glb, {
         format: 'png',
-        includeLabel: true,
-        views: [{ id: 'front', phi: 90, theta: 0 }],
+        axes: true,
+        views: [{ id: 'front', phi: 90, theta: 0, width: 191 }],
       } as never),
     ).rejects.toMatchObject({
       code: 'parse',
-      message: 'parse: views[0].label is required when includeLabel is true',
+      message: 'parse: views[0]: annotated images must be at least 192x192',
     });
     expect(plural).not.toHaveBeenCalled();
   });

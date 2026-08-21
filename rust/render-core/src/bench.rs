@@ -78,10 +78,9 @@ pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
         let options = RenderOptions {
             width,
             height,
-            label: Some("View".into()),
-            include_axes: bits & 1 != 0,
-            include_label: bits & 2 != 0,
-            include_scale: bits & 4 != 0,
+            label: (bits & 2 != 0).then(|| "View".to_owned()),
+            axes: bits & 1 != 0,
+            scale_bar: bits & 4 != 0,
             ..Default::default()
         };
         let prepared = crate::capture_overlay::prepare_view(&scene, &options)?;
@@ -122,18 +121,26 @@ pub async fn bench_multi_view(
     ];
     let mut variants = Vec::new();
     for bits in 0..8 {
-        let include_axes = bits & 1 != 0;
-        let include_label = bits & 2 != 0;
-        let include_scale = bits & 4 != 0;
+        let axes = bits & 1 != 0;
+        let labeled = bits & 2 != 0;
+        let scale_bar = bits & 4 != 0;
         let options = RenderOptions {
             width,
             height,
             background: Some([1.0, 1.0, 1.0, 1.0]),
-            include_axes,
-            include_label,
-            include_scale,
+            axes,
+            scale_bar,
             ..Default::default()
         };
+        // A label is drawn where one is set, so the label leg strips them
+        // rather than flipping a flag.
+        let views: Vec<RenderView> = views
+            .iter()
+            .map(|view| RenderView {
+                label: labeled.then(|| view.label.clone()).flatten(),
+                ..view.clone()
+            })
+            .collect();
         let singular_started = now();
         let mut singular = Vec::with_capacity(views.len());
         let mut singular_ms = Vec::with_capacity(views.len());
@@ -166,9 +173,9 @@ pub async fn bench_multi_view(
             .map(|bytes| format!("{:016x}", fnv64(bytes)))
             .collect();
         variants.push(serde_json::json!({
-            "includeAxes": include_axes,
-            "includeLabel": include_label,
-            "includeScale": include_scale,
+            "axes": axes,
+            "label": labeled,
+            "scaleBar": scale_bar,
             "singular": {
                 "wallMs": singular_wall_ms,
                 "viewMs": singular_ms,

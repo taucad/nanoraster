@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   demoControls,
   readDemoLights,
+  readDemoLabel,
   readDemoOptions,
   readDemoViews,
   substituteDemoValues,
@@ -69,6 +70,7 @@ export const RenderDemo = ({
 }): React.JSX.Element => {
   const views = useMemo(() => readDemoViews(code), [code]);
   const lights = useMemo(() => readDemoLights(code), [code]);
+  const label = useMemo(() => readDemoLabel(code), [code]);
   const batch = views.length > 0;
   const controls = demoControls(code).filter((control) => !batch || !angleKeys.has(control.key));
   const [values, setValues] = useState<Record<string, DemoValue>>(() => readDemoOptions(code));
@@ -102,7 +104,7 @@ export const RenderDemo = ({
         try {
           const [renderer, source] = await Promise.all([loadWasmRenderer(), loadDemoModel()]);
 
-          const { material, request } = buildDemoRequest(values, { lights, size: RENDER_SIZE, views });
+          const { material, request } = buildDemoRequest(values, { label, lights, size: RENDER_SIZE, views });
           const glb = Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
 
           const json = JSON.stringify(request);
@@ -136,7 +138,7 @@ export const RenderDemo = ({
         inFlightRef.current = false;
       }
     },
-    [batch, lights, views],
+    [batch, label, lights, views],
   );
 
   // Only the first paint is automatic; later renders follow a control change.

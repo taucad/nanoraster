@@ -1276,7 +1276,7 @@ impl Renderer {
         let mut rendered = self.finish_view_blocking(in_flight)?;
         #[cfg(target_arch = "wasm32")]
         let mut rendered = self.finish_view(in_flight).await?;
-        if wants_overlay(&entry.options) {
+        if crate::annotated(&entry.options) {
             crate::capture_overlay::stamp_capture_overlay(
                 &mut rendered,
                 &entry.prepared,
@@ -1462,10 +1462,6 @@ impl Renderer {
     }
 }
 
-fn wants_overlay(options: &RenderOptions) -> bool {
-    options.include_axes || options.include_label || options.include_scale
-}
-
 /// Stamp the overlay (when requested) and encode one finished view. Pure CPU:
 /// safe to run on worker threads.
 fn encode_entry(
@@ -1477,7 +1473,7 @@ fn encode_entry(
 ) -> Result<(Vec<u8>, ViewTimings), RenderError> {
     let clock = |now: Option<&(dyn Fn() -> f64 + Sync)>| now.map_or(0.0, |clock| clock());
     let overlay_started = clock(now);
-    if wants_overlay(&entry.options) {
+    if crate::annotated(&entry.options) {
         crate::capture_overlay::stamp_capture_overlay(&mut rendered, &entry.prepared, scratch);
     }
     let overlay_ms = clock(now) - overlay_started;

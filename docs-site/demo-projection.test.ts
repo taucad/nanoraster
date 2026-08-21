@@ -7,6 +7,7 @@ import {
   demoControls,
   isLightingKey,
   isMaterialKey,
+  readDemoLabel,
   readDemoLights,
   readDemoOptions,
   readDemoViews,
@@ -126,6 +127,7 @@ describe('interactive demo projections', () => {
       const seeded = readDemoOptions(code);
       const views = readDemoViews(code);
       const { material, request } = buildDemoRequest(seeded, {
+        label: readDemoLabel(code),
         lights: readDemoLights(code),
         size: { height: 720, width: 960 },
         views,

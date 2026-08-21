@@ -80,9 +80,8 @@ const image = await renderImage(glb, {
   format: 'png',
   width: 512,
   height: 512,
-  includeAxes: true,
-  includeScale: true,
-  includeLabel: false,
+  axes: true,
+  scaleBar: true,
   label: 'gear',
 });
 ```
@@ -93,9 +92,9 @@ The axis indicator is a camera-aware XYZ marker in the bottom-right, drawn with
 a front-on depth marker. It rotates with the camera, so it reports the view's
 orientation rather than a fixed key.
 
-The label is drawn top-left, screen-upright, and rendered verbatim. Enabling
-labels makes `label` mandatory on every view of a
-[batch call](render-multiple-views).
+The label is drawn top-left, screen-upright, and rendered verbatim. Its
+presence is the switch — there is no separate flag — so a view of a
+[batch call](render-multiple-views) is labelled when its entry sets one.
 
 The scale bar is drawn bottom-left in the model's own units. Under perspective
 it is only accurate at one depth, so its label names that plane with
@@ -113,7 +112,7 @@ const image = await renderImage(glb, {
   format: 'png',
   width: 192,
   height: 192,
-  includeAxes: true,
+  axes: true,
 });
 ```
 

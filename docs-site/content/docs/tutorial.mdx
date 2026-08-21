@@ -84,7 +84,7 @@ The result filename carries the view `id`, not a counter.
 ## Step 3: Add the top and iso views
 
 The top view looks down the up axis; the iso view is the default three-quarter
-angle. `includeAxes` draws a camera-aware marker in each image, which is what
+angle. `axes` draws a camera-aware marker in each image, which is what
 orients the top view once it is on its own.
 
 <RenderDemo>
@@ -95,7 +95,7 @@ const sheet = await renderImages(glb, {
   width: 512,
   height: 512,
   margin: 0.05,
-  includeAxes: true,
+  axes: true,
   views: [
     { id: 'front', phi: 90, theta: 0 },
     { id: 'right', phi: 90, theta: 90 },
@@ -113,10 +113,9 @@ const sheet = await renderImages(glb, {
 ## Step 4: Label each view
 
 Labels are drawn into the image, screen-upright, so a sheet stays readable
-once the images are separated from their filenames. Turning them on makes
-`label` required on every view; TypeScript rejects the call if one is missing.
-`includeScale` adds the bottom-left bar, so the finished sheet carries its own
-units too.
+once the images are separated from their filenames. A view carries one when
+its entry sets `label`; there is no flag to turn on. `scaleBar` adds the
+bottom-left bar, so the finished sheet carries its own units too.
 
 <RenderDemo>
 
@@ -126,9 +125,8 @@ const sheet = await renderImages(glb, {
   width: 512,
   height: 512,
   margin: 0.05,
-  includeAxes: true,
-  includeScale: true,
-  includeLabel: true,
+  axes: true,
+  scaleBar: true,
   views: [
     { id: 'front', phi: 90, theta: 0, label: 'Front' },
     { id: 'right', phi: 90, theta: 90, label: 'Right' },
