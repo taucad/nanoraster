@@ -265,6 +265,22 @@ describe('renderGlbToPixels', () => {
       code: 'adapter-unavailable',
     });
   });
+
+  it('should contain a non-Error option validation failure', async () => {
+    const options = new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw 'pixels trap';
+        },
+      },
+    );
+
+    await expect(renderGlbToPixels(glb, options)).rejects.toMatchObject({
+      code: 'parse',
+      message: 'parse: pixels trap',
+    });
+  });
 });
 
 describe('describeAdapter', () => {
@@ -327,6 +343,22 @@ describe('createRenderer', () => {
       code: 'parse',
       message: 'parse: options contains unknown property "battery"',
     });
+    await expect(createRenderer(null as never)).rejects.toMatchObject({
+      code: 'parse',
+      message: 'parse: options must be an object',
+    });
+    const trapped = new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw 'renderer trap';
+        },
+      },
+    );
+    await expect(createRenderer(trapped)).rejects.toMatchObject({
+      code: 'parse',
+      message: 'parse: renderer trap',
+    });
     expect(createRaw).not.toHaveBeenCalled();
   });
 
@@ -373,6 +405,19 @@ describe('createRenderer', () => {
     await expect(renderer.renderGlbToImage(glb, { format: 'png' })).resolves.toMatchObject({
       name: 'thumbnail.png',
     });
+  });
+
+  it('should wrap plan and pixels failures in the taxonomy', async () => {
+    const handle = makeHandle();
+    handle.renderImages.mockRejectedValue(new Error('gpu: device lost'));
+    handle.renderPixels.mockRejectedValue(new Error('parse: unexpected glb magic'));
+    createRaw.mockResolvedValue(handle);
+
+    const renderer = await createRenderer();
+    await expect(
+      renderer.renderGlbToImages(glb, { format: 'png', views: [{ id: 'front', phi: 90, theta: 0 }] }),
+    ).rejects.toMatchObject({ code: 'device-lost' });
+    await expect(renderer.renderGlbToPixels(glb, {})).rejects.toMatchObject({ code: 'parse' });
   });
 
   it('should dispose after in-flight calls settle and reject later calls', async () => {
