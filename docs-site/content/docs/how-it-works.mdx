@@ -74,7 +74,10 @@ What a renderer keeps between calls: the device and queue, the shader module,
 one pipeline set per stroke width it has seen, and the render targets for the
 last output size. What stays per call: parsing, camera fitting, and the
 geometry upload — each call brings its own GLB. The one-shot functions are the
-same pathway with the lifetime folded in: create, render, destroy.
+same pathway with the lifetime folded in: they share one renderer per process,
+created on the first call, serialized in call order, and never disposed. It
+drops render targets above 2048² after each call, so one enormous render
+cannot pin that memory for the life of the process.
 
 Reuse changes no pixels. Device and target reuse skip re-creation, not
 arithmetic, so a warm renderer's output is byte-identical to the one-shot

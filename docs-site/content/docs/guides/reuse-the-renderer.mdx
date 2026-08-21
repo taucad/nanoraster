@@ -3,24 +3,32 @@ title: Reuse the renderer
 description: Keep one GPU device alive across renders with createRenderer, dispose it deliberately, and know when a single plan call is the better tool.
 ---
 
-Every one-shot call brings up a GPU device — instance, adapter, device, shader,
-pipelines — and tears it all down again. That setup is most of the call:
-measured on an Apple M2 Pro, six one-shot renders take 4.4× as long as the
-same six views through one warm device. A persistent renderer pays the
-bring-up once.
+Bringing up a GPU device — instance, adapter, device, shader, pipelines — costs
+more than most renders do. The module-level functions pay it once: the first
+one-shot call in a process creates a renderer, and every later call reuses it.
+Measured on an Apple M2 Pro at 768×576, the first call takes 27 ms and the ones
+after it 3.4 ms. Those calls also run one at a time, in call order, so
+`Promise.all` over a batch of one-shot renders is safe rather than a race for
+the GPU.
+
+What that shared renderer does not give you is control: it is created with the
+default `'high-performance'` power preference, and it lives until the process
+or worker exits. `createRenderer` is how you choose otherwise.
 
 ### 1. Decide which tool fits the shape of the work
 
-Two different things amortize the device, and they compose:
+Three things amortize the device, and they compose:
 
-- **One `renderGlbToImages` call** shares the device across every view _within
-  the call_. If you can write the full list of images down — a contact sheet,
-  a resolution ladder, a turntable — make one call and stop here;
-  [Render multiple views](render-multiple-views) is that guide.
-- **`createRenderer`** shares the device across _calls over time_ — a
-  thumbnail service rendering whatever arrives next, a file watcher, an
-  interactive demo. When the render set is not knowable upfront, hold a
-  renderer.
+- **The module-level functions** already share one renderer per process. A
+  script, a one-off, a service that renders whatever arrives next on default
+  settings — reach for `renderGlbToImage` and stop here.
+- **One `renderGlbToImages` call** additionally parses and uploads the GLB once
+  and pipelines the views: six warm one-shot renders take about three times as
+  long as the same six views in one plan call. If you can write the full list
+  of images down — a contact sheet, a resolution ladder, a turntable — make one
+  call; [Render multiple views](render-multiple-views) is that guide.
+- **`createRenderer`** gives the device a lifetime you own: dispose it when the
+  worker is done, pick `'low-power'`, or keep one renderer per worker.
 
 The rule that falls out: if you know the full set of images, make one plan
 call on whichever layer you hold — never loop over single renders.
@@ -33,7 +41,8 @@ product — thumbnails, CI baselines, publications, agent captures.
 
 `createRenderer` resolves to a handle whose render methods mirror the
 module-level functions exactly — same options, same results, byte-identical
-pixels on the same adapter.
+pixels on the same adapter. Its device is its own: it neither joins nor waits
+on the queue the module-level functions share.
 
 ```typescript
 import { createRenderer } from 'nanoraster';
@@ -53,9 +62,11 @@ share a handle without interleaving GPU state.
 
 ### 3. Dispose deliberately
 
-The renderer holds a real GPU device until you release it. Tie its lifetime to
-the worker or process that owns it — dispose on shutdown, or on an idle timer
-if the host keeps workers warm.
+The renderer holds a real GPU device until you release it, and so does the one
+the module-level functions share — that one has no release valve, by design:
+hold a renderer of your own when the lifetime matters. Tie it to the worker or
+process that owns it — dispose on shutdown, or on an idle timer if the host
+keeps workers warm.
 
 ```typescript
 using renderer = await createRenderer();
@@ -102,8 +113,9 @@ worker that uses it and post bytes out, never the handle;
 
 **One-shot scripts.** A CLI that renders once and exits gains nothing from a
 handle; the module-level functions are the same pathway with the lifetime
-folded in.
+folded in, and the process exits without a dispose.
 
 **Servers.** The Node addon renders on a worker thread either way, so the
-event loop stays free; the renderer saves the per-call device bring-up, which
-matters at request rates, not for a nightly job.
+event loop stays free. The shared renderer already saves the per-call device
+bring-up; a renderer of your own adds the power preference, an explicit
+shutdown, and one queue per worker instead of one per process.

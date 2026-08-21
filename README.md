@@ -47,11 +47,12 @@ given request, so a render can serve as evidence. Continue with the
 
 ## Reuse the renderer
 
-Each one-shot call brings up and tears down a GPU device — about 75–80% of the
-call. For many renders over time, hold a renderer instead (measured 4.4×
-faster across six views on an Apple M2 Pro), and declare a known set of
-outputs as one call — per-view `width`, `height`, `format` and `quality`
-overrides turn a resolution ladder into a single crossing:
+The one-shot calls already share one renderer per process, so only the first
+pays the GPU bring-up. Hold a renderer of your own when the device's lifetime
+or power preference matters, and declare a known set of outputs as one call —
+per-view `width`, `height`, `format` and `quality` overrides turn a resolution
+ladder into a single crossing, measured three times faster than six separate
+renders on an Apple M2 Pro:
 
 ```typescript
 import { createRenderer } from 'nanoraster';

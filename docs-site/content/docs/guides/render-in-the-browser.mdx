@@ -111,8 +111,8 @@ posted back as its own message shape — bytes mean success, `{ error }` means
 the render failed. [Handle render failures](handle-render-failures) covers
 classifying the error, and [Reuse the renderer](reuse-the-renderer) covers the
 lifetime in depth. On the main thread the one-shot functions still work — the
-price is adapter requests, readback, and encode all competing with input
-handling.
+price is readback and encode competing with input handling, and a GPU device
+that outlives the render, since the renderer they share is never disposed.
 
 ## Variations
 

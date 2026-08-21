@@ -125,8 +125,10 @@ const { rgba, width, height } = await renderGlbToPixels(glb, { width: 512 });
 
 ## Renderer reuse
 
-Every one-shot function above creates and destroys a GPU device per call. A
-persistent renderer amortizes that bring-up across calls —
+Every one-shot function above shares one lazily created renderer per process,
+so only the first call pays the GPU bring-up and the calls run in sequence.
+That renderer uses the default power preference and lives until the process
+exits; create your own for a lifetime you control —
 [Reuse the renderer](guides/reuse-the-renderer) covers when and how.
 
 ### `createRenderer`
