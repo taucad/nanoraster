@@ -130,10 +130,17 @@ describe('universal entry point boundary', () => {
   });
 });
 
-describe('built universal entry point', () => {
-  // `nanoraster:test` depends on `build`, so `dist/` is always present: a
-  // conditional skip here would silently drop the only assertion that measures
-  // what the package actually ships.
+// The unit-test target depends only on `build:napi`, so `dist/` may be absent
+// locally and on the Node-floor lane (tsdown needs a newer Node than 22.13).
+// The `assemble` job, which has just built the package, sets
+// NANORASTER_REQUIRE_DIST=1 so these assertions run — and fail loudly if the
+// output is missing — before the tree is frozen.
+const dist =
+  process.env['NANORASTER_REQUIRE_DIST'] === '1' || existsSync(path.resolve(root, 'dist/index.mjs'))
+    ? describe
+    : describe.skip;
+
+dist('built universal entry point', () => {
   it('should ship no Node builtin and no generated loader in dist/index.mjs', () => {
     const { files, specifiers } = walkOutput('dist/index.mjs');
 

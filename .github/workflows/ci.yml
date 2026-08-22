@@ -341,6 +341,10 @@ jobs:
           path: artifacts
           merge-multiple: true
       - run: pnpm run build
+      - name: Assert the shipped entry graphs
+        env:
+          NANORASTER_REQUIRE_DIST: '1'
+        run: pnpm exec vitest run tests/import-graph.test.mjs
       - name: Generate the sixteen platform directories
         run: pnpm exec napi create-npm-dirs --npm-dir npm
       - name: Collect the native addons

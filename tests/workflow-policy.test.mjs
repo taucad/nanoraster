@@ -149,6 +149,21 @@ describe('CI workflow policy', () => {
       assert(body.includes('pattern: bindings-*'));
     });
 
+    it('should assert the shipped entry graphs against the freshly built output', () => {
+      const body = job('assemble');
+      const build = body.indexOf('pnpm run build\n');
+      const graph = body.indexOf('pnpm exec vitest run tests/import-graph.test.mjs');
+      assert(build !== -1 && graph !== -1 && build < graph, 'the import-graph test must follow the build');
+      assert(
+        body.includes("NANORASTER_REQUIRE_DIST: '1'"),
+        'the dist assertions must be mandatory in assembly',
+      );
+      assert(
+        graph < body.indexOf('pnpm exec napi create-npm-dirs'),
+        'the import-graph test must run before the platform directories exist',
+      );
+    });
+
     it('should retain the prepared release archive for thirty days only on a release run', () => {
       const body = job('assemble');
       assert(
