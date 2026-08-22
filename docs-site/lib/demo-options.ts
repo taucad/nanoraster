@@ -177,10 +177,12 @@ export const substituteDemoValues = (code: string, values: Record<string, DemoVa
     if (!(key in catalogue)) continue;
 
     const span = viewsSpan(out);
-    const pattern = new RegExp(`(["']?\\b${key}\\b["']?\\s*:\\s*)(\\[[^\\]]*\\]|[^,\\n}]+)`, 'gu');
+    // The value is a non-capturing group: the replacement rewrites it wholesale,
+    // and capturing it would push `index` past the third callback parameter.
+    const pattern = new RegExp(`(["']?\\b${key}\\b["']?\\s*:\\s*)(?:\\[[^\\]]*\\]|[^,\\n}]+)`, 'gu');
     let replaced = false;
 
-    out = out.replace(pattern, (whole: string, head: string, _raw: string, index: number) => {
+    out = out.replace(pattern, (whole: string, head: string, index: number) => {
       if (replaced || (span !== undefined && index >= span.start && index < span.end)) return whole;
       replaced = true;
       return `${head}${formatValue(value)}`;

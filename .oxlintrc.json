@@ -12,6 +12,9 @@
     "src/wasm/**"
   ],
   "plugins": ["typescript", "unicorn"],
+  "rules": {
+    "max-params": ["error", { "max": 3 }]
+  },
   "overrides": [
     {
       "files": ["tests/**/*.mjs"],
