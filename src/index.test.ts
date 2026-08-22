@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RenderImageOptions } from '#options.js';
 import type { RawRendererHandle } from '#renderer.js';
-import { createRendererRaw, describeAdapterRaw, isNodeRuntime, renderManyRaw, renderRaw } from '#renderer.js';
+import {
+  createRendererRaw,
+  describeAdapterRaw,
+  renderManyRaw,
+  renderRaw,
+  usesNativeBackend,
+} from '#renderer.js';
 import { RenderError, createRenderer, describeAdapter, renderImage, renderImages } from '#index.js';
 
 vi.mock('#renderer.js', () => ({
@@ -9,14 +15,14 @@ vi.mock('#renderer.js', () => ({
   renderManyRaw: vi.fn(),
   createRendererRaw: vi.fn(),
   describeAdapterRaw: vi.fn(),
-  isNodeRuntime: vi.fn(),
+  usesNativeBackend: vi.fn(),
 }));
 
 const singular = vi.mocked(renderRaw);
 const plural = vi.mocked(renderManyRaw);
 const createRaw = vi.mocked(createRendererRaw);
 const adapter = vi.mocked(describeAdapterRaw);
-const node = vi.mocked(isNodeRuntime);
+const native = vi.mocked(usesNativeBackend);
 const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
 const glb = new Uint8Array([1, 2, 3]);
 
@@ -25,7 +31,7 @@ beforeEach(() => {
   plural.mockReset();
   createRaw.mockReset();
   adapter.mockReset();
-  node.mockReset();
+  native.mockReset();
 });
 
 afterEach(() => {
@@ -330,7 +336,7 @@ describe('describeAdapter', () => {
   };
 
   it('should parse the native structure and wrap failures', async () => {
-    node.mockReturnValue(true);
+    native.mockReturnValue(true);
     adapter.mockResolvedValue('{"backend":"metal","name":"Apple M2 Pro","deviceType":"integrated-gpu"}');
 
     await expect(describeAdapter()).resolves.toEqual({
@@ -345,7 +351,7 @@ describe('describeAdapter', () => {
   });
 
   it('should describe the adapter the requested power preference binds', async () => {
-    node.mockReturnValue(true);
+    native.mockReturnValue(true);
     adapter.mockResolvedValue('{"backend":"vulkan","name":"","deviceType":"cpu"}');
 
     await expect(describeAdapter({ powerPreference: 'low-power' })).resolves.toEqual({
@@ -357,7 +363,7 @@ describe('describeAdapter', () => {
   });
 
   it('should reject options the renderer would reject', async () => {
-    node.mockReturnValue(true);
+    native.mockReturnValue(true);
 
     // @ts-expect-error powerPreference is a closed union
     await expect(describeAdapter({ powerPreference: 'turbo' })).rejects.toMatchObject({
@@ -372,7 +378,7 @@ describe('describeAdapter', () => {
     ['{"backend":"metal","name":"","deviceType":"software"}'],
     ['{"backend":"metal","deviceType":"cpu"}'],
   ])('should refuse an unrecognizable native description: %s', async (payload) => {
-    node.mockReturnValue(true);
+    native.mockReturnValue(true);
     adapter.mockResolvedValue(payload);
 
     await expect(describeAdapter()).rejects.toMatchObject({
@@ -388,7 +394,7 @@ describe('describeAdapter', () => {
     [{ vendor: '', architecture: '', description: '' }, ''],
     [{ vendor: 'apple', architecture: 'apple', description: 'apple' }, 'apple'],
   ])('should read the browser adapter without touching the wasm binding: %o', async (info, name) => {
-    node.mockReturnValue(false);
+    native.mockReturnValue(false);
     const requestAdapter = stubGpu({ info: { ...info, isFallbackAdapter: false } });
 
     await expect(describeAdapter()).resolves.toEqual({
@@ -401,7 +407,7 @@ describe('describeAdapter', () => {
   });
 
   it('should read a fallback browser adapter as a cpu device', async () => {
-    node.mockReturnValue(false);
+    native.mockReturnValue(false);
     const requestAdapter = stubGpu({
       info: {
         vendor: 'google',
@@ -420,14 +426,14 @@ describe('describeAdapter', () => {
   });
 
   it('should describe a browser without WebGPU as no adapter', async () => {
-    node.mockReturnValue(false);
+    native.mockReturnValue(false);
     Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {} });
 
     await expect(describeAdapter()).resolves.toBeUndefined();
   });
 
   it('should describe a browser that hands out no adapter as no adapter', async () => {
-    node.mockReturnValue(false);
+    native.mockReturnValue(false);
     const requestAdapter = stubGpu(null);
 
     await expect(describeAdapter()).resolves.toBeUndefined();
@@ -435,7 +441,7 @@ describe('describeAdapter', () => {
   });
 
   it('should describe a native host with no adapter as no adapter', async () => {
-    node.mockReturnValue(true);
+    native.mockReturnValue(true);
     adapter.mockResolvedValue(null);
 
     await expect(describeAdapter()).resolves.toBeUndefined();

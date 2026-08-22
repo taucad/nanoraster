@@ -2,6 +2,7 @@ import { beforeAll, expect, test } from 'vitest';
 import * as candidate from 'nanoraster-wasm-candidate';
 import init, { Renderer, render_image } from 'nanoraster-wasm-candidate';
 import initBench, { codec_conformance, render_image as renderImageBench } from 'nanoraster-wasm-bench';
+import { RenderError, renderImage } from 'nanoraster';
 
 import { describeAdapter } from '../../src/describe-adapter.ts';
 import { withPbrFactors } from '../pbr-fixture.mjs';
@@ -147,4 +148,33 @@ test('PBR factors produce deterministic and distinguishable renders', async () =
   expect(matteFirst).toEqual(matteSecond);
   expect(metalFirst).toEqual(metalSecond);
   expect(matteFirst).not.toEqual(metalFirst);
+});
+
+test('the packed public façade renders deterministically in a browser', async () => {
+  // The published entry point, resolved the way a bundler resolves it: the
+  // `node` condition never applies here, so this proves the universal entry
+  // point carries no Node builtin a browser cannot load.
+  const options = { width: 192, height: 192, format: 'png' };
+  const first = await renderImage(glb, options);
+  const second = await renderImage(glb, options);
+
+  expect(first.name).toBe('render.png');
+  expect(first.mimeType).toBe('image/png');
+  expect(first.width).toBe(192);
+  expect(first.height).toBe(192);
+  expect([...first.bytes.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  expect(second.bytes).toEqual(first.bytes);
+});
+
+test('the packed public façade rejects a malformed GLB with a parse error', async () => {
+  const notAGlb = new Uint8Array([1, 2, 3, 4]);
+
+  try {
+    await renderImage(notAGlb, { width: 64, height: 64, format: 'png' });
+    expect.fail('a malformed GLB must not render');
+  } catch (error) {
+    expect(error).toBeInstanceOf(RenderError);
+    expect(error.code).toBe('parse');
+    expect(error.isGpuFault).toBe(false);
+  }
 });

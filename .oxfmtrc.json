@@ -8,9 +8,11 @@
     "docs-site/out/**",
     "docs-site/public/demo/render_wasm.d.ts",
     "docs-site/public/demo/render_wasm.js",
+    "npm/**",
     "rust/target/**",
     "src/native/**",
-    "src/wasm/**"
+    "src/wasm/**",
+    "tests/out/**"
   ],
   "printWidth": 110,
   "singleQuote": true

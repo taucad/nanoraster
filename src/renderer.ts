@@ -58,32 +58,42 @@ type NapiRenderer = {
   dispose: () => void;
 };
 
-type NapiModule = {
+/**
+ * The addon surface the generated NAPI loader resolves, as this package uses
+ * it. @internal
+ */
+export type NapiModule = {
   createRenderer: (optionsJson?: string) => Promise<NapiRenderer>;
   describeAdapter: (optionsJson?: string) => Promise<string | null>;
 };
 
-const nativePackages = {
-  'darwin-arm64': 'nanoraster-darwin-arm64',
-  'linux-x64': 'nanoraster-linux-x64-gnu',
-  'win32-x64': 'nanoraster-win32-x64-msvc',
-} as const;
+/** Loads the addon the `node` export condition resolves. @internal */
+export type NativeAddonLoader = () => Promise<NapiModule>;
 
-export const nativePackageName = (platform: string, architecture: string): string | undefined =>
-  nativePackages[`${platform}-${architecture}` as keyof typeof nativePackages];
-
+let nativeAddon: NativeAddonLoader | undefined;
 let cachedBindings: Promise<RendererBindings> | undefined;
 let cachedNative: Promise<NapiModule> | undefined;
 
-/** `true` in Node, `false` wherever `navigator.gpu` exists. @internal */
-export const isNodeRuntime = (): boolean => {
-  const nav = (globalThis as { navigator?: { gpu?: unknown } }).navigator;
-  if (nav?.gpu !== undefined) {
-    return false;
-  }
-  const proc = (globalThis as { process?: { versions?: { node?: string } } }).process;
-  return typeof proc?.versions?.node === 'string';
+/**
+ * Register the addon loader the Node entry point owns. The universal entry
+ * point never calls this, which is what keeps the generated loader — and
+ * every Node builtin it imports — out of a browser bundle.
+ *
+ * @internal
+ * @param load - Loader for the addon the `node` export condition resolves
+ */
+export const installNativeBackend = (load: NativeAddonLoader): void => {
+  nativeAddon = load;
 };
+
+/**
+ * `true` when an addon backend is installed and the host exposes no
+ * `navigator.gpu`, which is the one case that renders natively. @internal
+ *
+ * @returns Whether calls route to the addon rather than to the wasm artifact
+ */
+export const usesNativeBackend = (): boolean =>
+  nativeAddon !== undefined && (globalThis as { navigator?: { gpu?: unknown } }).navigator?.gpu === undefined;
 
 const normalizeImagesResult = (result: {
   images: Array<Uint8Array<ArrayBuffer>>;
@@ -113,30 +123,15 @@ const loadWasmBindings = async (): Promise<RendererBindings> => {
   };
 };
 
-const loadNativeModule = async (): Promise<NapiModule> => {
-  const { createRequire } = await import('node:module');
-  const require = createRequire(import.meta.url);
-  const packageName = nativePackageName(process.platform, process.arch);
-  if (packageName === undefined) {
-    throw new RenderError(
-      'adapter-unavailable',
-      `native render addon is not published for ${process.platform}-${process.arch}`,
-    );
-  }
-  try {
-    return require(packageName) as NapiModule;
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new RenderError(
-      'adapter-unavailable',
-      `native render addon unavailable for ${process.platform}-${process.arch}: ${detail}. ` +
-        `Install the optional ${packageName} package or build it with \`pnpm nx run nanoraster:build:napi\`.`,
-    );
-  }
-};
-
 const nativeModule = async (): Promise<NapiModule> => {
-  cachedNative ??= loadNativeModule();
+  if (nativeAddon === undefined) {
+    throw new RenderError(
+      'adapter-unavailable',
+      'adapter-unavailable: no native addon is installed. This entry point renders through WebGPU; ' +
+        'import `nanoraster` under the `node` export condition to reach the native addon.',
+    );
+  }
+  cachedNative ??= nativeAddon();
   return cachedNative;
 };
 
@@ -160,7 +155,7 @@ const loadNapiBindings = async (): Promise<RendererBindings> => {
 };
 
 const bindings = async (): Promise<RendererBindings> => {
-  cachedBindings ??= isNodeRuntime() ? loadNapiBindings() : loadWasmBindings();
+  cachedBindings ??= usesNativeBackend() ? loadNapiBindings() : loadWasmBindings();
   return cachedBindings;
 };
 

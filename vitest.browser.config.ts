@@ -34,9 +34,17 @@ const instances = requestedBrowser
   ? [providers[requestedBrowser as keyof typeof providers]]
   : [providers.chromium, providers.firefox, providers.webkit];
 
+// CI extracts the frozen root tarball and points this at its `package/`
+// directory, so the browser tests resolve the same bytes the registry serves.
+const rootPackage = resolve(process.env['NANORASTER_ROOT_PACKAGE'] ?? '.');
+
 export default defineConfig({
   resolve: {
     alias: {
+      // The `node` export condition never applies in a browser, so the public
+      // façade resolves to the universal entry point the same way a bundler
+      // resolves it.
+      nanoraster: resolve(rootPackage, 'dist/index.mjs'),
       'nanoraster-wasm-candidate': resolve(
         process.env['NANORASTER_WASM_MODULE'] ?? 'src/wasm/render_wasm.js',
       ),
@@ -49,6 +57,7 @@ export default defineConfig({
       ),
     },
   },
+  server: { fs: { allow: [resolve('.'), rootPackage] } },
   test: {
     browser: {
       enabled: true,

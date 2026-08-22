@@ -40,6 +40,7 @@
     ".": {
       "import": {
         "types": "./dist/index.d.mts",
+        "node": "./dist/index.node.mjs",
         "default": "./dist/index.mjs"
       },
       "require": {
@@ -59,7 +60,7 @@
   },
   "scripts": {
     "benchmark": "node bench/gated.mjs",
-    "build": "pnpm run build:wasm && tsdown && node scripts/copy-assets.mjs",
+    "build": "pnpm run build:napi && pnpm run build:wasm && tsdown && node scripts/copy-assets.mjs",
     "build:napi": "pnpm exec napi build --platform --release --esm --js index.js --dts index.d.ts --manifest-path rust/render-napi/Cargo.toml --output-dir src/native -- --locked",
     "build:napi:bench": "pnpm exec napi build --platform --release --esm --js index.js --dts index.d.ts --manifest-path rust/render-napi/Cargo.toml --features bench --output-dir tests/out/native-bench -- --locked",
     "build:wasm": "node scripts/build-wasm.mjs && node scripts/clean-wasm-output.mjs",
@@ -77,7 +78,7 @@
     "pkgcheck": "pnpm run validate-pack && publint && attw --pack . --profile esm-only --entrypoints .",
     "prose": "./scripts/check-prose.sh",
     "test": "vitest run",
-    "test:browser": "pnpm run build:wasm && pnpm run build:wasm:bench && vitest run --config vitest.browser.config.ts",
+    "test:browser": "pnpm run build && pnpm run build:wasm:bench && vitest run --config vitest.browser.config.ts",
     "test:coverage": "vitest run --coverage",
     "test:native-parity": "pnpm run build:napi && vitest run --config vitest.native.config.ts",
     "test:rust": "cargo test --manifest-path rust/Cargo.toml --workspace --all-features",
@@ -114,11 +115,6 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.61.1",
     "vitest": "4.1.10"
-  },
-  "optionalDependencies": {
-    "nanoraster-darwin-arm64": "0.3.0",
-    "nanoraster-linux-x64-gnu": "0.3.0",
-    "nanoraster-win32-x64-msvc": "0.3.0"
   },
   "napi": {
     "binaryName": "nanoraster",

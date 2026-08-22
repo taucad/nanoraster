@@ -21,7 +21,7 @@ importers:
         version: 9.32.0
       '@napi-rs/cli':
         specifier: 3.8.6
-        version: 3.8.6(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(@types/node@24.13.3)
+        version: 3.8.6(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(@types/node@24.13.3)(supports-color@7.2.0)
       '@nx/js':
         specifier: 23.1.1
         version: 23.1.1(@babel/traverse@7.29.8)(nx@23.1.1)(supports-color@7.2.0)
@@ -85,16 +85,6 @@ importers:
       vitest:
         specifier: 4.1.10
         version: 4.1.10(@types/node@24.13.3)(@vitest/browser-playwright@4.1.10)(@vitest/coverage-v8@4.1.10)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
-    optionalDependencies:
-      nanoraster-darwin-arm64:
-        specifier: 0.3.0
-        version: link:npm/darwin-arm64
-      nanoraster-linux-x64-gnu:
-        specifier: 0.3.0
-        version: link:npm/linux-x64-gnu
-      nanoraster-win32-x64-msvc:
-        specifier: 0.3.0
-        version: link:npm/win32-x64-msvc
 
   docs-site:
     dependencies:
@@ -147,12 +137,6 @@ importers:
       vitest:
         specifier: 4.1.10
         version: 4.1.10(@types/node@24.13.3)(@vitest/browser-playwright@4.1.10)(@vitest/coverage-v8@4.1.10)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
-
-  npm/darwin-arm64: {}
-
-  npm/linux-x64-gnu: {}
-
-  npm/win32-x64-msvc: {}
 
 packages:
 
@@ -7487,10 +7471,10 @@ snapshots:
     dependencies:
       '@chevrotain/types': 11.1.2
 
-  '@napi-rs/cli@3.8.6(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(@types/node@24.13.3)':
+  '@napi-rs/cli@3.8.6(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(@types/node@24.13.3)(supports-color@7.2.0)':
     dependencies:
       '@inquirer/prompts': 8.6.0(@types/node@24.13.3)
-      '@napi-rs/cross-toolchain': 1.0.3
+      '@napi-rs/cross-toolchain': 1.0.3(supports-color@7.2.0)
       '@napi-rs/wasm-tools': 1.1.0
       '@octokit/rest': 22.0.1
       clipanion: 4.0.0-rc.4(typanion@3.14.0)
@@ -7518,7 +7502,7 @@ snapshots:
       - '@types/node'
       - supports-color
 
-  '@napi-rs/cross-toolchain@1.0.3':
+  '@napi-rs/cross-toolchain@1.0.3(supports-color@7.2.0)':
     dependencies:
       '@napi-rs/lzma': 1.5.1
       '@napi-rs/tar': 1.1.1

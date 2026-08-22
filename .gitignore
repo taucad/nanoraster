@@ -11,7 +11,8 @@ docs-site/next-env.d.ts
 docs-site/out/
 node_modules/
 *.tsbuildinfo
-npm/*/*.node
+*.node
+npm/
 rust/target/
 src/native/
 src/wasm/*.wasm
