@@ -297,3 +297,39 @@ describe('changelog thank you section', () => {
     assert.equal(withoutNonHumanAuthors(once), once);
   });
 });
+
+describe('release preparation quality gate', () => {
+  const nxJson = JSON.parse(readFileSync(new URL('../nx.json', import.meta.url), 'utf8'));
+  const script = readFileSync(new URL('../scripts/prepare-release.mjs', import.meta.url), 'utf8');
+
+  it('should run the gate once, outside nx release versioning', () => {
+    // nx runs a configured pre-version command on every `releaseVersion` call,
+    // and one preparation makes two of them — the dry version preview and the
+    // real bump. The second run gated a tree the first had already regenerated,
+    // which is how a release failed on a target that passes on the commit.
+    assert.equal(nxJson.release.version.preVersionCommand, undefined);
+    assert.equal(nxJson.release.version.groupPreVersionCommand, undefined);
+    assert.equal(script.match(/:quality/gu)?.length, 1);
+  });
+
+  it('should scan the tree only after the build has rewritten it', () => {
+    // `build` regenerates files these two targets read — the demo wasm glue and
+    // `docs-site/lib/sizes.json` among them — so a scanner nx starts alongside
+    // it grades a tree mid-rewrite. `build` already sits in the graph of every
+    // target set that runs them, so ordering them behind it costs no work.
+    const project = JSON.parse(readFileSync(new URL('../project.json', import.meta.url), 'utf8'));
+    for (const target of ['check:dead-code', 'format']) {
+      assert(
+        project.targets[target].dependsOn?.includes('build'),
+        `${target} scans the whole tree and must wait for build`,
+      );
+    }
+  });
+
+  it('should let the gate print its findings', () => {
+    // nx runs the pre-version command with `stdio: 'pipe'` and reports only the
+    // child's stderr, so every gate that reports on stdout — knip and oxfmt
+    // among them — failed the release with no findings printed at all.
+    assert.match(script, /execFileSync\([\s\S]*?:quality[\s\S]*?stdio: 'inherit'/u);
+  });
+});
