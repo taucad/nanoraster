@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -9,6 +9,13 @@ const read = (relative) => readFileSync(new URL(relative, import.meta.url), 'utf
 
 const workflow = read('../.github/workflows/ci.yml');
 const packageJson = JSON.parse(read('../package.json'));
+
+const compositeActions = new Map(
+  readdirSync(new URL('../.github/actions', import.meta.url)).map((name) => [
+    name,
+    read(`../.github/actions/${name}/action.yml`),
+  ]),
+);
 
 /**
  * Split the workflow into its top-level job blocks. Job identifiers are the only
@@ -386,6 +393,85 @@ describe('CI workflow policy', () => {
     });
   });
 
+  describe('artifact transfer', () => {
+    const verified = () => {
+      const body = compositeActions.get('download-verified-artifact');
+      assert(body, '.github/actions/download-verified-artifact must exist');
+      return body;
+    };
+
+    it('should download every artifact through the verified action', () => {
+      // A silent, empty `actions/download-artifact` left a Windows smoke row to
+      // die forty seconds later inside test-package.mjs. Nothing may reach the
+      // raw action again: the wrapper is the only place the landing is proved.
+      assert.equal(
+        occurrences(workflow, 'uses: actions/download-artifact@'),
+        0,
+        'ci.yml must not call actions/download-artifact directly',
+      );
+      const consumers = [...jobs].filter(([, body]) => body.includes('download-verified-artifact'));
+      assert.deepEqual(
+        consumers.map(([name]) => name).sort((left, right) => left.localeCompare(right)),
+        ['assemble', 'browser', 'publish', 'registry-verify', 'smoke'],
+        'every artifact-consuming job must use the verified download',
+      );
+      assert.equal(occurrences(workflow, 'uses: ./.github/actions/download-verified-artifact'), 6);
+    });
+
+    it('should name the file each frozen artifact must land', () => {
+      assert.equal(
+        occurrences(workflow, 'expect: test-tarballs.json'),
+        3,
+        'every test-tarballs consumer must demand the manifest',
+      );
+      assert(
+        job('publish').includes(
+          'expect: ${{ needs.assemble.outputs.archive }} ${{ needs.assemble.outputs.archive }}.sha256',
+        ),
+        'publish must demand the frozen archive and its digest sidecar',
+      );
+    });
+
+    it('should verify the download, retry once, and verify the retry', () => {
+      const body = verified();
+      const downloads = occurrences(body, 'uses: actions/download-artifact@');
+      assert.equal(downloads, 2, 'the wrapper allows exactly one bounded retry');
+      const verifications = [...body.matchAll(/verify-artifact\.sh/gu)];
+      assert.equal(verifications.length, 2, 'each download attempt must be verified');
+      const [first, retry] = [...body.matchAll(/uses: actions\/download-artifact@\S+/gu)].map(
+        (match) => match.index,
+      );
+      const [check, recheck] = verifications.map((match) => match.index);
+      assert(first < check && check < retry && retry < recheck, 'verify, retry, verify');
+      assert(
+        body.includes("if: steps.verify.outputs.complete == 'false'"),
+        'the retry and its recheck must be guarded by the first verification',
+      );
+      assert(
+        !/while|until|for attempt/u.test(body),
+        'the retry must stay a single explicit attempt, not a loop',
+      );
+    });
+
+    it('should keep the pinned download-artifact release the repository already trusts', () => {
+      assert.equal(
+        occurrences(
+          verified(),
+          'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0',
+        ),
+        2,
+      );
+    });
+
+    it('should fail an empty landing with the artifact name and a listing', () => {
+      const script = read('../.github/actions/download-verified-artifact/verify-artifact.sh');
+      assert(script.includes('ARTIFACT'), 'the failure must name the artifact');
+      assert(/ls -l/u.test(script), 'the failure must print what did land');
+      assert(script.startsWith('#!/usr/bin/env bash\n'));
+      assert(script.includes('set -euo pipefail'));
+    });
+  });
+
   describe('supply chain', () => {
     it('should check out without persisting the workflow credential', () => {
       const checkouts = occurrences(workflow, 'uses: actions/checkout@');
@@ -398,13 +484,24 @@ describe('CI workflow policy', () => {
     });
 
     it('should pin every third-party action to a full commit SHA', () => {
-      const uses = [...workflow.matchAll(/uses: (\S+)/gu)].map((match) => match[1]);
+      // The composite actions are workflow surface too: an unpinned `uses:`
+      // there is reachable from every job that composes them.
+      const sources = [workflow, ...compositeActions.values()];
+      const uses = sources.flatMap((source) =>
+        [...source.matchAll(/uses: (\S+)/gu)].map((match) => match[1]),
+      );
       assert(uses.length > 0);
       for (const reference of uses) {
         if (reference.startsWith('./')) continue;
         assert(
           /@[0-9a-f]{40}$/u.test(reference),
           `${reference} must be pinned to a forty-character commit SHA`,
+        );
+        assert(
+          new RegExp(`uses: ${reference.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')} # v\\S+`, 'u').test(
+            sources.join('\n'),
+          ),
+          `${reference} must carry a # vX.Y.Z comment naming the pinned release`,
         );
       }
     });

@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import {
   detectPlatformPackages,
   formatCauseChain,
+  readFrozenManifest,
   requireNativeSuffix,
   resolveExpectedRenderFault,
   resolveSmokeMode,
@@ -157,6 +161,38 @@ describe('installed platform packages', () => {
 
   it('should return no platform package when the release configures none', () => {
     assert.deepEqual(detectPlatformPackages(['nanoraster-first-arch'], ['nanoraster']), []);
+  });
+});
+
+describe('frozen tarball directory', () => {
+  const scratch = () => mkdtempSync(join(tmpdir(), 'nanoraster-tarball-dir-'));
+
+  it('should read the manifest a populated directory holds', () => {
+    const directory = scratch();
+    writeFileSync(join(directory, 'test-tarballs.json'), JSON.stringify(frozen));
+    assert.deepEqual(readFrozenManifest(directory), frozen);
+  });
+
+  it('should name the directory an unpacked download never created', () => {
+    const missing = join(scratch(), 'never-landed');
+    assert.throws(() => readFrozenManifest(missing), {
+      message: new RegExp(`no tarball directory: ${missing.replaceAll('\\\\', '\\\\\\\\')}`, 'u'),
+    });
+  });
+
+  it('should report an empty directory as empty rather than as a missing file', () => {
+    const directory = scratch();
+    assert.throws(() => readFrozenManifest(directory), {
+      message: new RegExp(`${directory.replaceAll('\\\\', '\\\\\\\\')} is empty`, 'u'),
+    });
+  });
+
+  it('should list what did land when the manifest is absent', () => {
+    const directory = scratch();
+    writeFileSync(join(directory, 'nanoraster-1.2.3.tgz'), '');
+    assert.throws(() => readFrozenManifest(directory), {
+      message: /test-tarballs\.json.*holds: nanoraster-1\.2\.3\.tgz/su,
+    });
   });
 });
 
