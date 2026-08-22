@@ -65,6 +65,17 @@ loading a binary it cannot run. `nanoraster-linux-s390x-gnu` is the big-endian
 package, and its render job is what proves the encoders produce identical bytes
 there.
 
+### Alpine and other musl hosts
+
+A software Vulkan render on musl needs more thread stack than musl's 128 KiB
+default. Mesa's lavapipe compiles a shader variant on a driver thread it creates
+with default attributes, and LLVM 22 code generation for AArch64 overruns
+anything below 512 KiB, taking the host process down with it. The first adapter
+request raises the process-wide default to 8 MiB, the size glibc gives the same
+thread. That default reaches every thread the process creates after it with
+default attributes; threads that carry an explicit stack size, including
+Node.js's own worker pool and every thread Rust spawns, keep theirs.
+
 ### FreeBSD and Android
 
 FreeBSD installs from npm like any other host and needs a Vulkan driver on the
