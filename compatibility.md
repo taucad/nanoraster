@@ -52,10 +52,11 @@ downloads extends the three rows; without one they retire with Node.js 22.
 
 ### glibc, musl and endianness
 
-Linux packages declare `libc`, so a package manager on Alpine takes the musl
-package and one on Debian or Ubuntu takes the glibc package. Yarn classic
-ignores `libc` and installs both; the loader still probes the host and loads the
-matching binary. The glibc packages link against symbols up to `GLIBC_2.17`.
+Linux x64, arm64, ppc64le and s390x packages declare `libc`, so a package
+manager on Alpine takes the musl package and one on Debian or Ubuntu takes the
+glibc package. NAPI-RS emits no `libc` selector for the two armv7 packages, and
+Yarn classic ignores `libc` everywhere; in both cases both packages install and
+the loader probes the host and loads the matching binary. The glibc packages link against symbols up to `GLIBC_2.17`.
 
 npm's `cpu: ppc64` selector does not distinguish endianness, and the package
 holds a little-endian `powerpc64le` binary, so a big-endian ppc64 host is

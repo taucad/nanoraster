@@ -108,7 +108,18 @@ jobs:
         with:
           node-version: '26'
       - run: pnpm nx run nanoraster:quality
-      - run: node --test tests/ci-release.test.mjs tests/benchmark.test.mjs tests/release-attestations.test.mjs tests/workflow-policy.test.mjs
+      - run: >-
+          node --test
+          tests/ci-release.test.mjs
+          tests/benchmark.test.mjs
+          tests/release-attestations.test.mjs
+          tests/workflow-policy.test.mjs
+          tests/compatibility.test.mjs
+          tests/test-package.test.mjs
+          tests/inspect-native.test.mjs
+          tests/check-prepared-release.test.mjs
+          tests/pack-test-tarballs.test.mjs
+          tests/registry-wait.test.mjs
       - name: Require a Version Plan for release-affecting changes
         if: needs.preflight.outputs.kind != 'release-pull-request' && needs.preflight.outputs.kind != 'release'
         shell: bash
@@ -340,6 +351,10 @@ jobs:
             cp license "$directory"
           done
       - name: Inspect every native binary
+        env:
+          # The Darwin build rows pin the same target; the inspector raises its
+          # expected x64 floor to it (arm64 is floored at 11.0 by the toolchain).
+          MACOSX_DEPLOYMENT_TARGET: '10.13'
         run: node scripts/inspect-native.mjs
       - name: Reconcile the platform manifests without publishing
         run: pnpm exec napi pre-publish --skip-optional-publish -t npm --no-gh-release

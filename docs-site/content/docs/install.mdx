@@ -28,8 +28,8 @@ The package selects its render artifact at runtime; nothing needs configuring.
 | Browser | WebAssembly module plus WebGPU | The `nanoraster/wasm` subpath   |
 
 Sixteen platform packages are declared as optional dependencies. Each one
-declares the `os`, `cpu` and `libc` it serves, and your package manager
-installs the single package matching your machine.
+declares the `os`, `cpu` and (except on armv7) `libc` it serves, and your
+package manager installs the single package matching your machine.
 
 | Package                           | Platform                       |
 | --------------------------------- | ------------------------------ |
