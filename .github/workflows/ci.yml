@@ -20,6 +20,7 @@ jobs:
       kind: ${{ steps.release.outputs.kind }}
       npm-publish: ${{ steps.release.outputs.npm_publish }}
       version: ${{ steps.release.outputs.version }}
+      smoke-matrix: ${{ steps.smoke.outputs.matrix }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -44,6 +45,56 @@ jobs:
             --package-version "$(node -p "require('./package.json').version")" \
             --subject "$(git log -1 --pretty=%s "$SOURCE_SHA")" \
             --changed-files-file /tmp/changed-files
+      # The runtime evidence matrix is data, not a static matrix: pull requests
+      # run the fast rows only, while main, release, and manual runs add the
+      # emulated and virtualized lanes that gate a release.
+      - id: smoke
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          KIND: ${{ steps.release.outputs.kind }}
+        run: |
+          node <<'NODE' >> "$GITHUB_OUTPUT"
+          const kind = process.env.KIND;
+          const event = process.env.EVENT_NAME;
+          const slow = kind === 'main' || kind === 'release' || event === 'workflow_dispatch';
+          const alpine = 'apk add --no-cache mesa-vulkan-swrast';
+          const debian = 'apt-get update && apt-get install -y --no-install-recommends mesa-vulkan-drivers';
+          // Official Node tarballs: the node images publish no ppc64le or s390x
+          // tag on the current line, so those lanes install Node into Ubuntu.
+          const ubuntu = (version, arch) =>
+            `apt-get update && apt-get install -y --no-install-recommends ca-certificates curl xz-utils mesa-vulkan-drivers && curl -fsSL https://nodejs.org/dist/v${version}/node-v${version}-linux-${arch}.tar.xz | tar -xJ -C /usr/local --strip-components=1`;
+          const rows = [
+            { suffix: 'darwin-arm64', lane: '22.13.0', os: 'macos-latest', recipe: 'host', timeout: 30 },
+            { suffix: 'darwin-arm64', lane: '26', os: 'macos-latest', recipe: 'host', timeout: 30 },
+            { suffix: 'win32-x64-msvc', lane: '22.13.0', os: 'windows-2022', recipe: 'host', timeout: 30 },
+            { suffix: 'win32-x64-msvc', lane: '26', os: 'windows-2022', recipe: 'host', timeout: 30 },
+            { suffix: 'win32-ia32-msvc', lane: '22.13.0', os: 'windows-2022', recipe: 'host', arch: 'x86', timeout: 30 },
+            { suffix: 'win32-ia32-msvc', lane: '22', os: 'windows-2022', recipe: 'host', arch: 'x86', timeout: 30 },
+            { suffix: 'win32-arm64-msvc', lane: '22.13.0', os: 'windows-11-arm', recipe: 'host', timeout: 30 },
+            { suffix: 'win32-arm64-msvc', lane: '26', os: 'windows-11-arm', recipe: 'host', timeout: 30 },
+            { suffix: 'linux-x64-gnu', lane: '22.13.0', os: 'ubuntu-24.04', recipe: 'host', timeout: 30 },
+            { suffix: 'linux-x64-gnu', lane: '26', os: 'ubuntu-24.04', recipe: 'host', timeout: 30 },
+            { suffix: 'linux-arm64-gnu', lane: '22.13.0', os: 'ubuntu-24.04-arm', recipe: 'host', timeout: 30 },
+            { suffix: 'linux-arm64-gnu', lane: '26', os: 'ubuntu-24.04-arm', recipe: 'host', timeout: 30 },
+            { suffix: 'linux-x64-musl', lane: '22.13.0', os: 'ubuntu-24.04', recipe: 'container', platform: 'linux/amd64', image: 'node:22.13.0-alpine', setup: alpine, timeout: 30 },
+            { suffix: 'linux-x64-musl', lane: '26', os: 'ubuntu-24.04', recipe: 'container', platform: 'linux/amd64', image: 'node:26-alpine', setup: alpine, timeout: 30 },
+            { suffix: 'linux-arm64-musl', lane: '22.13.0', os: 'ubuntu-24.04-arm', recipe: 'container', platform: 'linux/arm64', image: 'node:22.13.0-alpine', setup: alpine, timeout: 30 },
+            { suffix: 'linux-arm64-musl', lane: '26', os: 'ubuntu-24.04-arm', recipe: 'container', platform: 'linux/arm64', image: 'node:26-alpine', setup: alpine, timeout: 30 },
+            { suffix: 'darwin-x64', lane: '22.13.0', os: 'macos-15-intel', recipe: 'host', slow: true, timeout: 30 },
+            { suffix: 'darwin-x64', lane: '26', os: 'macos-15-intel', recipe: 'host', slow: true, timeout: 30 },
+            { suffix: 'linux-arm-gnueabihf', lane: '22.13.0', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/arm/v7', image: 'node:22.13.0-bookworm-slim', setup: debian, slow: true, timeout: 45 },
+            { suffix: 'linux-arm-gnueabihf', lane: '22', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/arm/v7', image: 'node:22-bookworm-slim', setup: debian, slow: true, timeout: 45 },
+            { suffix: 'linux-arm-musleabihf', lane: '22.13.0', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/arm/v7', image: 'node:22.13.0-alpine', setup: alpine, slow: true, timeout: 45 },
+            { suffix: 'linux-arm-musleabihf', lane: '22', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/arm/v7', image: 'node:22-alpine', setup: alpine, slow: true, timeout: 45 },
+            { suffix: 'linux-ppc64-gnu', lane: '22.13.0', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/ppc64le', image: 'ubuntu:24.04', setup: ubuntu('22.13.0', 'ppc64le'), slow: true, timeout: 45 },
+            { suffix: 'linux-ppc64-gnu', lane: '26', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/ppc64le', image: 'ubuntu:24.04', setup: ubuntu('26.7.0', 'ppc64le'), slow: true, timeout: 45 },
+            { suffix: 'linux-s390x-gnu', lane: '22.13.0', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/s390x', image: 'ubuntu:24.04', setup: ubuntu('22.13.0', 's390x'), slow: true, timeout: 45 },
+            { suffix: 'linux-s390x-gnu', lane: '26', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/s390x', image: 'ubuntu:24.04', setup: ubuntu('26.7.0', 's390x'), slow: true, timeout: 45 },
+            { suffix: 'freebsd-x64', lane: '22', os: 'ubuntu-24.04', recipe: 'freebsd', slow: true, timeout: 45 },
+          ];
+          const selected = rows.filter((row) => slow || !row.slow);
+          console.log(`matrix=${JSON.stringify(selected)}`);
+          NODE
 
   quality:
     needs: preflight
@@ -57,7 +108,7 @@ jobs:
         with:
           node-version: '26'
       - run: pnpm nx run nanoraster:quality
-      - run: node --test tests/ci-release.test.mjs tests/benchmark.test.mjs tests/release-attestations.test.mjs
+      - run: node --test tests/ci-release.test.mjs tests/benchmark.test.mjs tests/release-attestations.test.mjs tests/workflow-policy.test.mjs
       - name: Require a Version Plan for release-affecting changes
         if: needs.preflight.outputs.kind != 'release-pull-request' && needs.preflight.outputs.kind != 'release'
         shell: bash
@@ -101,7 +152,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['24.0.0', '26']
+        node: ['22.13.0', '26']
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -110,58 +161,162 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           node-version: ${{ matrix.node }}
+      - name: Install lavapipe software Vulkan
+        run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
       - run: pnpm nx run nanoraster:test
       - run: pnpm nx run nanoraster:typecheck
 
-  native:
+  build:
+    name: build (${{ matrix.target }})
     needs: preflight
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
-            target: linux-x64-gnu
-          - os: macos-14
-            target: darwin-arm64
-          - os: windows-2022
-            target: win32-x64-msvc
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            representative: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-2022
+            representative: true
+          - target: aarch64-pc-windows-msvc
+            os: windows-2022
+          - target: i686-pc-windows-msvc
+            os: windows-2022
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+            cross: '--use-napi-cross'
+            representative: true
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04
+            cross: '--use-napi-cross'
+          - target: armv7-unknown-linux-gnueabihf
+            os: ubuntu-24.04
+            cross: '--use-napi-cross'
+          - target: powerpc64le-unknown-linux-gnu
+            os: ubuntu-24.04
+            cross: '--use-napi-cross'
+          - target: s390x-unknown-linux-gnu
+            os: ubuntu-24.04
+            cross: '--use-napi-cross'
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+            cross: '-x'
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04
+            cross: '-x'
+          - target: armv7-unknown-linux-musleabihf
+            os: ubuntu-24.04
+            cross: '-x'
+          - target: aarch64-linux-android
+            os: ubuntu-24.04
+          - target: armv7-linux-androideabi
+            os: ubuntu-24.04
+          - target: x86_64-unknown-freebsd
+            os: ubuntu-24.04
     runs-on: ${{ matrix.os }}
+    env:
+      # The NAPI-RS template's floor; rustc raises arm64 macOS to its own 11.0.
+      MACOSX_DEPLOYMENT_TARGET: '10.13'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+        if: matrix.target != 'x86_64-unknown-freebsd'
         with:
           node-version: '26'
-      - name: Install lavapipe software Vulkan
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
-      - name: Clippy
-        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
-      - name: Clippy with the bench feature
-        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features -- -D warnings
-      - name: First-party Rust coverage
-        run: pnpm run test:rust-coverage
-      - name: Native singular/batch parity
-        run: pnpm run test:native-parity
-      - name: Pack platform candidate
+      - name: Add the Rust target
+        if: matrix.target != 'x86_64-unknown-freebsd'
+        run: rustup target add ${{ matrix.target }}
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        if: matrix.cross == '-x'
+        with:
+          version: 0.15.2
+      - uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2
+        if: matrix.cross == '-x'
+        with:
+          tool: cargo-zigbuild
+      - name: Relax link-time optimization for the i686 MSVC link
+        if: matrix.target == 'i686-pc-windows-msvc'
         shell: bash
         run: |
-          mkdir -p candidate-native
-          npm pack "./npm/${{ matrix.target }}" --ignore-scripts --pack-destination candidate-native
+          {
+            echo 'CARGO_PROFILE_RELEASE_LTO=false'
+            echo 'CARGO_PROFILE_RELEASE_CODEGEN_UNITS=32'
+          } >> "$GITHUB_ENV"
+      - name: Build the addon
+        if: matrix.target != 'x86_64-unknown-freebsd'
+        shell: bash
+        run: |
+          pnpm exec napi build --platform --release --esm --js index.js --dts index.d.ts \
+            --output-dir src/native --manifest-path rust/render-napi/Cargo.toml \
+            --target ${{ matrix.target }} ${{ matrix.cross }} -- --locked
+      - uses: cross-platform-actions/action@24ef01df165c76df1ed2b9f9e9212e78dc2fc963 # v1.4.0
+        if: matrix.target == 'x86_64-unknown-freebsd'
+        with:
+          operating_system: freebsd
+          version: '15.0'
+          memory: 8G
+          cpu_count: 3
+          shell: bash
+      - name: Build the addon inside the FreeBSD virtual machine
+        if: matrix.target == 'x86_64-unknown-freebsd'
+        shell: cpa.sh {0} --sync-files runner-to-vm
+        run: |
+          set -euo pipefail
+          # The FreeBSD package repository targets the newest minor of a major
+          # release line, so a 15.0 guest must accept the recorded version skew.
+          export IGNORE_OSVERSION=yes
+          export RUSTUP_IO_THREADS=1
+          sudo -E pkg install --yes node22 npm-node22 curl
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain none
+          . "$HOME/.cargo/env"
+          sudo npm install --global pnpm@11.7.0
+          # The virtual machine only runs the NAPI-RS build, and Playwright's
+          # install script has no FreeBSD download.
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm exec napi build --platform --release --esm --js index.js --dts index.d.ts \
+            --output-dir src/native --manifest-path rust/render-napi/Cargo.toml \
+            --target x86_64-unknown-freebsd -- --locked
+      - name: Collect the FreeBSD addon
+        if: matrix.target == 'x86_64-unknown-freebsd'
+        shell: cpa.sh {0} --sync-files vm-to-runner
+        run: rm -rf node_modules rust/target docs-site/node_modules
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: native-${{ matrix.target }}
-          path: candidate-native/*.tgz
+          name: bindings-${{ matrix.target }}
+          path: src/native/nanoraster.*.node
           if-no-files-found: error
+          retention-days: 1
+      - name: Install lavapipe software Vulkan
+        if: matrix.representative && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
+      - name: Clippy
+        if: matrix.representative
+        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
+      - name: Clippy with the bench feature
+        if: matrix.representative
+        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features -- -D warnings
+      - name: First-party Rust coverage
+        if: matrix.representative
+        run: pnpm run test:rust-coverage
+      - name: Native singular/batch parity
+        if: matrix.representative
+        run: pnpm run test:native-parity
 
-  candidate:
-    needs: [preflight, quality, docs-prose, node, native]
+  assemble:
+    needs: [preflight, quality, docs-prose, node, build]
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     outputs:
-      filename: ${{ steps.manifest.outputs.filename }}
-      integrity: ${{ steps.manifest.outputs.integrity }}
-      version: ${{ steps.manifest.outputs.version }}
+      archive: ${{ steps.freeze.outputs.archive }}
+      sha256: ${{ steps.freeze.outputs.sha256 }}
+      version: ${{ steps.freeze.outputs.version }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -171,61 +326,150 @@ jobs:
           node-version: '26'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: native-*
-          path: candidate
+          pattern: bindings-*
+          path: artifacts
           merge-multiple: true
-      - name: Install lavapipe software Vulkan
-        run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
       - run: pnpm run build
+      - name: Generate the sixteen platform directories
+        run: pnpm exec napi create-npm-dirs --npm-dir npm
+      - name: Collect the native addons
+        run: pnpm exec napi artifacts --output-dir artifacts --npm-dir npm
+      - name: Copy the physical license into every platform package
+        run: |
+          for directory in npm/*/; do
+            cp license "$directory"
+          done
+      - name: Inspect every native binary
+        run: node scripts/inspect-native.mjs
+      - name: Reconcile the platform manifests without publishing
+        run: pnpm exec napi pre-publish --skip-optional-publish -t npm --no-gh-release
+      - name: Assert the prepared release is complete
+        run: node scripts/check-prepared-release.mjs
+      - name: Pack the frozen test tarballs
+        run: node scripts/pack-test-tarballs.mjs --out tarballs
+      - run: node scripts/validate-pack.mjs
+      - run: pnpm run pkgcheck
+      - run: pnpm run check:size
       - name: Build the bench-enabled wasm sibling for the conformance gate
         run: pnpm run build:wasm:bench
+      - id: freeze
+        name: Freeze the prepared release tree
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          rm -rf prepared
+          mkdir -p prepared/scripts
+          node <<'NODE'
+          const { cpSync, existsSync } = require('node:fs');
+          const entries = [...require('./package.json').files, 'package.json', 'npm', 'test-tarballs.json'];
+          for (const entry of entries) {
+            if (!existsSync(entry)) throw new Error(`prepared release is missing ${entry}`);
+            cpSync(entry, `prepared/${entry}`, { recursive: true });
+          }
+          NODE
+          cp scripts/validate-pack.mjs scripts/package-files.mjs prepared/scripts/
+          archive="prepared-release-$version.tgz"
+          tar -czf "$archive" -C prepared .
+          sha256sum "$archive" > "$archive.sha256"
+          size="$(wc -c < "$archive")"
+          if [[ "$size" -gt 167772160 ]]; then
+            echo "::error::prepared release archive is $size bytes, above the 160 MB ceiling"
+            exit 1
+          fi
+          {
+            echo "archive=$archive"
+            echo "sha256=$(cut -d' ' -f1 < "$archive.sha256")"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-release
+          path: |
+            prepared-release-*.tgz
+            prepared-release-*.tgz.sha256
+          if-no-files-found: error
+          retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 1 }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-tarballs
+          path: tarballs/
+          if-no-files-found: error
+          retention-days: 1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wasm-bench
           path: tests/out/wasm-bench/
           if-no-files-found: error
-      - run: pnpm run pkgcheck
-      - run: pnpm run check:size
-      - run: npm pack --ignore-scripts --pack-destination candidate
-      - id: manifest
-        run: node scripts/candidate-manifest.mjs candidate
-      - name: Clean-room candidate consumer
-        run: pnpm run test:package
-        env:
-          NANORASTER_CANDIDATE_DIR: candidate
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: npm-candidate
-          path: candidate/
-          if-no-files-found: error
+          retention-days: 1
 
-  consumer:
-    needs: candidate
+  smoke:
+    name: smoke (${{ matrix.suffix }}, ${{ matrix.lane }})
+    needs: [preflight, assemble]
     strategy:
       fail-fast: false
       matrix:
-        node: ['24.0.0', '26']
-    runs-on: ubuntu-24.04
+        include: ${{ fromJSON(needs.preflight.outputs.smoke-matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup
-        with:
-          node-version: ${{ matrix.node }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: npm-candidate
-          path: candidate
+          name: test-tarballs
+          path: tarballs
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: matrix.recipe == 'host'
+        with:
+          node-version: ${{ matrix.lane }}
+          architecture: ${{ matrix.arch }}
       - name: Install lavapipe software Vulkan
+        if: matrix.recipe == 'host' && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
-      - run: pnpm run test:package
+      - name: Render from the frozen tarballs
+        if: matrix.recipe == 'host'
         env:
-          NANORASTER_CANDIDATE_DIR: candidate
+          NANORASTER_NATIVE_SUFFIX: ${{ matrix.suffix }}
+          NANORASTER_TARBALL_DIR: tarballs
+        run: node scripts/test-package.mjs
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        if: matrix.qemu
+      - name: Render from the frozen tarballs in a container
+        if: matrix.recipe == 'container'
+        env:
+          IMAGE: ${{ matrix.image }}
+          PLATFORM: ${{ matrix.platform }}
+          SETUP: ${{ matrix.setup }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          docker run --rm --platform "$PLATFORM" \
+            --volume "$PWD:/nanoraster" --workdir /nanoraster \
+            --env NANORASTER_TARBALL_DIR=tarballs \
+            --env NANORASTER_NATIVE_SUFFIX="$SUFFIX" \
+            "$IMAGE" sh -c "$SETUP && node scripts/test-package.mjs"
+      - uses: cross-platform-actions/action@24ef01df165c76df1ed2b9f9e9212e78dc2fc963 # v1.4.0
+        if: matrix.recipe == 'freebsd'
+        with:
+          operating_system: freebsd
+          version: '15.0'
+          memory: 8G
+          cpu_count: 3
+          shell: bash
+      - name: Render from the frozen tarballs inside the FreeBSD virtual machine
+        if: matrix.recipe == 'freebsd'
+        shell: cpa.sh {0} --sync-files runner-to-vm
+        run: |
+          set -euo pipefail
+          export IGNORE_OSVERSION=yes
+          sudo -E pkg install --yes node22 npm-node22 vulkan-loader mesa-dri
+          export NANORASTER_NATIVE_SUFFIX=freebsd-x64
+          export NANORASTER_TARBALL_DIR=tarballs
+          export VK_DRIVER_FILES=/usr/local/share/vulkan/icd.d/lvp_icd.x86_64.json
+          node scripts/test-package.mjs
 
   browser:
     name: browser (${{ matrix.browser }})
-    needs: candidate
+    needs: assemble
     strategy:
       fail-fast: false
       matrix:
@@ -246,26 +490,28 @@ jobs:
           node-version: '26'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: npm-candidate
-          path: candidate
+          name: test-tarballs
+          path: tarballs
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: wasm-bench
           path: tests/out/wasm-bench
       - run: pnpm exec playwright install --with-deps ${{ matrix.browser }}
-      - name: Extract the exact root candidate
+      - name: Extract the frozen root tarball
         run: |
-          mkdir -p candidate/extracted
-          tar -xzf "candidate/${{ needs.candidate.outputs.filename }}" -C candidate/extracted
-      - name: Render through the candidate wasm in Vitest browser mode
+          mkdir -p tarballs/extracted
+          tar -xzf "tarballs/$(node -p "require('./tarballs/test-tarballs.json').packages.nanoraster.filename")" \
+            -C tarballs/extracted
+      - name: Render through the frozen wasm in Vitest browser mode
         run: pnpm exec vitest run --config vitest.browser.config.ts
         env:
           BROWSER: ${{ matrix.browser }}
-          NANORASTER_WASM_MODULE: candidate/extracted/package/dist/wasm/render_wasm.js
+          NANORASTER_ROOT_PACKAGE: tarballs/extracted/package
+          NANORASTER_WASM_MODULE: tarballs/extracted/package/dist/wasm/render_wasm.js
 
   benchmark:
     if: github.event_name == 'pull_request'
-    needs: candidate
+    needs: preflight
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -346,39 +592,130 @@ jobs:
 
   publish:
     if: needs.preflight.outputs.npm-publish == 'true'
-    needs: [preflight, candidate, consumer, browser, security]
+    needs: [preflight, assemble, smoke, browser, security]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write
+    env:
+      NPM_CONFIG_PROVENANCE: 'true'
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          name: npm-candidate
-          path: candidate
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '26'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '26'
           registry-url: https://registry.npmjs.org
-      - name: Publish exact candidates with provenance
-        shell: bash
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: prepared-release
+          path: prepared-release
+      - name: Extract the frozen release tree
+        env:
+          ARCHIVE: ${{ needs.assemble.outputs.archive }}
         run: |
-          node -e "for (const p of require('./candidate/manifest.json').packages) console.log([p.name,p.version,p.filename,p.integrity].join('\t'))" > /tmp/packages
-          while IFS=$'\t' read -r name version filename integrity; do
-            published="$(npm view "$name@$version" dist.integrity 2>/dev/null || true)"
-            if [[ -n "$published" ]]; then
-              if [[ "$published" != "$integrity" ]]; then
-                echo "ERROR: registry integrity differs for $name@$version" >&2
-                exit 1
-              fi
-              continue
-            fi
-            npm publish "./candidate/$filename" --access public --provenance
-          done < /tmp/packages
+          cd prepared-release
+          sha256sum --check "$ARCHIVE.sha256"
+          cd ..
+          mkdir -p release
+          tar -xzf "prepared-release/$ARCHIVE" -C release
+      - name: Validate the frozen release tree
+        working-directory: release
+        run: node scripts/validate-pack.mjs
+      - name: Publish the sixteen platform packages
+        run: pnpm exec napi pre-publish --cwd release -t npm --no-gh-release
+      - name: Publish the root package
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          if [[ "$(npm view "nanoraster@$VERSION" version 2>/dev/null || true)" == "$VERSION" ]]; then
+            echo "nanoraster@$VERSION is already published"
+            exit 0
+          fi
+          if ! output="$(npm publish ./release 2>&1)"; then
+            echo "$output"
+            grep --quiet 'cannot publish over the previously published versions' <<<"$output" || exit 1
+            echo "nanoraster@$VERSION was already published"
+            exit 0
+          fi
+          echo "$output"
 
   registry-verify:
     if: always() && needs.preflight.outputs.npm-publish == 'true' && needs.publish.result == 'success'
-    needs: [preflight, candidate, publish]
+    needs: [preflight, assemble, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: test-tarballs
+          path: tarballs
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '26'
+          registry-url: https://registry.npmjs.org
+      - name: Wait for the registry to serve every published package
+        run: node scripts/registry-wait.mjs --tarballs tarballs/test-tarballs.json --interval-seconds 30 --timeout-minutes 30
+      - name: Install every package and verify its attestation
+        run: |
+          workspace="$PWD"
+          node <<'NODE' > /tmp/specifiers
+          const { packages, version } = require('./tarballs/test-tarballs.json');
+          console.log(Object.keys(packages).sort().map((name) => `${name}@${version}`).join(' '));
+          NODE
+          directory="$(mktemp -d)"
+          cd "$directory"
+          npm init --yes >/dev/null
+          xargs npm install --force --ignore-scripts < /tmp/specifiers
+          npm audit signatures --json --include-attestations > /tmp/npm-audit-signatures.json
+          cd "$workspace"
+          node scripts/verify-release-attestations.mjs \
+            /tmp/npm-audit-signatures.json \
+            tarballs/test-tarballs.json \
+            '${{ github.sha }}' \
+            '${{ github.run_id }}'
+
+  registry-smoke:
+    name: registry-smoke (${{ matrix.os }})
+    needs: [preflight, registry-verify]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            suffix: linux-x64-gnu
+          - os: macos-latest
+            suffix: darwin-arm64
+          - os: windows-2022
+            suffix: win32-x64-msvc
+    runs-on: ${{ matrix.os }}
+    env:
+      NANORASTER_NATIVE_SUFFIX: ${{ matrix.suffix }}
+      NANORASTER_REGISTRY_VERSION: ${{ needs.preflight.outputs.version }}
+      NAPI_RS_ENFORCE_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '26'
+      - name: Install lavapipe software Vulkan
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
+      - name: Install the published package the way a consumer does
+        run: node scripts/test-package.mjs
+
+  registry-release:
+    if: always() && needs.registry-smoke.result == 'success'
+    needs: [preflight, registry-smoke]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -386,47 +723,14 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: npm-candidate
-          path: candidate
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: '26'
-          registry-url: https://registry.npmjs.org
-      - name: Verify registry bytes and provenance
-        shell: bash
-        run: |
-          node -e "for (const p of require('./candidate/manifest.json').packages) console.log([p.name,p.version,p.integrity].join('\t'))" > /tmp/packages
-          while IFS=$'\t' read -r name version integrity; do
-            published="$(npm view "$name@$version" dist.integrity)"
-            if [[ "$published" != "$integrity" ]]; then
-              echo "ERROR: registry integrity differs for $name@$version" >&2
-              exit 1
-            fi
-          done < /tmp/packages
-          workspace="$PWD"
-          directory="$(mktemp -d)"
-          cd "$directory"
-          npm init --yes >/dev/null
-          npm install --force --ignore-scripts \
-            "nanoraster@${{ needs.preflight.outputs.version }}" \
-            "nanoraster-darwin-arm64@${{ needs.preflight.outputs.version }}" \
-            "nanoraster-linux-x64-gnu@${{ needs.preflight.outputs.version }}" \
-            "nanoraster-win32-x64-msvc@${{ needs.preflight.outputs.version }}"
-          npm audit signatures --json --include-attestations > /tmp/npm-audit-signatures.json
-          cd "$workspace"
-          node scripts/verify-release-attestations.mjs \
-            /tmp/npm-audit-signatures.json \
-            candidate/manifest.json \
-            '${{ github.sha }}' \
-            '${{ github.run_id }}'
       - name: Record the verified release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          tag='v${{ needs.preflight.outputs.version }}'
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target '${{ github.sha }}' --generate-notes
+          tag="v$VERSION"
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --target '${{ github.sha }}' --generate-notes
 
   ci-gate:
     if: always()
@@ -436,14 +740,16 @@ jobs:
         quality,
         docs-prose,
         node,
-        native,
-        candidate,
-        consumer,
+        build,
+        assemble,
+        smoke,
         browser,
         benchmark,
         security,
         publish,
         registry-verify,
+        registry-smoke,
+        registry-release,
       ]
     runs-on: ubuntu-24.04
     steps:
@@ -454,9 +760,9 @@ jobs:
         run: |
           node <<'NODE'
           const needs = JSON.parse(process.env.RESULTS);
-          const required = ['preflight', 'quality', 'docs-prose', 'node', 'native', 'candidate', 'consumer', 'browser', 'security'];
+          const required = ['preflight', 'quality', 'docs-prose', 'node', 'build', 'assemble', 'smoke', 'browser', 'security'];
           if (needs.preflight?.result === 'success' && process.env.PUBLISH === 'true') {
-            required.push('publish', 'registry-verify');
+            required.push('publish', 'registry-verify', 'registry-smoke', 'registry-release');
           }
           const failures = required.filter((name) => needs[name]?.result !== 'success');
           if (!['success', 'skipped'].includes(needs.benchmark?.result)) failures.push('benchmark');
