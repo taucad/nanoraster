@@ -1,6 +1,6 @@
 {
   "name": "nanoraster",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Tiny headless WebGPU glTF renderer for deterministic PNG, WebP, JPEG, and raw RGBA output.",
   "keywords": [
     "gltf",
@@ -115,9 +115,9 @@
     "vitest": "4.1.10"
   },
   "optionalDependencies": {
-    "nanoraster-darwin-arm64": "0.3.0",
-    "nanoraster-linux-x64-gnu": "0.3.0",
-    "nanoraster-win32-x64-msvc": "0.3.0"
+    "nanoraster-darwin-arm64": "0.4.0",
+    "nanoraster-linux-x64-gnu": "0.4.0",
+    "nanoraster-win32-x64-msvc": "0.4.0"
   },
   "napi": {
     "binaryName": "nanoraster",
