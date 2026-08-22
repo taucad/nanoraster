@@ -219,8 +219,11 @@ export const RenderDemo = ({
   const badge = (index: number, note?: string): React.JSX.Element | undefined =>
     evidence === undefined ? undefined : (
       <p className={styles.badge} data-badge>
-        {evidence.mime} · {((evidence.sizes[index] ?? 0) / 1024).toFixed(1)} KB · {evidence.ms} ms
-        {note === undefined ? '' : ` · ${note}`}
+        <span className={styles.evidence}>
+          {evidence.mime} · {((evidence.sizes[index] ?? 0) / 1024).toFixed(1)} KB · {evidence.ms} ms
+          {note === undefined ? '' : ` · ${note}`}
+        </span>
+        {state === 'rendering' && index === 0 ? <span className={styles.status}>rendering…</span> : undefined}
       </p>
     );
 
@@ -357,8 +360,6 @@ export const RenderDemo = ({
               )}
             </label>
           ))}
-
-          {state === 'rendering' ? <p className={styles.status}>rendering…</p> : undefined}
         </div>
 
         {codeBelowControls ? (
