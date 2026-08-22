@@ -164,6 +164,24 @@ describe('CI workflow policy', () => {
       );
     });
 
+    it('should run no pnpm script once napi pre-publish has rewritten the source manifest', () => {
+      // pre-publish materializes optionalDependencies in the checkout's
+      // package.json; pnpm's pre-run dependency check then rejects the stale
+      // lockfile, so everything after it must be plain node or shell.
+      const body = job('assemble');
+      const reconciled = body.indexOf('pnpm exec napi pre-publish');
+      assert(reconciled !== -1, 'assemble must reconcile through napi pre-publish');
+      const after = body.slice(reconciled + 'pnpm exec napi pre-publish'.length);
+      assert(
+        !/pnpm (run|exec) /u.test(after),
+        'no pnpm run/exec may follow the manifest reconcile in assemble',
+      );
+      for (const command of ['pnpm run pkgcheck', 'pnpm run check:size', 'pnpm run build:wasm:bench']) {
+        const index = body.indexOf(command);
+        assert(index !== -1 && index < reconciled, `${command} must run before the manifest reconcile`);
+      }
+    });
+
     it('should retain the prepared release archive for thirty days only on a release run', () => {
       const body = job('assemble');
       assert(

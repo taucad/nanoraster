@@ -345,6 +345,13 @@ jobs:
         env:
           NANORASTER_REQUIRE_DIST: '1'
         run: pnpm exec vitest run tests/import-graph.test.mjs
+      # Every `pnpm run` must precede `napi pre-publish`: it rewrites the source
+      # manifest's optionalDependencies, after which pnpm's pre-run dependency
+      # check refuses the now-stale lockfile. From there on only `node` runs.
+      - run: pnpm run pkgcheck
+      - run: pnpm run check:size
+      - name: Build the bench-enabled wasm sibling for the conformance gate
+        run: pnpm run build:wasm:bench
       - name: Generate the sixteen platform directories
         run: pnpm exec napi create-npm-dirs --npm-dir npm
       - name: Collect the native addons
@@ -367,10 +374,6 @@ jobs:
       - name: Pack the frozen test tarballs
         run: node scripts/pack-test-tarballs.mjs --out tarballs
       - run: node scripts/validate-pack.mjs
-      - run: pnpm run pkgcheck
-      - run: pnpm run check:size
-      - name: Build the bench-enabled wasm sibling for the conformance gate
-        run: pnpm run build:wasm:bench
       - id: freeze
         name: Freeze the prepared release tree
         run: |
