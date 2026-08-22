@@ -10,19 +10,26 @@ const ROOT = resolve(import.meta.dirname);
 // sees it: the exported site republishes every page as Markdown, so a docs
 // build would otherwise double the corpus and lint a stale copy of prose the
 // source has already fixed. The list mirrors `eslint.config.mjs`.
+const EXCLUDED_DIRECTORIES = [
+  '.nx',
+  'coverage',
+  'dist',
+  'docs-site/.next',
+  'docs-site/.source',
+  'docs-site/out',
+  'node_modules',
+  'rust/target',
+  'tests/out',
+];
 const DOCUMENTS = globSync('**/*.{md,mdx}', {
   cwd: ROOT,
-  exclude: [
-    '.nx/**',
-    'coverage/**',
-    'dist/**',
-    'docs-site/.next/**',
-    'docs-site/.source/**',
-    'docs-site/out/**',
-    'node_modules/**',
-    'rust/target/**',
-    'tests/out/**',
-  ],
+  // A predicate rather than a pattern list: the `exclude` array form needs a
+  // newer Node than the 22.13.0 floor, and the predicate prunes these
+  // directories instead of merely filtering their files.
+  exclude: (entry: string) => {
+    const path = entry.replaceAll('\\', '/');
+    return EXCLUDED_DIRECTORIES.some((directory) => path === directory || path.startsWith(`${directory}/`));
+  },
 })
   // Route segments such as `docs-site/app/docs.mdx/` are directories, not documents.
   .filter((path) => statSync(resolve(ROOT, path)).isFile())
