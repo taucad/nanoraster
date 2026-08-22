@@ -35,13 +35,13 @@ export const toRenderedImageFile = (
   options: RenderImageOptions,
   bytes: Uint8Array<ArrayBuffer>,
 ): RenderedImageFile =>
-  createRenderedImageFile(
-    options.format,
-    imageFileName(options.format),
+  createRenderedImageFile({
+    format: options.format,
+    name: imageFileName(options.format),
     bytes,
-    options.width,
-    options.height,
-  );
+    width: options.width,
+    height: options.height,
+  });
 
 /**
  * Render a kernel GLB to one owned `render.<format>` image, or to the raw

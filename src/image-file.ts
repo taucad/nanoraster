@@ -41,13 +41,24 @@ export type RenderedImageFile<Format extends ImageFormat = ImageFormat> = {
 };
 
 /** Create a rendered image file with its canonical MIME type. @internal */
-export const createRenderedImageFile = <Format extends ImageFormat>(
-  format: Format,
-  name: string,
-  bytes: Uint8Array<ArrayBuffer>,
-  width: number | undefined,
-  height: number | undefined,
-): RenderedImageFile<Format> => ({
+export const createRenderedImageFile = <Format extends ImageFormat>({
+  format,
+  name,
+  bytes,
+  width,
+  height,
+}: {
+  /** Output format the bytes were encoded in, or `'raw'` for the frame itself. */
+  format: Format;
+  /** Canonical output filename. */
+  name: string;
+  /** Newly allocated image bytes to hand to the caller. */
+  bytes: Uint8Array<ArrayBuffer>;
+  /** Requested pixel width, or `undefined` to take the default. */
+  width: number | undefined;
+  /** Requested pixel height, or `undefined` to take the default. */
+  height: number | undefined;
+}): RenderedImageFile<Format> => ({
   name,
   bytes,
   mimeType: imageMimeTypes[format],
