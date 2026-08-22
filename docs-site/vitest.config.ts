@@ -6,6 +6,7 @@ export default defineConfig({
       'api-coverage.test.ts',
       'demo-projection.test.ts',
       'sizes.test.ts',
+      'word-budget.test.ts',
       'components/**/*.test.ts',
       'lib/**/*.test.ts',
     ],

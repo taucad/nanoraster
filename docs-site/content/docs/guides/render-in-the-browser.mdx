@@ -3,17 +3,15 @@ title: Render in the browser
 description: Run nanoraster on browser WebGPU, bundle the WebAssembly artifact, and degrade gracefully where WebGPU is missing.
 ---
 
-Render in a browser tab on WebGPU, using the API and render core that the
-Node.js build uses.
-
-You need WebGPU enabled and a bundler that can emit a WebAssembly asset. Vite,
-webpack 5 and Rspack all do without configuration; [Install](../install)
-covers how the artifact is delivered.
+Render in a browser tab on WebGPU, with the API and render core the Node.js
+build uses. You need WebGPU enabled and a bundler that can emit a WebAssembly
+asset; Vite, webpack 5 and Rspack all do without configuration, and
+[Install](../install) covers how the artifact is delivered.
 
 ### 1. Check for a WebGPU adapter first
 
-Rendering fails with a typed error when no adapter exists; checking first lets
-you choose a fallback before doing any work.
+Rendering fails with a typed error when no adapter exists; check first and
+choose a fallback before any work.
 
 ```typescript
 const supported = typeof navigator !== 'undefined' && 'gpu' in navigator;
@@ -24,11 +22,10 @@ if (!supported) {
 ```
 
 `navigator.gpu` is necessary but not sufficient: a browser can expose the API
-and still fail to produce an adapter on a particular machine — or hand you a
-software one. `describeAdapter()` names what you actually got, reading
-`navigator.gpu` directly, so the check costs no wasm download. A `'cpu'`
-device type means SwiftShader-class rasterization, roughly an order of
-magnitude slower. Handle [`adapter-unavailable`](handle-render-failures) too.
+and still produce no adapter, or a software one. `describeAdapter()` names what
+you got without downloading the wasm; `'cpu'` means software rasterisation, an
+order of magnitude slower. Handle
+[`adapter-unavailable`](handle-render-failures) too.
 
 ```typescript
 import { describeAdapter } from 'nanoraster';
@@ -40,14 +37,13 @@ if (adapter.deviceType === 'cpu') {
 ```
 
 Browsers report `deviceType: 'unknown'` unless the adapter declares itself a
-fallback — the WebGPU specification withholds the class deliberately. The
-`name` is what the browser discloses: `"google swiftshader"` in headless
-Chrome, `"apple"` in Safari, `""` in Firefox.
+fallback, because WebGPU withholds the class; `name` is whatever the browser
+discloses, from `"google swiftshader"` in headless Chrome to `""` in Firefox.
 
 ### 2. Render from bytes you already hold
 
 Only the source of the GLB differs: a fetch, a file input or an in-memory
-buffer instead of the filesystem.
+buffer.
 
 ```typescript
 import { renderImage } from 'nanoraster';
@@ -64,7 +60,7 @@ const image = await renderImage(glb, {
 
 ### 3. Show or download the result
 
-The result is raw bytes, so wrap it in a `Blob` to display it.
+Wrap the bytes in a `Blob` to display them.
 
 ```typescript
 const blob = new Blob([image.bytes], { type: image.mimeType });
@@ -78,10 +74,9 @@ stays resident for the life of the document.
 
 ### 4. Keep the render off the main thread
 
-Rendering occupies the GPU queue and spends CPU time encoding the result. In
-a worker, neither blocks input handling. Create the renderer once when the
-worker starts and dispose it when the worker closes — one renderer per worker,
-its whole life.
+Rendering occupies the GPU queue and spends CPU time encoding; in a worker,
+neither blocks input handling. Create the renderer once per worker and dispose
+it when the worker closes.
 
 ```typescript
 // render.worker.ts
@@ -106,20 +101,12 @@ self.addEventListener('close', () => {
 });
 ```
 
-A renderer is single-realm: bytes cross `postMessage`, handles never do, so
-the worker owns the renderer and posts results out. Transferring
-`image.bytes.buffer` moves the memory instead of copying it; the worker cannot
-use it afterwards, and does not need to.
-
-The catch matters: a rejection inside the listener would otherwise vanish as
-an unhandled rejection and the caller would wait forever, so a failure is
-posted back as its own message shape — bytes mean success, `{ error }` means
-the render failed. [Handle render failures](handle-render-failures) covers
-classifying the error, and [Reuse the renderer](reuse-the-renderer) covers the
-lifetime in depth. On the main thread the one-shot functions still work — the
-price is readback and encode competing with input handling, and a GPU device
-that stays alive after the render, because the shared renderer is never
-disposed.
+A renderer is single-realm: bytes cross `postMessage`, handles never do, and
+transferring `image.bytes.buffer` moves the memory instead of copying it. The
+catch matters: an unhandled rejection inside the listener would leave the
+caller waiting forever, so a failure is posted back as `{ error }` and bytes
+mean success. [Handle render failures](handle-render-failures) classifies the
+error; [Reuse the renderer](reuse-the-renderer) covers the lifetime.
 
 ## Variations
 
@@ -128,6 +115,9 @@ disposed.
 
 **Node and browser from one codebase.** The import specifier is the same in
 both, and nothing in your code needs to branch.
+
+**Main-thread renders.** The one-shot functions work there too, at the price
+of readback and encode competing with input.
 
 **Capturing a live viewer's camera.** An orbiting viewer (three.js, Babylon,
 your own) knows its eye position relative to the target; nanoraster wants

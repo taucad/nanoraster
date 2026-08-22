@@ -3,8 +3,8 @@ title: Format and annotate
 description: Choose the encoder, background, and quality, then add the axis indicator, label, and scale bar that let a render stand on its own.
 ---
 
-Five choices decide what leaves the renderer, in order: format, background,
-quality, annotations, and the dimensions annotations require.
+Five choices decide what leaves the renderer: format, background, quality,
+annotations, and the dimensions annotations require.
 
 ### 1. Pick the format
 
@@ -56,19 +56,13 @@ const image = await renderImage(glb, {
 
 - **JPEG** is always lossy; `quality` sets the compression level and defaults
   to `0.92`.
-- **WebP** defaults to `1`, which encodes lossless — the same output as
-  omitting `quality`. Any value below `1` switches to lossy encoding, which
-  keeps the alpha channel. This follows the semantics of Chrome's canvas
-  `toBlob('image/webp', quality)`: lossless is the `1` endpoint, not a very
-  high quality. The switch happens because lossy WebP is a different codec
-  (VP8, with chroma subsampling) than lossless WebP (VP8L), so no lossy
-  quality reaches exact pixels.
-- **PNG** and **raw** ignore `quality`: PNG is always lossless, and raw runs
-  no encoder.
+- **WebP** defaults to `1`, which encodes lossless. Any value below `1`
+  switches to the lossy codec, which keeps alpha but never reaches exact
+  pixels; this matches Chrome's canvas `toBlob('image/webp', quality)`.
+- **PNG** and **raw** ignore `quality`.
 
-Drag `quality` in this demo and watch the badge under the image: at `1` the
-encoder is lossless; below it the file shrinks and the pixels stop being
-exact.
+Drag `quality` below `1` and watch the badge: the file shrinks and the pixels
+stop being exact.
 
 <RenderDemo>
 
@@ -82,9 +76,6 @@ const image = await renderImage(glb, {
 ```
 
 </RenderDemo>
-
-Every field's exact range lives on
-[`RenderImageOptions`](../api#renderimageoptions).
 
 ### 4. Add an axis indicator, label and scale
 
@@ -108,14 +99,13 @@ const image = await renderImage(glb, {
 
 </RenderDemo>
 
-The axis indicator is a camera-aware XYZ marker in the bottom-right, drawn with
-a front-on depth marker. It rotates with the camera, so it reports the view's
-orientation rather than a fixed key.
+The axis indicator is a camera-aware XYZ marker in the bottom-right; it
+rotates with the camera, so it reports the view's orientation rather than a
+fixed key.
 
-The label is drawn top-left, screen-upright, and rendered verbatim. Setting
-`label` is what draws it; there is no separate flag. In a
-[batch call](render-multiple-views), a view is labelled when its own entry
-sets `label`.
+The label is drawn top-left, screen-upright, verbatim. Setting `label` is what
+draws it; in a [batch call](render-multiple-views), a view is labelled when its
+own entry sets `label`.
 
 The scale bar is drawn bottom-left in the model's own units. Under perspective
 it is only accurate at one depth, so its label names that plane with
@@ -143,17 +133,14 @@ Below that, drop the annotations.
 
 **Smallest useful thumbnail.** WebP at `quality: 0.9` with `width: 256` is
 around 60 percent smaller than the lossless default and a third the size of
-the equivalent PNG, while keeping transparency — for shaded and filled
-flat-colour models alike. Sparse line art on an empty canvas — wireframes,
-schematics, near-blank drawings — can still encode smaller lossless than
-lossy, so measure both there and when every byte matters.
+the equivalent PNG, with transparency kept. Sparse line art can still encode
+smaller lossless than lossy, so measure both when every byte matters.
 
 **Byte-exact comparison.** Any lossless format works: PNG, or WebP at the
-default `quality: 1`, both decode to the same pixels. Lossy encoders are
-[deterministic](../how-it-works#determinism) for a fixed request, but a lossy
-baseline diffs the encoder's losses along with the render.
-[`format: 'raw'`](work-with-raw-pixels) removes the encoder from the
-comparison.
+default `quality: 1`. A lossy baseline is
+[deterministic](../how-it-works#determinism) but diffs the encoder's losses
+along with the render; [`format: 'raw'`](work-with-raw-pixels) removes the
+encoder from the comparison.
 
 **Alpha over an unknown page background.** Use PNG or WebP and leave the
 background transparent, then let the page composite it.

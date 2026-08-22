@@ -42,44 +42,33 @@ await writeFile(image.name, image.bytes);
 ```
 
 Same request, same pixels: the camera, lighting and encoder are fixed for a
-given request, so a render can serve as evidence. Continue with the
-[tutorial and guides](https://nanoraster.xyz/docs).
-
-`format: 'raw'` skips the encoder and returns the frame itself: straight-alpha
-sRGB RGBA8 with its `width` and `height`. Use it for pixel diffs, video frames
-and texture uploads, where an encoded file would need a decoder that Node does
-not have. See
-[Work with raw pixels](https://nanoraster.xyz/docs/guides/work-with-raw-pixels).
+given request, so a render can serve as evidence. `format: 'raw'` returns the
+RGBA frame instead of a file, for pixel diffs, video frames and textures
+([Work with raw pixels](https://nanoraster.xyz/docs/guides/work-with-raw-pixels)).
+Continue with the [tutorial and guides](https://nanoraster.xyz/docs).
 
 ## Reuse the renderer
 
 The one-shot calls share one renderer per process, so only the first call pays
-the GPU bring-up. Create your own renderer when you need to control the
-device's lifetime or power preference. When you know the full set of outputs,
-declare them in one call: per-view `width`, `height`, `format` and `quality`
-overrides turn a resolution ladder into a single call, measured three times
-faster than six separate renders on an Apple M2 Pro:
+the GPU bring-up; create your own to control its lifetime or power preference.
+When you know the full set of outputs, declare them in one `renderImages` call
+with per-view overrides, about three times faster than separate renders:
 
 ```typescript
 import { createRenderer } from 'nanoraster';
 
 using renderer = await createRenderer({ powerPreference: 'low-power' });
 
-const [card, og, print] = await renderer.renderImages(glb, {
+const [card, og] = await renderer.renderImages(glb, {
   format: 'webp',
-  width: 768,
-  height: 576,
   views: [
-    { id: 'card', phi: 60, theta: -45 },
-    { id: 'og', phi: 60, theta: -45, width: 1536, height: 804 },
-    { id: 'print', phi: 60, theta: -45, width: 1536, height: 804, format: 'png' },
+    { id: 'card', phi: 60, theta: -45, width: 768, height: 576 },
+    { id: 'og', phi: 60, theta: -45, width: 1536, height: 804, format: 'png' },
   ],
 });
-// renderer.dispose() runs automatically at scope exit via `using`.
 ```
 
-Pixels are byte-identical to the one-shot calls on the same adapter. See
-[Reuse the renderer](https://nanoraster.xyz/docs/guides/reuse-the-renderer).
+See [Reuse the renderer](https://nanoraster.xyz/docs/guides/reuse-the-renderer).
 
 ## Compatibility
 

@@ -3,45 +3,14 @@ title: Reuse the renderer
 description: Keep one GPU device alive across renders with createRenderer, dispose it deliberately, and know when a single plan call is the better tool.
 ---
 
-Bringing up a GPU device — instance, adapter, device, shader, pipelines — costs
-more than most renders. The module-level functions pay it once per process: the
-first call creates a renderer and later calls reuse it. Measured on an Apple M2
-Pro at 768×576, the first call takes 27 ms and later calls 3.4 ms. Those calls
-also run one at a time, in call order, so `Promise.all` over one-shot renders
-is safe.
+Bringing up a GPU device costs more than most renders. The module-level
+functions pay it once per process: the first call creates a shared renderer,
+later calls reuse it, and the calls run one at a time in call order. That
+renderer uses the default `'high-performance'` power preference and lives until
+the process exits; `createRenderer` gives you one whose device you choose and
+release.
 
-The shared renderer gives you no control over that device: it uses the default
-`'high-performance'` power preference and lives until the process or worker
-exits. Use `createRenderer` when you need to choose.
-
-### 1. Decide which tool fits the shape of the work
-
-Three things amortize the device, and they compose:
-
-- **The module-level functions** already share one renderer per process. For
-  a script, a one-off, or a service that renders whatever arrives next on
-  default settings, use `renderImage` and stop here.
-- **One `renderImages` call** additionally parses and uploads the GLB once
-  and pipelines the views: six warm one-shot renders take about three times as
-  long as the same six views in one plan call. If you can write the full list
-  of images down — a contact sheet, a resolution ladder, a turntable — make one
-  call; [Render multiple views](render-multiple-views) is that guide.
-- **`createRenderer`** gives the device a lifetime you own: dispose it when the
-  worker is done, pick `'low-power'`, or keep one renderer per worker.
-
-The rule that falls out: if you know the full set of images, make one plan
-call on whichever layer you hold — never loop over single renders.
-
-Live orbiting belongs to a canvas renderer such as three.js: 60 frames per
-second with no readback. nanoraster's job is stills whose _bytes_ are the
-product — thumbnails, CI baselines, publications, agent captures.
-
-### 2. Create once, render many
-
-`createRenderer` resolves to a handle whose render methods mirror the
-module-level functions exactly — same options, same results, byte-identical
-pixels on the same adapter. Its device is separate: it does not share the
-queue the module-level functions use.
+### 1. Create once, render many
 
 ```typescript
 import { createRenderer } from 'nanoraster';
@@ -54,18 +23,13 @@ for await (const model of modelsAsTheyArrive) {
 }
 ```
 
-`powerPreference: 'low-power'` keeps small, frequent renders off the discrete GPU
-on dual-GPU machines; output bytes are identical either way on a given
-adapter. Calls on one renderer run in sequence, so concurrent callers can
-share a handle without interleaving GPU state.
+The handle's render methods mirror the module-level functions exactly: same
+options, same results, byte-identical pixels on the same adapter. Its device is
+its own, separate from the shared one, and calls on it run in sequence, so
+concurrent callers can share a handle. `'low-power'` keeps small, frequent
+renders off the discrete GPU on dual-GPU machines.
 
-### 3. Dispose deliberately
-
-The renderer holds a GPU device until you release it. The shared renderer
-behind the module-level functions has no release at all, by design, so hold
-your own renderer when the lifetime matters. Tie it to the worker or process
-that owns it: dispose on shutdown, or on an idle timer if the host keeps
-workers warm.
+### 2. Dispose deliberately
 
 ```typescript
 using renderer = await createRenderer();
@@ -74,25 +38,14 @@ const image = await renderer.renderImage(glb, { format: 'webp' });
 // renderer.dispose() runs automatically at scope exit.
 ```
 
+The renderer holds a GPU device until you release it; the shared renderer has
+no release at all, by design. Tie yours to the worker or process that owns it:
+dispose on shutdown, or on an idle timer if the host keeps workers warm.
 `dispose()` waits for in-flight calls to settle, then destroys the device.
-Every later call rejects with a `RenderError` whose code is `'gpu'` — that
-state is permanent, so recreate the renderer rather than retrying the call.
-Without an explicit dispose the device lingers until garbage collection, which
-browsers in particular take their time over.
+Every later call rejects with a `RenderError` whose code is `'gpu'`, so
+recreate the renderer rather than retrying the call.
 
-### 4. Let device loss stay invisible
-
-A driver reset or a browser reclaiming the GPU invalidates the device. A
-persistent renderer recovers on its own: the call that hits the loss fails
-with a [GPU-class code](handle-render-failures), and the next call rebuilds
-the device and re-uploads transparently. Keep the last good image, retry on
-the same handle — there is nothing to recreate yourself.
-
-### 5. Verify the reuse when it matters
-
-`timings: true` on a plan call attaches stage timings and lets you confirm the
-device actually carried over: a warm renderer reports the parse and per-view
-work, while setup stays near zero after the first call.
+### 3. Verify the reuse when it matters
 
 ```typescript
 const results = await renderer.renderImages(glb, {
@@ -104,17 +57,26 @@ const results = await renderer.renderImages(glb, {
 console.log(results.timings.setup, results.timings.views[0].render);
 ```
 
+`timings: true` on a plan call attaches stage timings: a warm renderer reports
+parse and per-view work while `setup` stays near zero after the first call.
+
 ## Variations
+
+**One plan call beats a loop.** If you can write the full list of images down
+(a contact sheet, a resolution ladder, a turntable), make one `renderImages`
+call on whichever layer you hold: it parses and uploads the GLB once and
+pipelines the views, about three times faster than the same views as one-shot
+renders. [Render multiple views](render-multiple-views) is that guide.
+
+**Device loss.** A driver reset or a browser reclaiming the GPU invalidates the
+device. The call that hits it fails with a
+[GPU-class code](handle-render-failures); the next call rebuilds the device and
+re-uploads, so keep the last good image and retry on the same handle.
 
 **One renderer per worker.** A renderer is single-realm: create it inside the
 worker that uses it and post bytes out, never the handle;
 [Render in the browser](render-in-the-browser) shows the worker shape.
 
-**One-shot scripts.** A CLI that renders once and exits gains nothing from a
-handle; the module-level functions are the same pathway with the lifetime
-folded in, and the process exits without a dispose.
-
-**Servers.** The Node addon renders on a worker thread either way, so the
-event loop stays free. The shared renderer already saves the per-call device
-bring-up; a renderer of your own adds the power preference, an explicit
-shutdown, and one queue per worker instead of one per process.
+**Live viewers.** Orbiting at 60 frames per second belongs to a canvas
+renderer such as three.js. nanoraster's job is stills whose bytes are the
+product: thumbnails, CI baselines, publications, agent captures.

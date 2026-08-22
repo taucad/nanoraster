@@ -15,12 +15,11 @@ pnpm add nanoraster
 ```
 
 Save this as `render.mjs` and run it with `node render.mjs`. The camera angles
-are written out here so you can drag them, but `phi: 60` and `theta: -45` are
-the defaults. The live tile renders at 960×720, so its byte count differs.
-Dragging reuses a single renderer — the GPU device comes up once and each tick
-pays only render and encode, which is why the badge's milliseconds drop after
-the first frame; [Reuse the renderer](/docs/guides/reuse-the-renderer) is the
-same move in your own code.
+are written out so you can drag them; `phi: 60` and `theta: -45` are the
+defaults. The live tile renders at 960×720, so its byte count differs, and its
+milliseconds drop after the first frame because dragging reuses one renderer;
+[Reuse the renderer](/docs/guides/reuse-the-renderer) is the same move in your
+own code.
 
 <RenderDemo>
 
@@ -57,13 +56,11 @@ are yours to save, upload or hand to another process. Run the script again and
 the bytes are identical: camera, lighting and encoder are fixed for a given
 request.
 
-The same call produces PNG, WebP or JPEG (`jpg` is an alias); see
-[Format and annotate](/docs/guides/format-and-annotate). With `format: 'raw'`
-it returns the unencoded frame instead, for pixel diffs, video frames and
-texture uploads; see
+The same call produces PNG, WebP or JPEG (`jpg` is an alias), or the
+unencoded frame with `format: 'raw'`; see
+[Format and annotate](/docs/guides/format-and-annotate) and
 [Work with raw pixels](/docs/guides/work-with-raw-pixels). Every rejection is a
-`RenderError` with a stable machine-readable code, so you can classify failures
-without string matching; see
+`RenderError` with a stable machine-readable code; see
 [Handle render failures](/docs/guides/handle-render-failures).
 
 ## What it does not do
