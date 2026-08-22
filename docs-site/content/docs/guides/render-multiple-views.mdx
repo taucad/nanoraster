@@ -109,9 +109,9 @@ tuple and returns a tuple even for one view, under the same
 **Labels per view.** Give an entry a `label` and that view is labelled; leave
 it off and it is not. See [Format and annotate](format-and-annotate).
 
-**Shared-only settings.** `margin`, `up`, `projection`, `background`,
-annotations and `lighting` apply to the whole request; only the camera pair
-and the four output fields vary per view.
+**Shared-only settings.** `axes`, `scaleBar`, `background`, `lighting`,
+`margin`, `up` and `projection` apply to the whole request; the camera pair,
+`label` and the four output fields vary per view.
 
 **Renders spread over time.** The plan call shares the device across views
 _within_ one call; [`createRenderer`](reuse-the-renderer) shares it across
@@ -119,6 +119,6 @@ calls _over time_. They compose — a warm renderer accepts the same plan calls.
 Either way, when you can write the full list of images down, send it as one
 call rather than a loop: only the renderer can schedule work it can see.
 
-**Stage timings.** `timings: true` attaches parse, setup, and per-view
-render/encode milliseconds to the result as `results.timings`; see
+**Stage timings.** `timings: true` attaches parse, setup, and per-view render,
+overlay and encode milliseconds to the result as `results.timings`; see
 [`RenderTimings`](../api#rendertimings).

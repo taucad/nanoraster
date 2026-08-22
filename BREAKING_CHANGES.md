@@ -24,7 +24,9 @@ The package has no compatibility commitments before its first stable release.
 - `createRenderImageOptions` and `createRenderImagesOptions` are deleted.
   Write `{ ... } as const satisfies RenderImageOptions` (or
   `RenderImagesOptions`) on the variable instead: the same literal
-  preservation and key checking, with no import.
+  preservation and key checking, with no helper to import. The option type
+  itself is still imported:
+  `import type { RenderImageOptions } from 'nanoraster'`.
 - `includeLabel` is deleted. Setting `label` is what draws it; omit it and no
   label is drawn. In a batch call this is per view, so a sheet can label some
   views and not others. Direct consumers of the native addon or the wasm class
@@ -51,4 +53,5 @@ The package has no compatibility commitments before its first stable release.
   `codecConformance`, and the wasm module no longer exports `bench_codecs`,
   `bench_multi_view` or `codec_conformance`. They sit behind a default-off
   `bench` cargo feature; build the crates with `--features bench` if you need
-  them. Rendered bytes are unchanged.
+  them. Rendered pixels are unchanged; the WebP byte changes are the ones
+  documented above.

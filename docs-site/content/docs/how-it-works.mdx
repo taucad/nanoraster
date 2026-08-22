@@ -50,7 +50,8 @@ read back; see [Work with raw pixels](guides/work-with-raw-pixels).
 [`renderImages`](api#renderimages) parses and uploads once, then fits,
 rasterises and encodes once per view. [`RenderTimings`](api#rendertimings)
 fields map onto these stages: `parse` for parse and fit, `setup` for device
-acquisition and upload, then per-view `render` and `encode`.
+acquisition and upload, then per-view `render`, `overlay` for the annotation
+pass, and `encode`.
 
 [Both hosts](install), Node.js native and
 [browser WebGPU](guides/render-in-the-browser), wrap the same Rust core and

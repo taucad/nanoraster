@@ -26,8 +26,9 @@ for await (const model of modelsAsTheyArrive) {
 The handle's render methods mirror the module-level functions exactly: same
 options, same results, byte-identical pixels on the same adapter. Its device is
 its own, separate from the shared one, and calls on it run in sequence, so
-concurrent callers can share a handle. `'low-power'` keeps small, frequent
-renders off the discrete GPU on dual-GPU machines.
+concurrent callers can share a handle. `'low-power'` asks for the lower-power
+adapter on dual-GPU machines, which suits small, frequent renders; the host may
+ignore the hint.
 
 ### 2. Dispose deliberately
 
@@ -41,9 +42,10 @@ const image = await renderer.renderImage(glb, { format: 'webp' });
 The renderer holds a GPU device until you release it; the shared renderer has
 no release at all, by design. Tie yours to the worker or process that owns it:
 dispose on shutdown, or on an idle timer if the host keeps workers warm.
-`dispose()` waits for in-flight calls to settle, then destroys the device.
-Every later call rejects with a `RenderError` whose code is `'gpu'`, so
-recreate the renderer rather than retrying the call.
+`dispose()` returns at once. It marks the renderer disposed and schedules the
+device teardown behind the queued calls; nothing signals when that teardown
+finishes. Every later call rejects with a `RenderError` whose code is `'gpu'`,
+so recreate the renderer rather than retrying the call.
 
 ### 3. Verify the reuse when it matters
 

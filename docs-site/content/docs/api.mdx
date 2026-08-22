@@ -49,8 +49,8 @@ export declare const renderImage: (
 ```
 
 - **Parameters:** owned GLB bytes and one validated render request.
-- **Returns:** a newly allocated `render.<format>` file with the width and
-  height the request resolved to.
+- **Returns:** a newly allocated `render.<format>` file with the resolved
+  width and height.
 - **Throws:** `RenderError` for invalid requests, malformed GLB data, GPU faults,
   or encoding failures.
 
@@ -145,9 +145,10 @@ export type Renderer = {
   through one `renderImages` call, never a loop.
 - **Device loss is recovered** on the next call, which rebuilds the device and
   re-uploads.
-- `dispose()` waits for in-flight calls to settle, is idempotent, and backs
+- `dispose()` marks the renderer disposed at once, is idempotent, and backs
   `using` through `Symbol.dispose`; every later call rejects with
-  `RenderError` code `'gpu'`, so recreate rather than retry.
+  `RenderError` code `'gpu'`, so recreate rather than retry. GPU teardown
+  follows the queued calls, with no completion signal.
 
 ### `CreateRendererOptions`
 
@@ -255,7 +256,7 @@ The exact parameter type of [`renderImages`](#renderimages) and
 `Renderer.renderImages`: `RenderImagesOptions` narrowed so extra keys, empty
 view tuples, and per-view settings placed at call level are compile errors.
 Callers pass plain `RenderImagesOptions` literals; name this type only when
-you forward the plan call through a generic wrapper of your own:
+you forward the plan call through a generic wrapper:
 
 ```typescript
 import { renderImages, type RenderImagesOptions, type StrictRenderImagesOptions } from 'nanoraster';
@@ -337,9 +338,9 @@ export type RenderedImages<
 };
 ```
 
-This mapped tuple preserves each input view's literal ID, position and tuple
-length, and narrows each entry's MIME type through its view's `format`
-override, falling back to the shared format. Entry files are named
+This mapped tuple preserves each input view's literal ID, position and length,
+and narrows each entry's MIME type through its view's `format` override,
+falling back to the shared format. Entry files are named
 `render-<id>.<format>`.
 
 ### `RenderedImagesResult`
@@ -367,8 +368,8 @@ console.log(result[0].file.name, result.timings.parse); // 'render-iso.webp' 0.4
 
 Attached to a plan call's result when the options set `timings: true`. The
 fields map onto the [pipeline stages](how-it-works): parse, setup (device
-acquisition plus geometry upload), then per-view rasterise and encode, all in
-milliseconds.
+acquisition plus geometry upload), then per-view rasterise, annotate and
+encode, all in milliseconds.
 
 <auto-type-table path="./props.ts" name="RenderTimings" caption="RenderTimings properties" />
 
