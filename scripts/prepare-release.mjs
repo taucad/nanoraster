@@ -7,19 +7,13 @@ import { fileURLToPath } from 'node:url';
 import { releaseChangelog, releaseVersion } from 'nx/release/index.js';
 import semver from 'semver';
 
-const PACKAGE_PATHS = [
-  new URL('../package.json', import.meta.url),
-  new URL('../npm/darwin-arm64/package.json', import.meta.url),
-  new URL('../npm/linux-x64-gnu/package.json', import.meta.url),
-  new URL('../npm/win32-x64-msvc/package.json', import.meta.url),
-];
-const PROJECTS = [
-  'nanoraster',
-  'nanoraster-darwin-arm64',
-  'nanoraster-linux-x64-gnu',
-  'nanoraster-win32-x64-msvc',
-];
-const PLATFORM_PACKAGES = PROJECTS.slice(1);
+/**
+ * The root package is the only released project: NAPI-RS generates the sixteen
+ * platform packages during release assembly and `napi pre-publish` copies this
+ * version into every one of them.
+ */
+const PROJECT = 'nanoraster';
+const PACKAGE_PATH = new URL('../package.json', import.meta.url);
 const GIT_OPTIONS = {
   gitCommit: false,
   gitPush: false,
@@ -73,59 +67,31 @@ export const withoutNonHumanAuthors = (changelog) => {
   return [...lines.slice(0, start), ...kept, ...lines.slice(end)].join('\n');
 };
 
-const packageVersions = () => PACKAGE_PATHS.map((path) => JSON.parse(readFileSync(path, 'utf8')).version);
-
-const syncOptionalDependencies = (version) => {
-  const path = PACKAGE_PATHS[0];
-  const manifest = JSON.parse(readFileSync(path, 'utf8'));
-  for (const name of PLATFORM_PACKAGES) manifest.optionalDependencies[name] = version;
-  writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
-};
+const packageVersion = () => JSON.parse(readFileSync(PACKAGE_PATH, 'utf8')).version;
 
 const assertClean = () => {
   const status = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' });
   assert(status.length === 0, 'release preparation requires a clean worktree');
 };
 
-/** The one version every pending Version Plan agrees on, for `--from-plans` runs. */
-export const versionFromPlans = (plannedVersions) => {
-  assert(
-    plannedVersions.length > 0 && plannedVersions.every(Boolean),
-    'no pending Version Plan affects the fixed release group',
-  );
-  assert(new Set(plannedVersions).size === 1, 'Version Plans did not produce one fixed version');
-  return plannedVersions[0];
+/** The version the pending Version Plans dictate, for `--from-plans` runs. */
+export const versionFromPlans = (plannedVersion) => {
+  assert(Boolean(plannedVersion), `no pending Version Plan affects ${PROJECT}`);
+  return plannedVersion;
 };
 
-export const validateRequestedVersion = ({
-  currentVersions,
-  optionalDependencyVersions,
-  plannedVersions,
-  requestedVersion,
-}) => {
-  assert(
-    currentVersions.every((version) => semver.valid(version)),
-    'invalid package version',
-  );
-  assert(new Set(currentVersions).size === 1, 'fixed release packages have different versions');
-  assert(
-    optionalDependencyVersions.every((version) => version === currentVersions[0]),
-    'native optional dependency versions do not match the fixed release group',
-  );
-  assert(
-    plannedVersions.every((version) => semver.valid(version)),
-    'invalid Version Plan result',
-  );
-  assert(new Set(plannedVersions).size === 1, 'Version Plans did not produce one fixed version');
+export const validateRequestedVersion = ({ currentVersion, plannedVersion, requestedVersion }) => {
+  assert(semver.valid(currentVersion), `invalid package version: ${currentVersion}`);
+  assert(semver.valid(plannedVersion), `invalid Version Plan result: ${plannedVersion}`);
   assert(semver.valid(requestedVersion), `invalid requested version: ${requestedVersion}`);
   assert(semver.prerelease(requestedVersion) === null, 'routine releases require stable SemVer');
   assert(
-    plannedVersions[0] === requestedVersion,
-    `requested ${requestedVersion} does not match Version Plans (${plannedVersions[0]})`,
+    plannedVersion === requestedVersion,
+    `requested ${requestedVersion} does not match Version Plans (${plannedVersion})`,
   );
   assert(
-    semver.gt(requestedVersion, currentVersions[0]),
-    `${requestedVersion} must be newer than ${currentVersions[0]}`,
+    semver.gt(requestedVersion, currentVersion),
+    `${requestedVersion} must be newer than ${currentVersion}`,
   );
   return requestedVersion;
 };
@@ -136,23 +102,15 @@ const prepare = async ({ dryRun, requestedVersion }) => {
   // clean once preparation starts. Release-commit purity is enforced by the
   // caller staging only release files, and by the CI release policy.
   if (!dryRun) assertClean();
-  const currentVersions = packageVersions();
-  const rootManifest = JSON.parse(readFileSync(PACKAGE_PATHS[0], 'utf8'));
-  const optionalDependencyVersions = PLATFORM_PACKAGES.map((name) => rootManifest.optionalDependencies[name]);
+  const currentVersion = packageVersion();
   const preview = await releaseVersion({
     ...GIT_OPTIONS,
     deleteVersionPlans: false,
     dryRun: true,
   });
-  const plannedVersions = PROJECTS.map((project) => preview.projectsVersionData[project]?.newVersion);
-  assert(plannedVersions.every(Boolean), 'no pending Version Plan affects the fixed release group');
-  const version = requestedVersion ?? versionFromPlans(plannedVersions);
-  validateRequestedVersion({
-    currentVersions,
-    optionalDependencyVersions,
-    plannedVersions,
-    requestedVersion: version,
-  });
+  const plannedVersion = versionFromPlans(preview.projectsVersionData[PROJECT]?.newVersion);
+  const version = requestedVersion ?? plannedVersion;
+  validateRequestedVersion({ currentVersion, plannedVersion, requestedVersion: version });
 
   await releaseChangelog({
     ...GIT_OPTIONS,
@@ -169,8 +127,6 @@ const prepare = async ({ dryRun, requestedVersion }) => {
     deleteVersionPlans: true,
     version,
   });
-  syncOptionalDependencies(version);
-  execFileSync('pnpm', ['install', '--lockfile-only'], { stdio: 'inherit' });
   await releaseChangelog({
     ...GIT_OPTIONS,
     createRelease: false,
@@ -179,10 +135,7 @@ const prepare = async ({ dryRun, requestedVersion }) => {
     version,
   });
   writeFileSync(CHANGELOG_PATH, withoutNonHumanAuthors(readFileSync(CHANGELOG_PATH, 'utf8')));
-  assert(
-    packageVersions().every((prepared) => prepared === version),
-    `fixed release did not prepare every package at ${version}`,
-  );
+  assert(packageVersion() === version, `release preparation did not leave ${PROJECT} at ${version}`);
   return version;
 };
 

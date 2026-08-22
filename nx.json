@@ -19,12 +19,7 @@
     ]
   },
   "release": {
-    "projects": [
-      "nanoraster",
-      "nanoraster-darwin-arm64",
-      "nanoraster-linux-x64-gnu",
-      "nanoraster-win32-x64-msvc"
-    ],
+    "projects": ["nanoraster"],
     "projectsRelationship": "fixed",
     "version": {
       "specifierSource": "version-plans",

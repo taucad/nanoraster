@@ -6,14 +6,16 @@ import { fileURLToPath } from 'node:url';
 const SHA = /^[0-9a-f]{40}$/u;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const RELEASE_SUBJECT = /^chore\(release\): nanoraster v(.+?)(?: \(#\d+\))?$/u;
-const RELEASE_FILES = new Set([
-  'CHANGELOG.md',
-  'npm/darwin-arm64/package.json',
-  'npm/linux-x64-gnu/package.json',
-  'npm/win32-x64-msvc/package.json',
-  'package.json',
-  'pnpm-lock.yaml',
-]);
+/** Files a root release always rewrites. */
+const RELEASE_FILES = new Set(['CHANGELOG.md', 'package.json']);
+/**
+ * Bumping only the root version leaves `pnpm-lock.yaml` byte-identical: the
+ * lockfile records no importer version, and the native platform packages are
+ * generated at release assembly rather than declared in source. The lockfile is
+ * therefore permitted in a release commit but never required. Every other path
+ * — a generated platform manifest above all — is unexpected.
+ */
+const ALLOWED_FILES = new Set([...RELEASE_FILES, 'pnpm-lock.yaml']);
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -30,7 +32,7 @@ const validateRelease = ({ changedFiles, changelog, packageVersion, subject }) =
     assert(changedFiles.includes(file), `release commit must change ${file}`);
   }
   assert(changedFiles.some(isVersionPlan), 'release commit must consume a Version Plan');
-  const unexpected = changedFiles.filter((file) => !RELEASE_FILES.has(file) && !isVersionPlan(file));
+  const unexpected = changedFiles.filter((file) => !ALLOWED_FILES.has(file) && !isVersionPlan(file));
   assert(unexpected.length === 0, `release commit has unexpected files: ${unexpected.join(', ')}`);
   assert(
     changelog
