@@ -19,6 +19,7 @@ const EXCLUDED_DIRECTORIES = [
   'docs-site/out',
   'node_modules',
   'rust/target',
+  'rust/vendor',
   'tests/out',
 ];
 const DOCUMENTS = globSync('**/*.{md,mdx}', {

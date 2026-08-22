@@ -274,6 +274,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     main();
   } catch (error) {
     console.error(formatCauseChain(error));
+    // A consumer that died without output: the exit status and the signal
+    // (a SIGSEGV/SIGABRT inside the addon prints nothing) are the only clues.
+    if (error !== null && typeof error === 'object' && ('status' in error || 'signal' in error)) {
+      console.error(`child exit: status=${String(error.status)} signal=${String(error.signal)}`);
+    }
     process.exit(1);
   }
 }

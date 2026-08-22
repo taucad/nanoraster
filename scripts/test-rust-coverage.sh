@@ -28,9 +28,10 @@ cargo llvm-cov --version >/dev/null 2>&1 || {
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
 # -- reason: third-party image-webp source is tested through nanoraster's codec conformance oracle.
+# -- reason: vendored wgpu-hal (one DX12 alignment patch) is exercised by the Windows smoke rows, not unit tests.
 # -- reason: render-wasm is a wasm-bindgen macro shell covered by the three-browser wasm smoke.
 # -- reason: render-napi is a napi macro shell covered by the native singular/batch parity suite.
-IGNORE_PATHS='vendor/image-webp|render-wasm|render-napi'
+IGNORE_PATHS='vendor/image-webp|vendor/wgpu-hal|render-wasm|render-napi'
 
 cd "$REPO_ROOT"
 # --all-features keeps the default-off `bench` surface measured rather than
