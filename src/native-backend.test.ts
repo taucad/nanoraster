@@ -24,8 +24,15 @@ describe('nativeAddonLoader', () => {
 
     const native = await nativeAddonLoader();
 
-    expect(typeof native.createRenderer).toBe('function');
-    expect(typeof native.describeAdapter).toBe('function');
+    // Calling the addon is what proves the loader resolved a real binding: the
+    // probe answers with the adapter JSON this host would bind, or `null` where
+    // there is no adapter at all.
+    const adapter = await native.describeAdapter();
+
+    expect(adapter === null || typeof adapter === 'string').toBe(true);
+    if (typeof adapter === 'string') {
+      expect(JSON.parse(adapter)).toMatchObject({ backend: expect.any(String) });
+    }
   });
 
   it('should reject a big-endian ppc64 host before reaching the loader', async () => {

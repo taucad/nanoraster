@@ -16,3 +16,17 @@ expectTypeOf<nodeModule.RenderImagesOptions>().toEqualTypeOf<universalModule.Ren
 expectTypeOf<nodeModule.RenderedImageFile>().toEqualTypeOf<universalModule.RenderedImageFile>();
 expectTypeOf<nodeModule.AdapterInfo>().toEqualTypeOf<universalModule.AdapterInfo>();
 expectTypeOf<nodeModule.Renderer>().toEqualTypeOf<universalModule.Renderer>();
+
+// The negative control for the equality assertions above: a boundary that only
+// widened types would satisfy every `toEqualTypeOf` and still accept nonsense.
+// Rejection has to be proven through the Node entry point itself.
+const glb = new Uint8Array([1, 2, 3]);
+// @ts-expect-error unknown output format
+void nodeModule.renderImage(glb, { format: 'gif' });
+void nodeModule.renderImages(glb, {
+  format: 'png',
+  // @ts-expect-error unknown per-view output format
+  views: [{ id: 'front', phi: 90, theta: 0, format: 'gif' }],
+});
+// @ts-expect-error missing required format
+void ({ axes: true } as const satisfies nodeModule.RenderImageOptions);

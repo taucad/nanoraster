@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
@@ -66,7 +66,10 @@ afterEach(() => {
 
 describe('prepared release completeness gate', () => {
   it('should accept a tree with sixteen generated packages and a matching root manifest', () => {
-    assert.deepEqual(findingsFor(createPreparedTree()), []);
+    const root = createPreparedTree();
+
+    assert.equal(readdirSync(join(root, 'npm')).length, 16);
+    assert.deepEqual(findingsFor(root), []);
   });
 
   it('should reject an unknown directory inside the generated npm directory', () => {

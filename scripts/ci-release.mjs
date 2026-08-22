@@ -7,7 +7,7 @@ const SHA = /^[0-9a-f]{40}$/u;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const RELEASE_SUBJECT = /^chore\(release\): nanoraster v(.+?)(?: \(#\d+\))?$/u;
 /** Files a root release always rewrites. */
-const RELEASE_FILES = new Set(['CHANGELOG.md', 'package.json']);
+export const RELEASE_FILES = new Set(['CHANGELOG.md', 'package.json']);
 /**
  * Bumping only the root version leaves `pnpm-lock.yaml` byte-identical: the
  * lockfile records no importer version, and the native platform packages are

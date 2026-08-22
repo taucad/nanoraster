@@ -128,15 +128,33 @@ describe('frozen tarball selection', () => {
 });
 
 describe('installed platform packages', () => {
+  const configured = ['nanoraster', 'nanoraster-first-arch', 'nanoraster-second-arch'];
+
   it('should return every installed platform package in sorted order', () => {
     assert.deepEqual(
-      detectPlatformPackages(['nanoraster-second-arch', '.package-lock.json', 'nanoraster-first-arch']),
+      detectPlatformPackages(
+        ['nanoraster-second-arch', '.package-lock.json', 'nanoraster-first-arch'],
+        configured,
+      ),
       ['nanoraster-first-arch', 'nanoraster-second-arch'],
     );
   });
 
   it('should ignore the root package and unrelated dependencies', () => {
-    assert.deepEqual(detectPlatformPackages(['nanoraster', '.bin', 'nanoraster-adjacent-tool/']), []);
+    assert.deepEqual(detectPlatformPackages(['nanoraster', '.bin'], configured), []);
+  });
+
+  it('should ignore an installed dependency that only shares the root prefix', () => {
+    // `nanoraster-adjacent-tool` reads like a platform package and is not one:
+    // counting it would report two platform packages and fail a clean smoke.
+    assert.deepEqual(
+      detectPlatformPackages(['nanoraster-adjacent-tool', 'nanoraster-first-arch'], configured),
+      ['nanoraster-first-arch'],
+    );
+  });
+
+  it('should return no platform package when the release configures none', () => {
+    assert.deepEqual(detectPlatformPackages(['nanoraster-first-arch'], ['nanoraster']), []);
   });
 });
 

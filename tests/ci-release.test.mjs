@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
-import { deriveRelease } from '../scripts/ci-release.mjs';
+import { deriveRelease, RELEASE_FILES } from '../scripts/ci-release.mjs';
 import {
   validateRequestedVersion,
   versionFromPlans,
@@ -127,6 +128,40 @@ describe('CI release policy', () => {
 
   it('should reject a release whose changelog has no section for the version', () => {
     assert.throws(() => deriveRelease({ ...stable, changelog: '## 0.0.9\n' }), /no 0\.1\.0 section/u);
+  });
+});
+
+describe('release pull request staging', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/release-pr.yml', import.meta.url), 'utf8');
+
+  /** The `allowed` guard the release-pr job greps its staged file list against. */
+  const allowed = (() => {
+    const declaration = /^\s*allowed='([^']+)'$/mu.exec(workflow);
+    assert(declaration, 'release-pr.yml must declare the allowed staged-file pattern');
+    return new RegExp(declaration[1], 'u');
+  })();
+
+  /** The paths the job stages explicitly, from its single `git add` invocation. */
+  const staged = (() => {
+    const command = /^\s*git add (.+)$/mu.exec(workflow);
+    assert(command, 'release-pr.yml must stage the release files explicitly');
+    return command[1].trim().split(/\s+/u);
+  })();
+
+  it('should admit every file a root release rewrites', () => {
+    // The two guards are one contract: what `ci.yml` demands of a release
+    // commit is exactly what the bot is allowed to stage into one.
+    for (const file of RELEASE_FILES) {
+      assert(allowed.test(file), `release-pr.yml rejects the required release file ${file}`);
+      assert(staged.includes(file), `release-pr.yml never stages the required release file ${file}`);
+    }
+    assert(allowed.test('.nx/version-plans/initial-release.md'), 'a consumed Version Plan is allowed');
+  });
+
+  it('should refuse a generated platform manifest in the release commit', () => {
+    assert(!allowed.test('npm/linux-x64-gnu/package.json'));
+    assert(!staged.includes('npm'));
+    assert(!allowed.test('pnpm-lock.yaml'), 'a lockfile change is never staged by the bot');
   });
 });
 

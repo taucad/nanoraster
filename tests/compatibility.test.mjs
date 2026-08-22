@@ -97,13 +97,29 @@ describe('compatibility matrix', () => {
   });
 
   it('should cite a job parameter the workflow actually configures', () => {
-    const unconfigured = hostRows
-      .flatMap(({ evidence, name }) =>
-        parseEvidence(evidence).parameters.map((parameter) => ({ name, parameter })),
-      )
-      .filter(({ parameter }) => !WORKFLOW.includes(parameter))
-      .map(({ name, parameter }) => `${name} cites job parameter ${parameter}, absent from ci.yml`);
+    // A `smoke` claim names one matrix row, so both halves have to belong to
+    // the same row: a suffix on one lane and a lane on another suffix are two
+    // substrings the workflow contains and one row it never runs.
+    const smokeRow = (suffix, lane) =>
+      new RegExp(`\\{[^}]*suffix: '${suffix}'[^}]*lane: '${lane}'[^}]*\\}`, 'u').test(WORKFLOW);
+
+    const unconfigured = hostRows.flatMap(({ evidence, name }) => {
+      const { job, parameters } = parseEvidence(evidence);
+      if (job === 'smoke') {
+        const [suffix, lane] = parameters;
+        return smokeRow(suffix, lane)
+          ? []
+          : [`${name} cites smoke (${suffix}, ${lane}), which the ci.yml smoke matrix does not configure`];
+      }
+      return parameters
+        .filter((parameter) => !WORKFLOW.includes(parameter))
+        .map((parameter) => `${name} cites job parameter ${parameter}, absent from ci.yml`);
+    });
     assert.deepEqual(unconfigured, []);
+
+    // The negative control: the suffix and the lane are each present in the
+    // workflow, and the pair is not a row.
+    assert.equal(smokeRow('darwin-arm64', '22'), false);
   });
 
   it('should keep both Android rows on build evidence alone', () => {

@@ -131,9 +131,10 @@ describe('universal entry point boundary', () => {
 });
 
 describe('built universal entry point', () => {
-  const built = existsSync(path.resolve(root, 'dist/index.mjs')) ? it : it.skip;
-
-  built('should ship no Node builtin and no generated loader in dist/index.mjs', () => {
+  // `nanoraster:test` depends on `build`, so `dist/` is always present: a
+  // conditional skip here would silently drop the only assertion that measures
+  // what the package actually ships.
+  it('should ship no Node builtin and no generated loader in dist/index.mjs', () => {
     const { files, specifiers } = walkOutput('dist/index.mjs');
 
     expect(files).toContain(path.resolve(root, 'dist/renderer.mjs'));
@@ -141,9 +142,10 @@ describe('built universal entry point', () => {
     expect(specifiers.filter((specifier) => referencesNativeLoader(specifier))).toEqual([]);
   });
 
-  built('should reach the generated loader from dist/index.node.mjs', () => {
-    const { specifiers } = walkOutput('dist/index.node.mjs');
+  it('should reach the generated loader from dist/index.node.mjs', () => {
+    const { files, specifiers } = walkOutput('dist/index.node.mjs');
 
+    expect(files).toContain(path.resolve(root, 'dist/index.node.mjs'));
     expect(specifiers).toContain('./native/index.js');
   });
 });

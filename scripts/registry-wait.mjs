@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 const DEFAULT_INTERVAL_MS = 30_000;
+const DEFAULT_MAX_INTERVAL_MS = 300_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 
 /** Read one published version's metadata, or `null` while it is not served. */
@@ -23,13 +24,15 @@ export const npmView = (name, version) => {
  * the integrity `npm pack` recorded for the frozen tarball.
  *
  * npm scans packages at publish time, so a successful publish is invisible to
- * `npm view` for minutes. The wait is bounded rather than optimistic, and an
- * integrity that disagrees with the tested bytes fails immediately instead of
- * being retried.
+ * `npm view` for minutes. The wait is bounded rather than optimistic: each wait
+ * doubles from `intervalMs` up to `maxIntervalMs`, never runs past `timeoutMs`,
+ * and an integrity that disagrees with the tested bytes fails immediately
+ * instead of being retried.
  */
 export const waitForRegistry = async ({
   intervalMs = DEFAULT_INTERVAL_MS,
   log = (message) => process.stdout.write(`${message}\n`),
+  maxIntervalMs = DEFAULT_MAX_INTERVAL_MS,
   now = Date.now,
   sleep = delay,
   tarballs,
@@ -79,7 +82,11 @@ export const waitForRegistry = async ({
         .join(', ');
       throw new Error(`timed out after ${minutes} minutes; unavailable: ${detail}`);
     }
-    await sleep(intervalMs);
+    // Double the wait, cap it, and never sleep past the deadline: a package
+    // that is still invisible after five minutes will not appear faster for
+    // being polled every thirty seconds.
+    const wait = Math.min(intervalMs * 2 ** (attempt - 1), maxIntervalMs, deadline - now());
+    await sleep(wait);
   }
 };
 
@@ -87,6 +94,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const { values } = parseArgs({
     options: {
       'interval-seconds': { default: String(DEFAULT_INTERVAL_MS / 1000), type: 'string' },
+      'max-interval-seconds': { default: String(DEFAULT_MAX_INTERVAL_MS / 1000), type: 'string' },
       tarballs: { type: 'string' },
       'timeout-minutes': { default: String(DEFAULT_TIMEOUT_MS / 60_000), type: 'string' },
     },
@@ -95,6 +103,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     if (!values.tarballs) throw new Error('expected --tarballs <test-tarballs.json>');
     await waitForRegistry({
       intervalMs: Number(values['interval-seconds']) * 1000,
+      maxIntervalMs: Number(values['max-interval-seconds']) * 1000,
       tarballs: JSON.parse(readFileSync(values.tarballs, 'utf8')),
       timeoutMs: Number(values['timeout-minutes']) * 60_000,
     });

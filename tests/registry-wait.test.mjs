@@ -52,7 +52,7 @@ describe('bounded registry visibility wait', () => {
 
     await waitForRegistry(options);
 
-    assert.deepEqual(sleeps, [30_000, 30_000]);
+    assert.deepEqual(sleeps, [30_000, 60_000]);
     assert.equal(logged.at(-1), 'all 2 packages are visible with matching integrity');
     assert.match(logged[0], /^attempt 1 after 0s: 0\/2 packages available$/u);
   });
@@ -94,8 +94,24 @@ describe('bounded registry visibility wait', () => {
       waitForRegistry(options),
       /timed out after 30 minutes; unavailable: nanoraster-darwin-arm64 \(not published\)/u,
     );
-    assert.equal(sleeps.length, 60);
-    assert.deepEqual(new Set(sleeps), new Set([30_000]));
+    // 30 s doubling to the 300 s cap, and the last wait trimmed so the poll
+    // that reports the timeout lands exactly on the thirty-minute deadline.
+    assert.deepEqual(sleeps, [30_000, 60_000, 120_000, 240_000, 300_000, 300_000, 300_000, 300_000, 150_000]);
+    assert.equal(
+      sleeps.reduce((total, wait) => total + wait, 0),
+      30 * 60_000,
+    );
+  });
+
+  it('should double every wait up to the configured ceiling', async () => {
+    const { options, sleeps } = harness({ view: () => null });
+
+    await assert.rejects(
+      waitForRegistry({ ...options, intervalMs: 1_000, maxIntervalMs: 4_000, timeoutMs: 60_000 }),
+      /timed out after 1 minutes/u,
+    );
+    assert.deepEqual(sleeps.slice(0, 5), [1_000, 2_000, 4_000, 4_000, 4_000]);
+    assert.equal(Math.max(...sleeps), 4_000);
   });
 
   it('should keep waiting for a published package whose attestations are missing', async () => {
@@ -117,6 +133,6 @@ describe('bounded registry visibility wait', () => {
       waitForRegistry({ ...options, intervalMs: 5_000, timeoutMs: 20_000 }),
       /timed out after 0\.3 minutes/u,
     );
-    assert.deepEqual(sleeps, [5_000, 5_000, 5_000, 5_000]);
+    assert.deepEqual(sleeps, [5_000, 10_000, 5_000]);
   });
 });

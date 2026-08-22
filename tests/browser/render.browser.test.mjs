@@ -26,7 +26,6 @@ test('the façade describes the adapter without loading the wasm', async () => {
   // one out must still describe it in the published shape.
   for (const options of [undefined, { powerPreference: 'low-power' }]) {
     const adapter = await describeAdapter(options);
-    console.log('adapter:', JSON.stringify(adapter));
     if (adapter === undefined) continue;
     expect(adapter.backend).toBe('webgpu');
     expect(typeof adapter.name).toBe('string');
@@ -150,10 +149,11 @@ test('PBR factors produce deterministic and distinguishable renders', async () =
   expect(matteFirst).not.toEqual(metalFirst);
 });
 
-test('the packed public façade renders deterministically in a browser', async () => {
-  // The published entry point, resolved the way a bundler resolves it: the
-  // `node` condition never applies here, so this proves the universal entry
-  // point carries no Node builtin a browser cannot load.
+test('should render deterministically through the packed public façade', async () => {
+  // `vitest.browser.config.ts` aliases `nanoraster` straight at the frozen
+  // tarball's `dist/index.mjs` — the universal entry a browser bundler picks —
+  // so this runs the shipped bytes and proves they carry no Node builtin a
+  // browser cannot load.
   const options = { width: 192, height: 192, format: 'png' };
   const first = await renderImage(glb, options);
   const second = await renderImage(glb, options);
@@ -166,7 +166,7 @@ test('the packed public façade renders deterministically in a browser', async (
   expect(second.bytes).toEqual(first.bytes);
 });
 
-test('the packed public façade rejects a malformed GLB with a parse error', async () => {
+test('should reject a malformed GLB with a parse error through the packed public façade', async () => {
   const notAGlb = new Uint8Array([1, 2, 3, 4]);
 
   try {

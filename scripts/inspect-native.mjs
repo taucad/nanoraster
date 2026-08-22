@@ -115,6 +115,8 @@ const compareVersions = (left, right) => {
   return 0;
 };
 
+const isVersion = (value) => typeof value === 'string' && /^\d+(?:\.\d+)*$/u.test(value);
+
 const admits = (entry, allowList, { caseInsensitive = false } = {}) => {
   const candidate = caseInsensitive ? entry.toLowerCase() : entry;
   return allowList.some((allowed) =>
@@ -213,9 +215,21 @@ export const parsePeHeader = (text) => {
     class: /^AddressSize: 64bit/mu.test(text) ? '64-bit' : '32-bit',
     machine,
     subsystem: /^ {2}Subsystem: (\S+)/mu.exec(text)?.[1],
-    subsystemVersion: `${major}.${minor}`,
+    // A header llvm-readobj printed without a subsystem version yields no
+    // version at all: `undefined.undefined` would compare as NaN and pass the
+    // floor check silently.
+    subsystemVersion: major === undefined || minor === undefined ? null : `${major}.${minor}`,
   };
 };
+
+/**
+ * Drop a Mach-O image's own install name from its needed libraries.
+ *
+ * `--needed-libs` reports LC_ID_DYLIB alongside the LC_LOAD_DYLIB commands, and
+ * a Rust cdylib's install name is its absolute build path, so leaving it in
+ * would fail every darwin row against the allow-list.
+ */
+export const machoDependencies = (needed, installName) => needed.filter((library) => library !== installName);
 
 export const parseCoffImports = (text) => [...text.matchAll(/^ {2}Name: (\S+)/gmu)].map(([, name]) => name);
 
@@ -305,7 +319,9 @@ export const binaryFindings = (
     if (observed.subsystem !== undefined && !WINDOWS_SUBSYSTEMS.includes(observed.subsystem)) {
       note(`expected a DLL subsystem, found ${observed.subsystem}`);
     }
-    if (compareVersions(observed.minOs, WINDOWS_SUBSYSTEM_VERSION_FLOOR) < 0) {
+    if (!isVersion(observed.minOs)) {
+      note(`expected a numeric subsystem version, found ${observed.minOs}`);
+    } else if (compareVersions(observed.minOs, WINDOWS_SUBSYSTEM_VERSION_FLOOR) < 0) {
       note(`expected subsystem version ${WINDOWS_SUBSYSTEM_VERSION_FLOOR} or later, found ${observed.minOs}`);
     }
   }
@@ -411,9 +427,7 @@ const inspectBinary = (toolDirectory, file, target) => {
     observed.machine = header?.cpuType ?? null;
     observed.minOs = version?.version ?? null;
     observed.platform = version?.platform;
-    // `--needed-libs` reports LC_ID_DYLIB alongside the load commands, and a
-    // Rust cdylib's install name is its absolute build path.
-    observed.needed = observed.needed.filter((library) => library !== installName);
+    observed.needed = machoDependencies(observed.needed, installName);
   } else if (observed.format === 'pe') {
     const header = parsePeHeader(readObject(toolDirectory, file, '--file-headers'));
     observed.class = header?.class ?? null;

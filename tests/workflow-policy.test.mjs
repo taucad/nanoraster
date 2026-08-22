@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
+const root = fileURLToPath(new URL('..', import.meta.url));
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), 'utf8');
 
 const workflow = read('../.github/workflows/ci.yml');
@@ -179,7 +182,16 @@ describe('CI workflow policy', () => {
         assert(rows.length > 0, `${suffix} needs a smoke row`);
         for (const row of rows) assert(row.includes('slow: true'), `${suffix} is a slow lane`);
       }
-      for (const suffix of ['darwin-arm64', 'linux-x64-gnu', 'linux-x64-musl', 'win32-x64-msvc']) {
+      for (const suffix of [
+        'darwin-arm64',
+        'linux-arm64-gnu',
+        'linux-arm64-musl',
+        'linux-x64-gnu',
+        'linux-x64-musl',
+        'win32-arm64-msvc',
+        'win32-ia32-msvc',
+        'win32-x64-msvc',
+      ]) {
         const rows = smokeMatrix().filter((row) => row.includes(`suffix: '${suffix}'`));
         assert(rows.length > 0, `${suffix} needs a smoke row`);
         for (const row of rows) assert(!row.includes('slow: true'), `${suffix} is a fast lane`);
@@ -251,7 +263,29 @@ describe('CI workflow policy', () => {
         'the root guard must treat an existing version as success',
       );
       assert(body.includes('node scripts/validate-pack.mjs'));
-      assert(body.includes('sha256'));
+    });
+
+    it('should publish every platform package before the root package', () => {
+      const body = job('publish');
+      const platforms = body.indexOf('pnpm exec napi pre-publish --cwd release -t npm --no-gh-release');
+      const rootPackage = body.indexOf('npm publish ./release');
+      assert.notEqual(platforms, -1);
+      assert.notEqual(rootPackage, -1);
+      assert(
+        platforms < rootPackage,
+        'platform packages must publish before the root: a root whose optional dependencies do not exist yet is uninstallable',
+      );
+    });
+
+    it('should verify the frozen archive digest before extracting it', () => {
+      const body = job('publish');
+      const check = /sha256sum --check "\$ARCHIVE\.sha256"/u.exec(body);
+      assert(check, 'the publish job must check the .sha256 sidecar of the prepared archive');
+      assert(
+        body.indexOf(check[0]) < body.indexOf('tar -xzf "prepared-release/$ARCHIVE"'),
+        'the digest check must precede the extraction it guards',
+      );
+      assert(job('assemble').includes('sha256sum "$archive" > "$archive.sha256"'));
     });
 
     it('should keep the retired candidate publisher out of the workflow', () => {
@@ -320,6 +354,16 @@ describe('CI workflow policy', () => {
   });
 
   describe('supply chain', () => {
+    it('should check out without persisting the workflow credential', () => {
+      const checkouts = occurrences(workflow, 'uses: actions/checkout@');
+      assert(checkouts > 0, 'ci.yml must check the repository out');
+      assert.equal(
+        occurrences(workflow, 'persist-credentials: false'),
+        checkouts,
+        'every checkout in ci.yml must opt out of persisting credentials',
+      );
+    });
+
     it('should pin every third-party action to a full commit SHA', () => {
       const uses = [...workflow.matchAll(/uses: (\S+)/gu)].map((match) => match[1]);
       assert(uses.length > 0);
@@ -334,6 +378,27 @@ describe('CI workflow policy', () => {
 
     it('should keep the root publish lifecycle build-free', () => {
       assert.equal(packageJson.scripts.prepublishOnly, 'node scripts/validate-pack.mjs');
+    });
+
+    it('should keep the retired native surfaces out of the tree', () => {
+      for (const script of ['scripts/copy-native.mjs', 'scripts/candidate-manifest.mjs']) {
+        assert(!existsSync(new URL(`../${script}`, import.meta.url)), `${script} must not exist`);
+      }
+      assert.deepEqual(JSON.parse(read('../nx.json')).release.projects, ['nanoraster']);
+      assert(
+        !/^\s*-\s*['"]?npm\/\*/mu.test(read('../pnpm-workspace.yaml')),
+        'generated platform directories must not be workspace projects',
+      );
+
+      // The retired three-package layout named its platform packages in source.
+      // Nothing may reintroduce that authority beside `package.json.napi`.
+      const retired = /nativePackageNames?|nativePackages\b/u;
+      const offenders = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
+        .split('\n')
+        .filter((file) => /\.(?:mjs|cjs|js|ts|tsx|json|ya?ml|md|sh|toml)$/u.test(file))
+        .filter((file) => file !== 'tests/workflow-policy.test.mjs')
+        .filter((file) => retired.test(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')));
+      assert.deepEqual(offenders, []);
     });
 
     it('should require every gate before declaring the run green', () => {

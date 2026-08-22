@@ -98,13 +98,25 @@ export const selectTarballs = (manifest, suffix) => {
 };
 
 /**
- * Pick the platform packages out of an installed dependency listing.
+ * Pick the configured platform packages out of an installed dependency listing.
+ *
+ * Only names the release itself configures count: a dependency that merely
+ * shares the root prefix, such as an adjacent `nanoraster-*` tool, is not a
+ * platform package and must not make the smoke report two of them. The clean
+ * room resolves no repository dependency, so the configured set comes from the
+ * frozen tarball manifest (tarball mode) or the installed root's optional
+ * dependencies (registry mode) rather than from a triple parser.
  *
  * @param {string[]} entries - Directory entry names of a `node_modules` directory.
+ * @param {Iterable<string>} configuredNames - Every package name the release configures.
  * @returns {string[]} Sorted platform package names.
  */
-export const detectPlatformPackages = (entries) =>
-  entries.filter((entry) => SUFFIX_PATTERN.test(entry) && entry.startsWith(`${ROOT_PACKAGE}-`)).sort();
+export const detectPlatformPackages = (entries, configuredNames) => {
+  const platforms = new Set(
+    [...configuredNames].filter((name) => name.startsWith(`${ROOT_PACKAGE}-`) && SUFFIX_PATTERN.test(name)),
+  );
+  return entries.filter((entry) => platforms.has(entry)).sort();
+};
 
 /**
  * Render a thrown value and every `cause` beneath it as message and stack.
@@ -144,13 +156,16 @@ const runNpm = (arguments_, cwd) =>
     stdio: 'inherit',
   });
 
-const installedPlatformPackages = (work) =>
-  detectPlatformPackages([
-    ...readdirSync(join(work, 'node_modules')),
-    ...(existsSync(join(work, 'node_modules', ROOT_PACKAGE, 'node_modules'))
-      ? readdirSync(join(work, 'node_modules', ROOT_PACKAGE, 'node_modules'))
-      : []),
-  ]);
+const installedPlatformPackages = (work, configuredNames) =>
+  detectPlatformPackages(
+    [
+      ...readdirSync(join(work, 'node_modules')),
+      ...(existsSync(join(work, 'node_modules', ROOT_PACKAGE, 'node_modules'))
+        ? readdirSync(join(work, 'node_modules', ROOT_PACKAGE, 'node_modules'))
+        : []),
+    ],
+    configuredNames,
+  );
 
 const consumerSource = (helperUrl) => `import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -196,12 +211,12 @@ const main = () => {
   try {
     writeFileSync(join(work, 'package.json'), '{"private":true,"type":"module"}\n');
     let version;
+    let configuredNames;
     if (mode.kind === 'tarball') {
-      const selection = selectTarballs(
-        JSON.parse(readFileSync(resolve(mode.directory, 'test-tarballs.json'), 'utf8')),
-        suffix,
-      );
+      const frozen = JSON.parse(readFileSync(resolve(mode.directory, 'test-tarballs.json'), 'utf8'));
+      const selection = selectTarballs(frozen, suffix);
       version = selection.version;
+      configuredNames = Object.keys(frozen.packages);
       const tarballs = [selection.rootTarball, selection.platformTarball].map((filename) =>
         resolve(mode.directory, filename),
       );
@@ -216,7 +231,14 @@ const main = () => {
       runNpm(['install', ...INSTALL_FLAGS, `${ROOT_PACKAGE}@${version}`], work);
     }
 
-    const installed = installedPlatformPackages(work);
+    const installedManifest = JSON.parse(
+      readFileSync(join(work, 'node_modules', ROOT_PACKAGE, 'package.json'), 'utf8'),
+    );
+    // A published root names its platform packages in `optionalDependencies`;
+    // that is the registry's own record of the configured set.
+    configuredNames ??= Object.keys(installedManifest.optionalDependencies ?? {});
+
+    const installed = installedPlatformPackages(work, configuredNames);
     if (installed.length !== 1 || installed[0] !== platformName) {
       throw new Error(
         `expected exactly one platform package, ${platformName}, but installed: ${installed.join(', ') || 'none'}`,
@@ -236,9 +258,6 @@ const main = () => {
     writeFileSync(join(work, 'consumer.cjs'), cjsProbeSource);
     execFileSync(process.execPath, ['consumer.cjs'], { cwd: work, stdio: 'inherit' });
 
-    const installedManifest = JSON.parse(
-      readFileSync(join(work, 'node_modules', ROOT_PACKAGE, 'package.json'), 'utf8'),
-    );
     if (installedManifest.version !== version) {
       throw new Error(`installed ${ROOT_PACKAGE}@${installedManifest.version}, expected ${version}`);
     }

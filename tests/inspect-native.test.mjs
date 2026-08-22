@@ -5,6 +5,7 @@ import {
   binaryFindings,
   detectBinaryFormat,
   inventoryFindings,
+  machoDependencies,
   parseAndroidApiLevel,
   parseCoffImports,
   parseDylibId,
@@ -217,6 +218,34 @@ describe('llvm-readobj output parsing', () => {
     });
   });
 
+  it('should read no subsystem version from a header that prints none', () => {
+    // SYNTHETIC: the recorded header with both subsystem-version lines removed,
+    // which is what a stripped or truncated PE yields.
+    const withoutVersion = PE_FILE_HEADERS_WIN32_IA32_MSVC.split('\n')
+      .filter((line) => !/SubsystemVersion:/u.test(line))
+      .join('\n');
+
+    assert.equal(parsePeHeader(withoutVersion).subsystemVersion, null);
+  });
+
+  it('should drop the image install name from the Mach-O needed libraries', () => {
+    const needed = parseNeededLibraries(MACHO_NEEDED_LIBRARIES_DARWIN_ARM64);
+    const installName = parseDylibId(MACHO_DYLIB_ID_DARWIN_ARM64);
+
+    const dependencies = machoDependencies(needed, installName);
+
+    assert.deepEqual(
+      dependencies,
+      needed.filter((library) => library !== installName),
+    );
+    assert.equal(needed.length - dependencies.length, 1);
+    assert.ok(!dependencies.includes(installName), 'the install name is not a dependency');
+    assert.ok(
+      dependencies.includes('/usr/lib/libSystem.B.dylib'),
+      'every real load command survives the filter',
+    );
+  });
+
   it('should list every imported DLL, or none', () => {
     assert.deepEqual(parseCoffImports(coffImports('KERNEL32.dll', 'node.exe')), ['KERNEL32.dll', 'node.exe']);
     assert.deepEqual(parseCoffImports(coffImports()), []);
@@ -228,6 +257,10 @@ describe('llvm-readobj output parsing', () => {
     assert.equal(detectBinaryFormat(Buffer.from([0xce, 0xfa, 0xed, 0xfe])), 'macho');
     assert.equal(detectBinaryFormat(Buffer.from([0x4d, 0x5a, 0x90, 0x00])), 'pe');
     assert.equal(detectBinaryFormat(Buffer.from([0x00, 0x61, 0x73, 0x6d])), null);
+    // A truncated upload has no magic to read, so it is unformatted rather
+    // than accidentally matching a two-byte prefix.
+    assert.equal(detectBinaryFormat(Buffer.from([0x4d, 0x5a, 0x90])), null);
+    assert.equal(detectBinaryFormat(Buffer.alloc(0)), null);
   });
 });
 
@@ -251,6 +284,9 @@ describe('native binary assertions', () => {
           minOs: '11.0',
           needed: ['/usr/lib/libSystem.B.dylib', '/System/Library/Frameworks/Metal.framework/Metal'],
         }),
+        // An exported MACOSX_DEPLOYMENT_TARGET must not decide what this case
+        // expects: '' is the explicit "no pin, use the toolchain floor".
+        { macosDeploymentTarget: '' },
       ),
       [],
     );
@@ -388,6 +424,7 @@ describe('native binary assertions', () => {
           minOs: '10.12',
           needed: ['/opt/homebrew/lib/libpng.dylib'],
         }),
+        { macosDeploymentTarget: '' },
       ),
       ['darwin-x64: unexpected dynamic dependency /opt/homebrew/lib/libpng.dylib'],
     );
@@ -434,7 +471,7 @@ describe('native binary assertions', () => {
       minOs: '10.12',
       needed: ['/usr/lib/libSystem.B.dylib'],
     });
-    assert.deepEqual(binaryFindings(target, macho), []);
+    assert.deepEqual(binaryFindings(target, macho, { macosDeploymentTarget: '' }), []);
     assert.deepEqual(binaryFindings(target, macho, { macosDeploymentTarget: '10.13' }), [
       'darwin-x64: expected LC_BUILD_VERSION minos 10.13, found 10.12',
     ]);
@@ -454,6 +491,79 @@ describe('native binary assertions', () => {
       ),
       [],
     );
+  });
+
+  it('should reject a glibc row that proves no symbol-version floor at all', () => {
+    // A binary that links no versioned glibc symbol cannot demonstrate it runs
+    // on 2.17; silence here would publish an unproven floor.
+    assert.deepEqual(binaryFindings(targetFor('linux-x64-gnu'), observation({ glibcMax: null })), [
+      'linux-x64-gnu: requires no versioned glibc symbol, so the 2.17 floor is unproven',
+    ]);
+  });
+
+  it('should reject a Mach-O slice built for a platform other than macOS', () => {
+    assert.deepEqual(
+      binaryFindings(
+        targetFor('darwin-arm64'),
+        observation({
+          class: '64-bit',
+          endianness: null,
+          format: 'macho',
+          machine: 'Arm64',
+          minOs: '11.0',
+          needed: ['/usr/lib/libSystem.B.dylib'],
+          platform: 'ios',
+        }),
+        { macosDeploymentTarget: '' },
+      ),
+      ['darwin-arm64: expected the macos build platform, found ios'],
+    );
+  });
+
+  it('should reject a PE image that is not linked as a library', () => {
+    const pe = (overrides) =>
+      binaryFindings(
+        targetFor('win32-x64-msvc'),
+        observation({
+          endianness: null,
+          format: 'pe',
+          machine: 'IMAGE_FILE_MACHINE_AMD64',
+          minOs: '6.0',
+          needed: ['KERNEL32.dll'],
+          subsystem: 'IMAGE_SUBSYSTEM_WINDOWS_CUI',
+          ...overrides,
+        }),
+      );
+
+    assert.deepEqual(pe({ subsystem: 'IMAGE_SUBSYSTEM_EFI_APPLICATION' }), [
+      'win32-x64-msvc: expected a DLL subsystem, found IMAGE_SUBSYSTEM_EFI_APPLICATION',
+    ]);
+    assert.deepEqual(pe({ minOs: '5.1' }), [
+      'win32-x64-msvc: expected subsystem version 6.0 or later, found 5.1',
+    ]);
+  });
+
+  it('should reject a PE image whose subsystem version is absent or unparsed', () => {
+    const pe = (minOs) =>
+      binaryFindings(
+        targetFor('win32-ia32-msvc'),
+        observation({
+          class: '32-bit',
+          endianness: null,
+          format: 'pe',
+          machine: 'IMAGE_FILE_MACHINE_I386',
+          minOs,
+          needed: ['KERNEL32.dll'],
+          subsystem: 'IMAGE_SUBSYSTEM_WINDOWS_GUI',
+        }),
+      );
+
+    assert.deepEqual(pe(null), ['win32-ia32-msvc: expected a numeric subsystem version, found null']);
+    // The regression: a header parsed without its version lines once produced
+    // this string, which compared as NaN and passed the floor check silently.
+    assert.deepEqual(pe('undefined.undefined'), [
+      'win32-ia32-msvc: expected a numeric subsystem version, found undefined.undefined',
+    ]);
   });
 
   it('should reject a binary stored in the wrong container format', () => {

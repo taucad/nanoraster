@@ -77,6 +77,19 @@ const auditFor = (names, attempt) => ({
   verified: names.map((name) => verifiedEntry(name, attempt)),
 });
 
+/**
+ * Re-mint one package's DSSE payload after mutating the decoded statement, so a
+ * rejection case exercises the same base64 decode path the verifier runs.
+ */
+const auditWithStatement = (name, mutate) => {
+  const audit = structuredClone(auditFor(expectedNames));
+  const [bundle] = audit.verified.find((entry) => entry.name === name).attestationBundles;
+  const statement = JSON.parse(Buffer.from(bundle.bundle.dsseEnvelope.payload, 'base64').toString('utf8'));
+  mutate(statement);
+  bundle.bundle.dsseEnvelope.payload = Buffer.from(JSON.stringify(statement)).toString('base64');
+  return audit;
+};
+
 const options = {
   audit: auditFor(expectedNames),
   commit,
@@ -172,6 +185,56 @@ describe('release attestation verification', () => {
       () => verifyReleaseAttestations({ ...options, audit }),
       /nanoraster-android-arm64@0\.1\.0 has no verified npm signature/u,
     );
+  });
+
+  it('should reject provenance minted by another repository, workflow, branch, or builder', () => {
+    const forgeries = [
+      [
+        'nanoraster',
+        (statement) => {
+          statement.predicate.buildDefinition.externalParameters.workflow.repository =
+            'https://github.com/attacker/nanoraster';
+        },
+        'nanoraster has the wrong source repository',
+      ],
+      [
+        'nanoraster-linux-x64-gnu',
+        (statement) => {
+          statement.predicate.buildDefinition.externalParameters.workflow.path =
+            '.github/workflows/attacker.yml';
+        },
+        'nanoraster-linux-x64-gnu has the wrong source workflow',
+      ],
+      [
+        'nanoraster-darwin-arm64',
+        (statement) => {
+          statement.predicate.buildDefinition.externalParameters.workflow.ref = 'refs/heads/attacker';
+        },
+        'nanoraster-darwin-arm64 was not built from main',
+      ],
+      [
+        'nanoraster-win32-x64-msvc',
+        (statement) => {
+          statement.predicate.runDetails.builder.id = 'https://github.com/actions/runner/self-hosted';
+        },
+        'nanoraster-win32-x64-msvc used the wrong builder',
+      ],
+      [
+        'nanoraster-freebsd-x64',
+        (statement) => {
+          statement.predicate.buildDefinition.buildType = 'https://example.invalid/buildtype/v1';
+        },
+        'nanoraster-freebsd-x64 has the wrong build type',
+      ],
+    ];
+
+    for (const [name, mutate, message] of forgeries) {
+      assert.throws(
+        () => verifyReleaseAttestations({ ...options, audit: auditWithStatement(name, mutate) }),
+        { message, name: 'Error' },
+        message,
+      );
+    }
   });
 
   it('should reject a package published without a provenance attestation', () => {

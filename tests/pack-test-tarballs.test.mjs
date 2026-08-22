@@ -124,6 +124,9 @@ describe('frozen test tarball manifest', () => {
     assert.equal(packed.version, '9.9.9');
     assert.equal(packed.filename, 'nanoraster-linux-x64-gnu-9.9.9.tgz');
     assert.match(packed.integrity, /^sha512-[\w+/=]+$/u);
-    assert.equal(readFileSync(join(destination, packed.filename)).length > 0, true);
+    // The recorded filename names a real gzip member, not an empty placeholder.
+    const bytes = readFileSync(join(destination, packed.filename));
+    assert.deepEqual([...bytes.subarray(0, 2)], [0x1f, 0x8b], 'the packed file is a gzip stream');
+    assert(bytes.length > 2);
   });
 });
