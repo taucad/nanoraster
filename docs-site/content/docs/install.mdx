@@ -4,7 +4,7 @@ description: Add the package, understand the native and wasm artifacts, and conf
 ---
 
 nanoraster is one JavaScript package that loads a different render artifact
-per host: Node.js 24 or newer, or a browser with WebGPU enabled.
+per host: Node.js 22.13 or newer, or a browser with WebGPU enabled.
 
 ```bash tab="npm"
 npm install nanoraster
@@ -27,19 +27,73 @@ The package selects its render artifact at runtime; nothing needs configuring.
 | Node.js | Native N-API binary            | Platform `optionalDependencies` |
 | Browser | WebAssembly module plus WebGPU | The `nanoraster/wasm` subpath   |
 
-Three platform packages are declared as optional dependencies, and your package
-manager installs only the one matching your machine:
+Sixteen platform packages are declared as optional dependencies. Each one
+declares the `os`, `cpu` and `libc` it serves, and your package manager
+installs the single package matching your machine.
 
-| Package                     | Platform                |
-| --------------------------- | ----------------------- |
-| `nanoraster-darwin-arm64`   | macOS on Apple Silicon  |
-| `nanoraster-linux-x64-gnu`  | Linux on x64 with glibc |
-| `nanoraster-win32-x64-msvc` | Windows on x64          |
+| Package                           | Platform                       |
+| --------------------------------- | ------------------------------ |
+| `nanoraster-darwin-arm64`         | macOS on Apple Silicon         |
+| `nanoraster-darwin-x64`           | macOS on Intel                 |
+| `nanoraster-linux-x64-gnu`        | Linux on x64 with glibc        |
+| `nanoraster-linux-x64-musl`       | Linux on x64 with musl         |
+| `nanoraster-linux-arm64-gnu`      | Linux on arm64 with glibc      |
+| `nanoraster-linux-arm64-musl`     | Linux on arm64 with musl       |
+| `nanoraster-linux-arm-gnueabihf`  | Linux on armv7 with glibc      |
+| `nanoraster-linux-arm-musleabihf` | Linux on armv7 with musl       |
+| `nanoraster-linux-ppc64-gnu`      | Linux on ppc64le with glibc    |
+| `nanoraster-linux-s390x-gnu`      | Linux on s390x with glibc      |
+| `nanoraster-win32-x64-msvc`       | Windows on x64                 |
+| `nanoraster-win32-arm64-msvc`     | Windows on arm64               |
+| `nanoraster-win32-ia32-msvc`      | Windows on x86                 |
+| `nanoraster-freebsd-x64`          | FreeBSD on x64                 |
+| `nanoraster-android-arm64`        | Android on arm64, experimental |
+| `nanoraster-android-arm-eabi`     | Android on armv7, experimental |
 
-Because they are optional, an install on an unlisted platform succeeds and
-then fails at render time. Check your host against
+The Android packages are experimental: their binaries are built and inspected,
+and no job renders on an Android device. The armv7 and Windows x86 packages run
+on the Node.js 22 line, which Node.js 24 and 26 do not publish binaries for.
+Because platform packages are optional, an install on an unlisted platform
+succeeds and then fails at render time. Check your host against
 the [compatibility matrix](https://github.com/taucad/nanoraster/blob/main/compatibility.md)
 before deploying.
+
+## Node.js, browsers and bundlers
+
+The package exports a `node` condition. Node.js, Bun, a Vite SSR build and a
+Next.js server build resolve it and reach the native binary. Everything else —
+a browser bundle from Vite, webpack 5, Rspack or Next.js — resolves the default
+entry, which imports no Node.js builtin and never references the native loader,
+so no bundler needs a `fs` or `module` fallback.
+
+Keep nanoraster external in a server bundle, so the native binary is loaded
+from disk instead of being inlined:
+
+```js title="next.config.js"
+export default { serverExternalPackages: ['nanoraster'] };
+```
+
+```js title="vite.config.js"
+export default { ssr: { external: ['nanoraster'] } };
+```
+
+## Installing for another platform
+
+Building an image for a platform other than the one you install on — a Linux
+container assembled on macOS, or an arm64 image built on x64 — needs that
+platform's package instead of the host's. pnpm and Yarn Berry take the set to
+install:
+
+```yaml title="pnpm-workspace.yaml"
+supportedArchitectures:
+  os: [linux]
+  cpu: [x64, arm64]
+  libc: [glibc, musl]
+```
+
+Yarn classic has no `libc` selector and installs both Linux packages for an
+architecture. The loader probes the host at runtime and loads the matching
+binary either way, so the cost is disk space.
 
 ## Verify the install
 

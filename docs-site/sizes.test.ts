@@ -8,6 +8,14 @@ import { formatSize } from './components/size-strip';
 import sizes from './lib/sizes.json';
 
 const ROOT = resolve(import.meta.dirname, '..');
+/** Platform suffixes the repository's compatibility matrix documents; prose repeats some names. */
+const documentedPlatforms = [
+  ...new Set(
+    [...readFileSync(resolve(ROOT, 'compatibility.md'), 'utf8').matchAll(/`nanoraster-([\w-]+)`/gu)].map(
+      ([, platform]) => platform,
+    ),
+  ),
+];
 const wasm = readFileSync(resolve(import.meta.dirname, 'public/demo/render_wasm_bg.wasm'));
 const distribution = resolve(ROOT, 'dist/index.mjs');
 // The JS figure needs a built entrypoint; `pnpm run build` at the repo root produces one.
@@ -30,9 +38,21 @@ describe('published size figures', () => {
     });
   });
 
+  // `measure-sizes.mjs` derives these keys from the published root manifest's optional
+  // dependencies, so they trail the registry: a subset of the documented platforms until a
+  // release publishes them all, and the whole set afterwards. Either way the site never quotes
+  // a platform the compatibility matrix does not document.
   it('carries a plausible native footprint for every published platform', () => {
-    expect(Object.keys(sizes.native)).toEqual(['darwin-arm64', 'linux-x64-gnu', 'win32-x64-msvc']);
+    const measured = Object.keys(sizes.native).toSorted();
+    expect(measured).toEqual(
+      documentedPlatforms.filter((platform) => measured.includes(platform)).toSorted(),
+    );
+    expect(measured).not.toEqual([]);
     for (const bytes of Object.values(sizes.native)) expect(bytes).toBeGreaterThan(1_000_000);
+  });
+
+  it('measures the platform the size strip quotes', () => {
+    expect(sizes.native).toHaveProperty('darwin-arm64');
   });
 
   it('formats bytes as the strip prints them', () => {

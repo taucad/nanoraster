@@ -106,7 +106,8 @@ error; [Reuse the renderer](reuse-the-renderer) covers the lifetime.
 `SharedArrayBuffer`, so COOP/COEP headers are not needed.
 
 **Node and browser from one codebase.** The import specifier is the same in
-both, and nothing in your code needs to branch.
+both, and nothing in your code needs to branch. The browser entry imports no
+Node.js builtin and resolves the wasm asset without bundler configuration.
 
 **Main-thread renders.** The one-shot functions work there too, at the price
 of readback and encode competing with input.

@@ -9,7 +9,8 @@ export const formatSize = (bytes: number): string => {
   return `${kilobytes >= 100 ? kilobytes.toFixed(0) : kilobytes.toFixed(1)} KB`;
 };
 
-// The strip quotes the darwin-arm64 build (the blueprint's ruling); the hint lists all three.
+// One cell, one number: the strip quotes darwin-arm64 as the representative native build, and
+// the hover hint carries every platform the size measurement covers.
 const nativeHint = `native addon per platform: ${Object.entries(sizes.native)
   .map(([platform, bytes]) => `${platform} ${formatSize(bytes)}`)
   .join(', ')}`;
