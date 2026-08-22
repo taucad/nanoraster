@@ -2,6 +2,7 @@ import { beforeAll, expect, test } from 'vitest';
 import * as candidate from 'nanoraster-wasm-candidate';
 import init, { Renderer, render_image } from 'nanoraster-wasm-candidate';
 import initBench, { codec_conformance, render_image as renderImageBench } from 'nanoraster-wasm-bench';
+import { RenderError, renderImage } from 'nanoraster';
 
 import { describeAdapter } from '../../src/describe-adapter.ts';
 import { withPbrFactors } from '../pbr-fixture.mjs';
@@ -25,7 +26,6 @@ test('the façade describes the adapter without loading the wasm', async () => {
   // one out must still describe it in the published shape.
   for (const options of [undefined, { powerPreference: 'low-power' }]) {
     const adapter = await describeAdapter(options);
-    console.log('adapter:', JSON.stringify(adapter));
     if (adapter === undefined) continue;
     expect(adapter.backend).toBe('webgpu');
     expect(typeof adapter.name).toBe('string');
@@ -147,4 +147,34 @@ test('PBR factors produce deterministic and distinguishable renders', async () =
   expect(matteFirst).toEqual(matteSecond);
   expect(metalFirst).toEqual(metalSecond);
   expect(matteFirst).not.toEqual(metalFirst);
+});
+
+test('should render deterministically through the packed public façade', async () => {
+  // `vitest.browser.config.ts` aliases `nanoraster` straight at the frozen
+  // tarball's `dist/index.mjs` — the universal entry a browser bundler picks —
+  // so this runs the shipped bytes and proves they carry no Node builtin a
+  // browser cannot load.
+  const options = { width: 192, height: 192, format: 'png' };
+  const first = await renderImage(glb, options);
+  const second = await renderImage(glb, options);
+
+  expect(first.name).toBe('render.png');
+  expect(first.mimeType).toBe('image/png');
+  expect(first.width).toBe(192);
+  expect(first.height).toBe(192);
+  expect([...first.bytes.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  expect(second.bytes).toEqual(first.bytes);
+});
+
+test('should reject a malformed GLB with a parse error through the packed public façade', async () => {
+  const notAGlb = new Uint8Array([1, 2, 3, 4]);
+
+  try {
+    await renderImage(notAGlb, { width: 64, height: 64, format: 'png' });
+    expect.fail('a malformed GLB must not render');
+  } catch (error) {
+    expect(error).toBeInstanceOf(RenderError);
+    expect(error.code).toBe('parse');
+    expect(error.isGpuFault).toBe(false);
+  }
 });

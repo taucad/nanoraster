@@ -94,16 +94,18 @@ jobs:
           pnpm release:prepare -- --from-plans
 
           # nx has left consumed plan files on disk before; every plan affects
-          # the fixed group, so every plan is consumed by every release.
+          # the root package, so every plan is consumed by every release.
           git rm --quiet --force '.nx/version-plans/*.md'
 
           # Stage the release files explicitly: the quality gate inside
           # release:prepare regenerates committed artifacts (sizes.json) that
-          # must stay out of the release commit.
-          git add CHANGELOG.md package.json pnpm-lock.yaml \
-            npm/darwin-arm64/package.json npm/linux-x64-gnu/package.json npm/win32-x64-msvc/package.json
+          # must stay out of the release commit. A root version bump rewrites
+          # only the changelog and the root manifest — the platform packages are
+          # generated during release assembly, and the lockfile records no
+          # importer version, so neither appears here.
+          git add CHANGELOG.md package.json
           staged=$(git diff --cached --name-only)
-          allowed='^(CHANGELOG\.md|package\.json|pnpm-lock\.yaml|npm/(darwin-arm64|linux-x64-gnu|win32-x64-msvc)/package\.json|\.nx/version-plans/.+\.md)$'
+          allowed='^(CHANGELOG\.md|package\.json|\.nx/version-plans/.+\.md)$'
           unexpected=$(grep -Ev "$allowed" <<< "$staged" || true)
           if [ -n "$unexpected" ]; then
             echo "::error::release generation changed unexpected files: $unexpected"
@@ -136,8 +138,10 @@ jobs:
         run: |
           set -euo pipefail
           body=$(cat <<BODYEOF
-          Releases nanoraster **v${VERSION}** (from v${PREVIOUS_VERSION}). The fixed group ships all
-          four packages at this version; the consumed Version Plans dictate the bump:
+          Releases nanoraster **v${VERSION}** (from v${PREVIOUS_VERSION}). This is one root
+          release; CI materializes the seventeen registry packages — the root package and its
+          sixteen native platform packages — at this version. The consumed Version Plans
+          dictate the bump:
 
           ${PLANS}
 

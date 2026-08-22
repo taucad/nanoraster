@@ -1,15 +1,119 @@
 # Compatibility
 
-| Host        | Supported | CI evidence                             |
-| ----------- | --------- | --------------------------------------- |
-| Node 24.0.0 | ✅        | `node (24.0.0)`                         |
-| Node 26     | ✅        | `node (26)`                             |
-| Chromium    | ✅        | `browser (chromium)`                    |
-| Firefox     | ✅        | `browser (firefox)`                     |
-| WebKit      | ✅        | `browser (webkit)`                      |
-| Linux x64   | ✅        | `native (ubuntu-24.04, linux-x64-gnu)`  |
-| macOS arm64 | ✅        | `native (macos-14, darwin-arm64)`       |
-| Windows x64 | ✅        | `native (windows-2022, win32-x64-msvc)` |
+Every mark in the tables below names the job in `.github/workflows/ci.yml` that
+proves it. `✅` means a render on that host is required before a release.
+`Pending` means the package is built, inspected and published, and the named
+render job promotes it on its first green run. `Partial` means the named job
+proves the install, the load and the adapter, and a driver defect outside this
+package blocks the render itself. `Experimental` means the package is built and
+its binary inspected, with no render evidence.
+
+## Runtimes
+
+| Host          | Support | CI evidence          |
+| ------------- | ------- | -------------------- |
+| Node.js 22.13 | ✅      | `node (22.13.0)`     |
+| Node.js 26    | ✅      | `node (26)`          |
+| Chromium      | ✅      | `browser (chromium)` |
+| Firefox       | ✅      | `browser (firefox)`  |
+| WebKit        | ✅      | `browser (webkit)`   |
+
+## Native hosts
+
+Each release publishes sixteen platform packages; a package manager installs
+the one whose `os`, `cpu` and `libc` match the host, and the native loader picks
+the binary out of it.
+
+| Platform package                  | Host                          | Support      | CI evidence                        |
+| --------------------------------- | ----------------------------- | ------------ | ---------------------------------- |
+| `nanoraster-darwin-arm64`         | macOS on Apple Silicon        | ✅           | `smoke (darwin-arm64, 26)`         |
+| `nanoraster-darwin-x64`           | macOS on Intel                | Pending      | `smoke (darwin-x64, 26)`           |
+| `nanoraster-linux-x64-gnu`        | Linux x64, glibc              | ✅           | `smoke (linux-x64-gnu, 26)`        |
+| `nanoraster-linux-x64-musl`       | Linux x64, musl               | Pending      | `smoke (linux-x64-musl, 26)`       |
+| `nanoraster-linux-arm64-gnu`      | Linux arm64, glibc            | Pending      | `smoke (linux-arm64-gnu, 26)`      |
+| `nanoraster-linux-arm64-musl`     | Linux arm64, musl             | Pending      | `smoke (linux-arm64-musl, 26)`     |
+| `nanoraster-linux-arm-gnueabihf`  | Linux armv7 hard-float, glibc | Pending      | `smoke (linux-arm-gnueabihf, 22)`  |
+| `nanoraster-linux-arm-musleabihf` | Linux armv7 hard-float, musl  | Partial      | `smoke (linux-arm-musleabihf, 22)` |
+| `nanoraster-linux-ppc64-gnu`      | Linux ppc64le, glibc          | Pending      | `smoke (linux-ppc64-gnu, 26)`      |
+| `nanoraster-linux-s390x-gnu`      | Linux s390x, glibc            | Pending      | `smoke (linux-s390x-gnu, 26)`      |
+| `nanoraster-win32-x64-msvc`       | Windows on x64                | ✅           | `smoke (win32-x64-msvc, 26)`       |
+| `nanoraster-win32-arm64-msvc`     | Windows on arm64              | Pending      | `smoke (win32-arm64-msvc, 26)`     |
+| `nanoraster-win32-ia32-msvc`      | Windows on x86                | Pending      | `smoke (win32-ia32-msvc, 22)`      |
+| `nanoraster-freebsd-x64`          | FreeBSD on x64                | Pending      | `smoke (freebsd-x64, 22)`          |
+| `nanoraster-android-arm64`        | Android on arm64              | Experimental | `build (aarch64-linux-android)`    |
+| `nanoraster-android-arm-eabi`     | Android on armv7              | Experimental | `build (armv7-linux-androideabi)`  |
+
+### Node.js line per host
+
+The floor is Node.js 22.13.0. Node.js 24 and 26 publish no official
+`linux-armv7l` or `win-x86` build, so `nanoraster-linux-arm-gnueabihf`,
+`nanoraster-linux-arm-musleabihf` and `nanoraster-win32-ia32-msvc` are exercised
+on the Node.js 22 line and inherit its 2027-04-30 end of life. Every other host
+runs the Node.js 22.13 and Node.js 26 lanes. A later line that restores those
+downloads extends the three rows; without one they retire with Node.js 22.
+
+The official Node.js binaries link `libatomic` from Node.js 26 on, as the
+Node.js 22 armv7 build already does. Every published `node` image carries that
+library and a bare `ubuntu:24.04` does not, so a container that unpacks the
+tarball itself, as the ppc64le and s390x smoke rows do, installs `libatomic1`
+beside it.
+
+### glibc, musl and endianness
+
+Linux x64, arm64, ppc64le and s390x packages declare `libc`, so a package
+manager on Alpine takes the musl package and one on Debian or Ubuntu takes the
+glibc package. NAPI-RS emits no `libc` selector for the two armv7 packages, and
+Yarn classic ignores `libc` everywhere; in both cases both packages install and
+the loader probes the host and loads the matching binary. The glibc packages link against symbols up to `GLIBC_2.17`.
+
+npm's `cpu: ppc64` selector does not distinguish endianness, and the package
+holds a little-endian `powerpc64le` binary, so a big-endian ppc64 host is
+rejected with a `RenderError` carrying code `adapter-unavailable` rather than
+loading a binary it cannot run. `nanoraster-linux-s390x-gnu` is the big-endian
+package, and its render job is what proves the encoders produce identical bytes
+there.
+
+### Alpine and other musl hosts
+
+A software Vulkan render on musl needs more thread stack than musl's 128 KiB
+default. Mesa's lavapipe compiles a shader variant on a driver thread it creates
+with default attributes, and LLVM 22 code generation for AArch64 overruns
+anything below 512 KiB, taking the host process down with it. The first adapter
+request raises the process-wide default to 8 MiB, the size glibc gives the same
+thread. That default reaches every thread the process creates after it with
+default attributes; threads that carry an explicit stack size, including
+Node.js's own worker pool and every thread Rust spawns, keep theirs.
+
+### armv7 hard-float
+
+Both armv7 rows run under `qemu-user` on hosted x64 runners, and that is where
+the two part. `nanoraster-linux-arm-gnueabihf` renders the fixture on Debian
+bookworm, through its mesa 22.3.6 lavapipe. Its smoke row names that ICD in
+`VK_DRIVER_FILES` because the emulated 32-bit Vulkan loader finds no driver
+when it scans the manifest directory itself, which is an emulation artefact
+rather than something a real armv7 host asks of a consumer.
+
+`nanoraster-linux-arm-musleabihf` installs, loads and enumerates its lavapipe
+adapter, and the render itself faults inside mesa. Lavapipe from mesa 23 onwards
+crashes in `handle_vertex_buffers2`, in
+`src/gallium/frontends/lavapipe/lvp_execute.c`, on 32-bit ARM, replaying a
+vertex-buffer bind through a stride pointer it never wrote. Every Alpine tag
+carrying Node.js 22.13 or later ships a mesa past that break, so the row expects
+the fault, and the render evidence stays open until mesa fixes it.
+
+Neither package is verified on real armv7 hardware, or against a hardware
+Vulkan driver.
+
+### FreeBSD and Android
+
+FreeBSD installs from npm like any other host and needs a Vulkan driver on the
+system (`graphics/mesa-dri` plus `vulkan-loader`, with `VK_DRIVER_FILES` naming
+the lavapipe ICD when there is no hardware driver).
+
+The Android packages carry inspected ELF binaries with the same selectors as
+every other row, and hosted runners have no ARM GPU device to render on. They
+become supported when a required job renders through the public API on real
+arm64 and armv7 hardware.
 
 ## Render profile
 

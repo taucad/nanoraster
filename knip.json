@@ -6,7 +6,7 @@
       "entry": [
         "scripts/*.mjs",
         "src/**/*.test.ts",
-        "src/index.test-d.ts",
+        "src/**/*.test-d.ts",
         "tests/**/*.test.mjs",
         "*.config.ts",
         "*.test.ts"

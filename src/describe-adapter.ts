@@ -3,7 +3,7 @@
 import type { CreateRendererOptions } from '#create-renderer.js';
 import { serializeCreateOptions } from '#create-renderer.js';
 import { RenderError } from '#render-error.js';
-import { describeAdapterRaw, isNodeRuntime } from '#renderer.js';
+import { describeAdapterRaw, usesNativeBackend } from '#renderer.js';
 
 /**
  * The GPU adapter a renderer binds.
@@ -103,7 +103,7 @@ const nativeAdapterInfo = async (optionsJson: string | undefined): Promise<Adapt
 export const describeAdapter = async (options?: CreateRendererOptions): Promise<AdapterInfo | undefined> => {
   try {
     const optionsJson = serializeCreateOptions(options);
-    return isNodeRuntime()
+    return usesNativeBackend()
       ? await nativeAdapterInfo(optionsJson)
       : await browserAdapterInfo(options?.powerPreference);
   } catch (error) {

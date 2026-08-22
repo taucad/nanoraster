@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     include: [
       'src/**/*.test.ts',
+      'tests/import-graph.test.mjs',
       'tests/packaging.test.mjs',
       'prose-quality.test.ts',
       'readme-shape.test.ts',

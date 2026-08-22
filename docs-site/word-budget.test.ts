@@ -12,6 +12,11 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // paying for it here; a new page needs a row before it can ship. Measured
 // 2026-08-22 after the docs-slimming pass; untouched pages carry their
 // measured count plus a little slack.
+//
+// `install.mdx` and the site ceiling were raised for the sixteen-target native
+// matrix: sixteen platform-package rows in place of three, the `node` export
+// condition and server-bundler externalization, and cross-platform installs
+// through `supportedArchitectures`.
 const pageCeilings: Readonly<Record<string, number>> = {
   'api.mdx': 2_320,
   'guides/format-and-annotate.mdx': 750,
@@ -25,10 +30,10 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'guides/work-with-raw-pixels.mdx': 700,
   'how-it-works.mdx': 1_150,
   'index.mdx': 330,
-  'install.mdx': 360,
+  'install.mdx': 740,
   'tutorial.mdx': 600,
 };
-const siteCeiling = 10_300;
+const siteCeiling = 10_700;
 
 const pages = globSync('**/*.mdx', { cwd: docsDir })
   .toSorted()

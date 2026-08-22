@@ -2,9 +2,9 @@ import { defineConfig, type UserConfig } from 'tsdown';
 
 const config: UserConfig = {
   clean: true,
-  deps: { neverBundle: [/^\.\/wasm\//u] },
+  deps: { neverBundle: [/^\.\/native\//u, /^\.\/wasm\//u] },
   dts: true,
-  entry: ['src/index.ts'],
+  entry: ['src/index.node.ts', 'src/index.ts'],
   format: 'esm',
   minify: true,
   outDir: 'dist',

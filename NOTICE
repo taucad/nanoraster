@@ -16,3 +16,9 @@ decoder, and animation fixes. On top of those, the fork keeps nanoraster's
 deterministic Huffman tie-break, which holds lossless output identical between
 32-bit and 64-bit targets. Its source and license text are retained under
 rust/vendor/image-webp/.
+
+This product includes wgpu-hal 30.0.0 from the gfx-rs/wgpu project, licensed
+under MIT OR Apache-2.0, with one nanoraster patch: Direct3D 12 pipeline state
+stream subobjects are aligned to the pointer size rather than to eight bytes,
+which lets the DX12 backend create pipelines on 32-bit Windows. Its source and
+license text are retained under rust/vendor/wgpu-hal/.
