@@ -18,22 +18,36 @@ afterEach(() => {
   vi.resetModules();
 });
 
+/**
+ * The budget for the one test below that loads the real addon instead of a
+ * mock. It waits on the host: `dlopen` of a multi-megabyte binding that links
+ * wgpu and the platform's Vulkan or Metal stack, then one adapter enumeration
+ * through it. That is about 30 ms of work in a Linux container on lavapipe and
+ * 440 ms in this suite on an idle machine, but it is wall clock on a shared CI
+ * runner, where the 5 s default has already lost the race once.
+ */
+const HOST_ADDON_TIMEOUT = 60_000;
+
 describe('nativeAddonLoader', () => {
-  it('should load the generated loader that this host built', async () => {
-    const { nativeAddonLoader } = await import('#native-backend.js');
+  it(
+    'should load the generated loader that this host built',
+    async () => {
+      const { nativeAddonLoader } = await import('#native-backend.js');
 
-    const native = await nativeAddonLoader();
+      const native = await nativeAddonLoader();
 
-    // Calling the addon is what proves the loader resolved a real binding: the
-    // probe answers with the adapter JSON this host would bind, or `null` where
-    // there is no adapter at all.
-    const adapter = await native.describeAdapter();
+      // Calling the addon is what proves the loader resolved a real binding: the
+      // probe answers with the adapter JSON this host would bind, or `null` where
+      // there is no adapter at all.
+      const adapter = await native.describeAdapter();
 
-    expect(adapter === null || typeof adapter === 'string').toBe(true);
-    if (typeof adapter === 'string') {
-      expect(JSON.parse(adapter)).toMatchObject({ backend: expect.any(String) });
-    }
-  });
+      expect(adapter === null || typeof adapter === 'string').toBe(true);
+      if (typeof adapter === 'string') {
+        expect(JSON.parse(adapter)).toMatchObject({ backend: expect.any(String) });
+      }
+    },
+    HOST_ADDON_TIMEOUT,
+  );
 
   it('should reject a big-endian ppc64 host before reaching the loader', async () => {
     Object.defineProperty(process, 'arch', { configurable: true, value: 'ppc64' });

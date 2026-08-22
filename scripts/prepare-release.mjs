@@ -69,6 +69,21 @@ export const withoutNonHumanAuthors = (changelog) => {
 
 const packageVersion = () => JSON.parse(readFileSync(PACKAGE_PATH, 'utf8')).version;
 
+/**
+ * Run the quality gate once, against the committed tree, in this terminal.
+ *
+ * The gate belongs here rather than in nx's `version.preVersionCommand`: nx
+ * runs a pre-version command on every `releaseVersion` call, and preparation
+ * makes two — the dry version preview and the real bump — so the second run
+ * grades a tree the first one regenerates, where a target that passes on the
+ * commit can fail. nx also runs that command with `stdio: 'pipe'` and reports
+ * only the child's stderr, which drops the findings of every gate that reports
+ * on stdout, and leaves a failed release with nothing printed.
+ */
+const runQualityGate = () => {
+  execFileSync('pnpm', ['nx', 'run', `${PROJECT}:quality`], { stdio: 'inherit' });
+};
+
 const assertClean = () => {
   const status = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' });
   assert(status.length === 0, 'release preparation requires a clean worktree');
@@ -97,11 +112,12 @@ export const validateRequestedVersion = ({ currentVersion, plannedVersion, reque
 };
 
 const prepare = async ({ dryRun, requestedVersion }) => {
-  // Asserted on entry: the quality gate `preVersionCommand` runs regenerates
-  // committed artifacts (docs-site/lib/sizes.json), so the tree cannot stay
-  // clean once preparation starts. Release-commit purity is enforced by the
-  // caller staging only release files, and by the CI release policy.
+  // Asserted on entry: the quality gate regenerates committed artifacts
+  // (docs-site/lib/sizes.json), so the tree cannot stay clean once preparation
+  // starts. Release-commit purity is enforced by the caller staging only
+  // release files, and by the CI release policy.
   if (!dryRun) assertClean();
+  runQualityGate();
   const currentVersion = packageVersion();
   const preview = await releaseVersion({
     ...GIT_OPTIONS,
