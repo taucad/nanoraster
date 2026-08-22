@@ -4,10 +4,10 @@ import { DynamicCodeBlock } from 'fumadocs-ui/components/dynamic-codeblock';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  cleanLabel,
   demoControls,
   isRawDemo,
   readDemoLights,
-  readDemoLabel,
   readDemoOptions,
   readDemoViews,
   substituteDemoValues,
@@ -71,7 +71,6 @@ export const RenderDemo = ({
 }): React.JSX.Element => {
   const views = useMemo(() => readDemoViews(code), [code]);
   const lights = useMemo(() => readDemoLights(code), [code]);
-  const label = useMemo(() => readDemoLabel(code), [code]);
   const batch = views.length > 0;
   const raw = isRawDemo(code);
   const controls = demoControls(code).filter((control) => !batch || !angleKeys.has(control.key));
@@ -108,7 +107,7 @@ export const RenderDemo = ({
         try {
           const [renderer, source] = await Promise.all([loadWasmRenderer(), loadDemoModel()]);
 
-          const { material, request } = buildDemoRequest(values, { label, lights, size: RENDER_SIZE, views });
+          const { material, request } = buildDemoRequest(values, { lights, size: RENDER_SIZE, views });
           const glb = Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
 
           const json = JSON.stringify(request);
@@ -158,7 +157,7 @@ export const RenderDemo = ({
         inFlightRef.current = false;
       }
     },
-    [batch, label, lights, raw, views],
+    [batch, lights, raw, views],
   );
 
   // The canvas only exists once there is a frame to paint, so the paint waits
@@ -269,7 +268,11 @@ export const RenderDemo = ({
         >
           {controls.map((control) => (
             <label className={styles.control} key={control.key}>
-              <span>{control.key}</span>
+              <span>
+                {control.kind === 'text' && control.view !== undefined
+                  ? `label · ${control.view}`
+                  : control.key}
+              </span>
 
               {control.kind === 'range' ? (
                 <input
@@ -297,6 +300,15 @@ export const RenderDemo = ({
                     </option>
                   ))}
                 </select>
+              ) : control.kind === 'text' ? (
+                <input
+                  onChange={(event) => {
+                    update(control.key, cleanLabel(event.currentTarget.value));
+                  }}
+                  placeholder="no label"
+                  type="text"
+                  value={String(values[control.key] ?? '')}
+                />
               ) : control.kind === 'colour' ? (
                 <input
                   onChange={(event) => {

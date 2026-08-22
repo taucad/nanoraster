@@ -15,7 +15,27 @@ export type DemoControl = { readonly key: string; readonly scope: DemoScope } & 
     }
   | { readonly kind: 'toggle' }
   | { readonly kind: 'colour' }
+  | {
+      readonly kind: 'text';
+      /** Set when the text is one view's label inside a `views: [ … ]` literal. */
+      readonly view?: string;
+    }
 );
+
+/**
+ * What a label may hold, mirroring `renderImageLabelPattern` and
+ * `renderImageLabelMaxLength`: printable ASCII plus the micro sign, em dash
+ * and minus sign, at most 64 code points. The demo strips anything else as it
+ * is typed, so a label control can never produce a request the renderer
+ * rejects. An empty label removes the key: a label's presence is its switch.
+ */
+export const cleanLabel = (raw: string): string =>
+  // Every allowed character is one UTF-16 unit, so a string slice counts code points.
+  raw.replace(/[^\u0020-\u007E\u00B5\u2014\u2212]/gu, '').slice(0, 64);
+
+/** The value key under which a demo keeps one view's label. */
+export const viewLabelKey = (id: string): string => `label.${id}`;
+const viewLabelId = (key: string): string | undefined => /^label\.(.+)$/u.exec(key)?.[1];
 
 export type DemoValue = number | string | boolean | readonly number[];
 
@@ -49,6 +69,7 @@ const catalogue: Record<string, DemoControl> = {
   },
   axes: { kind: 'toggle', key: 'axes', scope: 'option' },
   scaleBar: { kind: 'toggle', key: 'scaleBar', scope: 'option' },
+  label: { kind: 'text', key: 'label', scope: 'option' },
   // Rig values. Ranges stay inside renderImageAmbientRange / renderImageExposureRange
   // but stop where the picture stops changing usefully.
   ambient: { kind: 'range', key: 'ambient', scope: 'lighting', min: 0, max: 1, step: 0.01 },
@@ -101,10 +122,16 @@ export const readDemoOptions = (code: string): Record<string, DemoValue> => {
 
   for (const key of Object.keys(catalogue)) {
     const pattern = new RegExp(`["']?\\b${key}\\b["']?\\s*:\\s*(\\[[^\\]]*\\]|[^,\\n}]+)`, 'u');
-    const raw = pattern.exec(code)?.[1]?.trim();
+    // A label inside the `views` literal belongs to one view, not to the
+    // shared request, so the singular `label` is read with that span cut out.
+    const raw = pattern.exec(key === 'label' ? code.replace(viewsLiteral, '') : code)?.[1]?.trim();
     if (raw === undefined) continue;
     const value = parseValue(raw);
     if (value !== undefined) found[key] = value;
+  }
+
+  for (const view of readDemoViews(code)) {
+    if (view.label !== undefined) found[viewLabelKey(view.id)] = view.label;
   }
 
   return found;
@@ -120,10 +147,20 @@ export const readDemoOptions = (code: string): Record<string, DemoValue> => {
  */
 export const demoControls = (code: string): readonly DemoControl[] => {
   const present = readDemoOptions(code);
-  return Object.keys(catalogue)
+  const shared = Object.keys(catalogue)
     .filter((key) => key in present && (key !== 'format' || 'quality' in present))
     .map((key) => catalogue[key]);
+  // One text control per labelled view, after the shared controls.
+  const perView = readDemoViews(code)
+    .filter((view) => view.label !== undefined)
+    .map(
+      (view): DemoControl => ({ kind: 'text', key: viewLabelKey(view.id), scope: 'option', view: view.id }),
+    );
+  return [...shared, ...perView];
 };
+
+/** True for the value keys that carry one view's label rather than a request option. */
+export const isViewLabelKey = (key: string): boolean => viewLabelId(key) !== undefined;
 
 /**
  * True when an example asks for the raw frame rather than an encoded file,
@@ -174,7 +211,20 @@ export const substituteDemoValues = (code: string, values: Record<string, DemoVa
   let out = code;
 
   for (const [key, value] of Object.entries(values)) {
+    const viewId = viewLabelId(key);
+    if (viewId !== undefined) {
+      out = substituteViewLabel(out, viewId, String(value));
+      continue;
+    }
     if (!(key in catalogue)) continue;
+
+    // An empty label is no label: the property line leaves the example, the
+    // way the key leaves the request. The singular label is its own line;
+    // view labels sit inline in their `{ … }` entries, so they are untouched.
+    if (key === 'label' && value === '') {
+      out = out.replace(/\n[ \t]*label\s*:\s*["'][^"']*["'],?(?=\n)/u, '');
+      continue;
+    }
 
     const span = viewsSpan(out);
     // The value is a non-capturing group: the replacement rewrites it wholesale,
@@ -190,6 +240,20 @@ export const substituteDemoValues = (code: string, values: Record<string, DemoVa
   }
 
   return out;
+};
+
+/**
+ * Rewrite one view's label inside the `views: [ … ]` literal. An empty value
+ * drops the property; a value on a view that has none appends it.
+ */
+const substituteViewLabel = (code: string, id: string, value: string): string => {
+  const entry = new RegExp(`\\{[^{}]*\\bid\\s*:\\s*["']${id}["'][^{}]*\\}`, 'u');
+  return code.replace(entry, (body) => {
+    const present = /,\s*label\s*:\s*["'][^"']*["']/u.test(body);
+    if (value === '') return body.replace(/,\s*label\s*:\s*["'][^"']*["']/u, '');
+    if (present) return body.replace(/(\blabel\s*:\s*)["'][^"']*["']/u, `$1'${value}'`);
+    return body.replace(/\s*\}$/u, `, label: '${value}' }`);
+  });
 };
 
 // -- views (appended by A2) --
@@ -234,16 +298,6 @@ export const readDemoViews = (code: string): readonly DemoView[] => {
     return [{ id, phi, theta, ...(label === undefined ? {} : { label }) }];
   });
 };
-
-/**
- * The singular `label` an example sets. A label's presence is its own switch,
- * so it carries no control — the demo reads whatever the example states, the
- * way it reads views and lights. The `views: [ … ]` literal is cut out first:
- * the labels inside it belong to one view each, and a shared `label` on a
- * batch request is an unknown key the renderer rejects.
- */
-export const readDemoLabel = (code: string): string | undefined =>
-  unquote(/\blabel\s*:\s*(["'][^"']*["'])/u.exec(code.replace(viewsLiteral, ''))?.[1]);
 
 /** One directional light an example declares inside its `lights: [ … ]` literal. */
 export type DemoLight = {

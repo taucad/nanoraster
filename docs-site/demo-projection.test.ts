@@ -4,15 +4,16 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  cleanLabel,
   demoControls,
   isLightingKey,
   isMaterialKey,
   isRawDemo,
-  readDemoLabel,
   readDemoLights,
   readDemoOptions,
   readDemoViews,
   substituteDemoValues,
+  viewLabelKey,
   type DemoControl,
   type DemoValue,
 } from './lib/demo-options';
@@ -45,6 +46,7 @@ const perturb = (control: DemoControl, current: DemoValue): DemoValue => {
     return control.choices.find((choice) => choice !== current) ?? control.choices[0];
   }
   if (control.kind === 'colour') return [0.1, 0.2, 0.3, 1];
+  if (control.kind === 'text') return `${String(current)} edited`;
   return current !== true;
 };
 
@@ -112,6 +114,9 @@ describe('interactive demo projections', () => {
           expect(value as number).toBeLessThanOrEqual(control.max);
         } else if (control.kind === 'choice') {
           expect(control.choices, `${path} ${control.key}`).toContain(value);
+        } else if (control.kind === 'text') {
+          expect(typeof value, `${path} ${control.key}`).toBe('string');
+          expect(cleanLabel(String(value)), `${path} ${control.key}`).toBe(value);
         } else {
           expect(typeof value, `${path} ${control.key}`).toBe('boolean');
         }
@@ -128,7 +133,6 @@ describe('interactive demo projections', () => {
       const seeded = readDemoOptions(code);
       const views = readDemoViews(code);
       const { material, request } = buildDemoRequest(seeded, {
-        label: readDemoLabel(code),
         lights: readDemoLights(code),
         size: { height: 720, width: 960 },
         views,
@@ -164,7 +168,9 @@ describe('interactive demo projections', () => {
     for (const { path, code } of demos) {
       const seeded = readDemoOptions(code);
       for (const key of Object.keys(seeded)) {
-        expect(code, `${path} seeds ${key} without mentioning it`).toContain(key);
+        // A view's label is keyed `label.<id>`; the example states both halves.
+        for (const part of key.split('.'))
+          expect(code, `${path} seeds ${key} without mentioning it`).toContain(part);
       }
     }
   });
@@ -184,8 +190,11 @@ describe('interactive demo projections', () => {
       const rewritten = substituteDemoValues(code, wanted);
 
       // Angles inside a `views: [ … ]` literal belong to one view, not to the
-      // shared request, so that span comes through byte-identical.
-      expect(viewsLiteral.exec(rewritten)?.[0], path).toBe(viewsLiteral.exec(code)?.[0]);
+      // shared request, so every view keeps its id and angles; only its label
+      // is a control.
+      const angles = (source: string) =>
+        readDemoViews(source).map(({ id, phi, theta }) => ({ id, phi, theta }));
+      expect(angles(rewritten), path).toEqual(angles(code));
 
       const applied = Object.fromEntries(
         Object.entries(wanted).filter(
@@ -309,5 +318,64 @@ describe('interactive demo projections', () => {
       });
       expect(output).toBe(`\`\`\`mermaid\n${chart}\n\`\`\``);
     }
+  });
+});
+
+describe('label controls', () => {
+  const singular = `const image = await renderImage(glb, {
+  format: 'webp',
+  axes: true,
+  label: 'gear',
+});`;
+  const batch = `const sheet = await renderImages(glb, {
+  format: 'webp',
+  views: [
+    { id: 'front', phi: 90, theta: 0, label: 'Front' },
+    { id: 'top', phi: 0, theta: 0 },
+  ],
+});`;
+
+  it('offers a text control for a singular label and one per labelled view', () => {
+    expect(demoControls(singular).map((control) => control.key)).toEqual(['axes', 'label']);
+    // The component drops the angle controls on a batch; the lib lists what the example sets.
+    expect(demoControls(batch).map((control) => control.key)).toEqual([
+      'phi',
+      'theta',
+      viewLabelKey('front'),
+    ]);
+    expect(readDemoOptions(batch)['label']).toBeUndefined();
+  });
+
+  it('removes an emptied label from the request and from the example', () => {
+    const { request } = buildDemoRequest(
+      { ...readDemoOptions(singular), label: '' },
+      { lights: undefined, size: { height: 720, width: 960 }, views: [] },
+    );
+    expect('label' in request).toBe(false);
+    expect(substituteDemoValues(singular, { label: '' })).toBe(singular.replace("\n  label: 'gear',", ''));
+    expect(substituteDemoValues(singular, { label: 'part' })).toContain("label: 'part',");
+  });
+
+  it('edits, removes and restores one view label inside the views literal', () => {
+    const views = readDemoViews(batch);
+    const edited = substituteDemoValues(batch, { [viewLabelKey('front')]: 'Face' });
+    expect(readDemoViews(edited)[0]?.label).toBe('Face');
+    const removed = substituteDemoValues(batch, { [viewLabelKey('front')]: '' });
+    expect(readDemoViews(removed)[0]?.label).toBeUndefined();
+    expect(readDemoViews(substituteDemoValues(removed, { [viewLabelKey('front')]: 'Front' }))).toEqual(views);
+
+    const { request } = buildDemoRequest(
+      { [viewLabelKey('front')]: '' },
+      { lights: undefined, size: { height: 720, width: 960 }, views },
+    );
+    expect(request['views']).toEqual([
+      { id: 'front', phi: 90, theta: 0 },
+      { id: 'top', phi: 0, theta: 0 },
+    ]);
+  });
+
+  it('keeps a label inside what the renderer accepts', () => {
+    expect(cleanLabel('gear ✓ µ—−\t')).toBe('gear  µ—−');
+    expect(cleanLabel('x'.repeat(80))).toHaveLength(64);
   });
 });

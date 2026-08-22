@@ -41,7 +41,8 @@ await writeFile('front.webp', front.bytes);
 Rendering each view with its own call parses and uploads the GLB every time.
 `renderImages` does that once and renders every view in the list — start
 with two, then add the rest in step 3. A sheet wants a tighter fit than a
-single hero image, so `margin` drops to `0.05`.
+single hero image, so `margin` drops to `0.05`; drag it and both views refit
+together.
 
 <RenderDemo>
 
@@ -114,8 +115,9 @@ const sheet = await renderImages(glb, {
 
 Labels are drawn into the image, screen-upright, so a sheet stays readable
 once the images are separated from their filenames. A view carries one when
-its entry sets `label`; there is no flag to turn on. `scaleBar` adds the
-bottom-left bar, so the finished sheet carries its own units too.
+its entry sets `label`; there is no flag to turn on, and clearing a label
+below removes it. `scaleBar` adds the bottom-left bar, so the finished sheet
+carries its own units too.
 
 <RenderDemo>
 
