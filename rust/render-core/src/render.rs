@@ -1947,9 +1947,8 @@ mod tests {
 
     #[test]
     fn finish_view_reports_the_failed_submission_rather_than_the_poll_symptom() {
-        let renderer =
-            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
-                .expect("renderer");
+        let renderer = pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+            .expect("renderer");
         let device = &renderer.state.device;
         let source = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("destroyed source"),
@@ -1981,16 +1980,56 @@ mod tests {
             padded_bytes_per_row: 256,
         };
 
-        let error = match renderer.finish_view_blocking(view) {
-            Ok(_) => panic!("a failed submission must not read back"),
-            Err(error) => error,
-        };
-        assert!(
-            matches!(&error, RenderError::Gpu(message) if message.contains("destroyed")),
-            "expected the destroyed-resource cause, got {error}"
-        );
+        let error = renderer
+            .finish_view_blocking(view)
+            .err()
+            .expect("a failed submission must not read back");
+        assert!(matches!(&error, RenderError::Gpu(message) if message.contains("destroyed")));
         // The cause is drained; a later poll symptom is reported as itself.
         assert!(renderer.take_uncaptured().is_ok());
+        renderer.destroy();
+    }
+
+    #[test]
+    fn finish_view_reports_the_poll_symptom_when_no_cause_was_captured() {
+        let renderer = pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+            .expect("renderer");
+        let device = &renderer.state.device;
+        let source = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("destroyed source"),
+            size: 256,
+            usage: wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: 256,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_buffer_to_buffer(&source, 0, &readback, 0, 256);
+        let commands = encoder.finish();
+        source.destroy();
+        let submission = renderer.state.queue.submit(Some(commands));
+        // Another consumer drained the cause first: the wait's own error is
+        // all that is left to report, and it must still be a `gpu: poll:` one.
+        assert!(renderer.take_uncaptured().is_err());
+        let (_sender, receiver) = futures_channel::oneshot::channel();
+        let view = InFlightView {
+            buffer: readback,
+            receiver,
+            submission,
+            height: 1,
+            unpadded_bytes_per_row: 256,
+            padded_bytes_per_row: 256,
+        };
+
+        let error = renderer
+            .finish_view_blocking(view)
+            .err()
+            .expect("a failed submission must not read back");
+        assert!(error.to_string().starts_with("gpu: poll:"), "{error}");
         renderer.destroy();
     }
 
