@@ -3,42 +3,47 @@ title: Render in the browser
 description: Run nanoraster on browser WebGPU, bundle the WebAssembly artifact, and degrade gracefully where WebGPU is missing.
 ---
 
-Render in a browser tab on WebGPU, using the API and render core that the
-Node.js build uses.
-
-You need WebGPU enabled and a bundler that can emit a WebAssembly asset. Vite,
-webpack 5 and Rspack all do without configuration; [Install](../install)
-covers how the artifact is delivered.
+Render in a browser tab on WebGPU, with the API and render core the Node.js
+build uses. You need WebGPU enabled and a bundler that can emit a WebAssembly
+asset; Vite, webpack 5 and Rspack all do without configuration, and
+[Install](../install) covers how the artifact is delivered.
 
 ### 1. Check for a WebGPU adapter first
 
-Rendering fails with a typed error when no adapter exists; checking first lets
-you choose a fallback before doing any work.
+`navigator.gpu` is necessary but not sufficient: a browser can expose the API
+and still produce no adapter, or a software one. `describeAdapter()` names what
+you got without downloading the wasm, and resolves `undefined` where there is
+nothing to bind. Check it before any work; `'cpu'` means software
+rasterisation, an order of magnitude slower.
 
 ```typescript
-const supported = typeof navigator !== 'undefined' && 'gpu' in navigator;
+import { describeAdapter } from 'nanoraster';
 
-if (!supported) {
-  throw new Error('This browser has no WebGPU support.');
+const adapter = await describeAdapter();
+
+if (!adapter) {
+  // No WebGPU here: show a still image, or render on a server instead.
+} else if (adapter.deviceType === 'cpu') {
+  console.warn(`software rasterizer: ${adapter.name}`);
 }
 ```
 
-`navigator.gpu` is necessary but not sufficient: a browser can expose the API
-and still fail to produce an adapter on a particular machine. Handle
-[`adapter-unavailable`](handle-render-failures) too.
+Browsers report `deviceType: 'unknown'` unless the adapter declares itself a
+fallback, because WebGPU withholds the class; `name` is whatever the browser
+discloses, from `"google swiftshader"` in headless Chrome to `""` in Firefox.
 
 ### 2. Render from bytes you already hold
 
 Only the source of the GLB differs: a fetch, a file input or an in-memory
-buffer instead of the filesystem.
+buffer.
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
 const response = await fetch('/model.glb');
 const glb = new Uint8Array(await response.arrayBuffer());
 
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'webp',
   width: 640,
   height: 480,
@@ -47,7 +52,7 @@ const image = await renderGlbToImage(glb, {
 
 ### 3. Show or download the result
 
-The result is raw bytes, so wrap it in a `Blob` to display it.
+Wrap the bytes in a `Blob` to display them.
 
 ```typescript
 const blob = new Blob([image.bytes], { type: image.mimeType });
@@ -61,29 +66,39 @@ stays resident for the life of the document.
 
 ### 4. Keep the render off the main thread
 
-Rendering occupies the GPU queue and spends CPU time encoding the result. In
-a worker, neither blocks input handling.
+Rendering occupies the GPU queue and spends CPU time encoding; in a worker,
+neither blocks input handling. Create the renderer once per worker and dispose
+it when the worker closes.
 
 ```typescript
 // render.worker.ts
-import { renderGlbToImage } from 'nanoraster';
+import { createRenderer, type Renderer } from 'nanoraster';
+
+let renderer: Promise<Renderer> | undefined;
 
 self.addEventListener('message', async ({ data }: MessageEvent<Uint8Array>) => {
   try {
-    const image = await renderGlbToImage(data, { format: 'webp' });
+    renderer ??= createRenderer();
+    const image = await (await renderer).renderImage(data, { format: 'webp' });
     self.postMessage(image.bytes, [image.bytes.buffer]);
   } catch (error) {
     self.postMessage({ error: error instanceof Error ? error.message : String(error) });
   }
 });
+
+self.addEventListener('close', () => {
+  void renderer?.then((handle) => {
+    handle.dispose();
+  });
+});
 ```
 
-Transferring `image.bytes.buffer` moves the memory instead of copying it; the
-worker cannot use it afterwards, and does not need to. The catch matters: a
-rejection inside the listener would otherwise vanish as an unhandled rejection
-and the caller would wait forever, so a failure is posted back as its own
-message shape — bytes mean success, `{ error }` means the render failed.
-[Handle render failures](handle-render-failures) covers classifying the error.
+A renderer is single-realm: bytes cross `postMessage`, handles never do, and
+transferring `image.bytes.buffer` moves the memory instead of copying it. The
+catch matters: an unhandled rejection inside the listener would leave the
+caller waiting forever, so a failure is posted back as `{ error }` and bytes
+mean success. [Handle render failures](handle-render-failures) classifies the
+error; [Reuse the renderer](reuse-the-renderer) covers the lifetime.
 
 ## Variations
 
@@ -92,6 +107,9 @@ message shape — bytes mean success, `{ error }` means the render failed.
 
 **Node and browser from one codebase.** The import specifier is the same in
 both, and nothing in your code needs to branch.
+
+**Main-thread renders.** The one-shot functions work there too, at the price
+of readback and encode competing with input.
 
 **Capturing a live viewer's camera.** An orbiting viewer (three.js, Babylon,
 your own) knows its eye position relative to the target; nanoraster wants
@@ -107,7 +125,7 @@ const anglesFromOffset = ([x, y, z]: readonly [number, number, number]) => {
   };
 };
 
-const image = await renderGlbToImage(glb, { format: 'webp', ...anglesFromOffset(eye) });
+const image = await renderImage(glb, { format: 'webp', ...anglesFromOffset(eye) });
 ```
 
 Distance is discarded on purpose: nanoraster

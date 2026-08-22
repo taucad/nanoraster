@@ -5,13 +5,18 @@
     "dist/**",
     "docs-site/.next/**",
     "docs-site/.source/**",
+    "docs-site/out/**",
     "docs-site/public/demo/render_wasm.d.ts",
     "docs-site/public/demo/render_wasm.js",
     "rust/target/**",
     "src/native/**",
-    "src/wasm/**"
+    "src/wasm/**",
+    "tests/out/**"
   ],
   "plugins": ["typescript", "unicorn"],
+  "rules": {
+    "max-params": ["error", { "max": 3 }]
+  },
   "overrides": [
     {
       "files": ["tests/**/*.mjs"],

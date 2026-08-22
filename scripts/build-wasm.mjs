@@ -6,10 +6,23 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
+// `--bench` builds the feature-enabled sibling the conformance gate runs on,
+// into a scratch directory. The shipped artifact never carries that feature.
+const bench = process.argv.includes('--bench');
+const output = bench ? 'tests/out/wasm-bench' : 'src/wasm';
 
 execFileSync(
   'wasm-pack',
-  ['build', 'rust/render-wasm', '--release', '--target', 'web', '--out-dir', '../../src/wasm'],
+  [
+    'build',
+    'rust/render-wasm',
+    '--release',
+    '--target',
+    'web',
+    '--out-dir',
+    `../../${output}`,
+    ...(bench ? ['--', '--features', 'bench'] : []),
+  ],
   {
     cwd: root,
     env: {
@@ -20,5 +33,5 @@ execFileSync(
   },
 );
 
-const wasm = readFileSync(new URL('../src/wasm/render_wasm_bg.wasm', import.meta.url));
+const wasm = readFileSync(new URL(`../${output}/render_wasm_bg.wasm`, import.meta.url));
 if (wasm.includes(Buffer.from(root))) throw new Error('render WASM embeds the checkout path');

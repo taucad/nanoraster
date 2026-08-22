@@ -1,27 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { RenderImageOptions, RenderImagesOptions } from '#options.js';
-import {
-  createRenderImageOptions,
-  createRenderImagesOptions,
-  imageFileName,
-  imageViewFileName,
-  toImageRequestJson,
-  toImagesRequestJson,
-} from '#options.js';
+import { imageFileName, imageViewFileName, toImageRequestJson, toImagesRequestJson } from '#options.js';
 
 const parse = (json: string): Record<string, unknown> => JSON.parse(json) as Record<string, unknown>;
 
 describe('image request serialization', () => {
-  it('should omit undefined fields and serialize disabled includes', () => {
-    expect(
-      parse(
-        toImageRequestJson({ format: 'webp', includeAxes: false, includeLabel: false, includeScale: false }),
-      ),
-    ).toEqual({
+  it('should omit undefined fields and serialize disabled annotations', () => {
+    expect(parse(toImageRequestJson({ format: 'webp', axes: false, scaleBar: false }))).toEqual({
       format: 'webp',
-      includeAxes: false,
-      includeLabel: false,
-      includeScale: false,
+      axes: false,
+      scaleBar: false,
     });
   });
 
@@ -38,9 +26,8 @@ describe('image request serialization', () => {
       projection: 'orthographic',
       background: '#FF800040',
       label: 'Front',
-      includeAxes: true,
-      includeLabel: true,
-      includeScale: true,
+      axes: true,
+      scaleBar: true,
     };
 
     expect(parse(toImageRequestJson(options))).toEqual({
@@ -55,9 +42,8 @@ describe('image request serialization', () => {
       projection: 'orthographic',
       background: [1, 128 / 255, 0, 64 / 255],
       label: 'Front',
-      includeAxes: true,
-      includeLabel: true,
-      includeScale: true,
+      axes: true,
+      scaleBar: true,
     });
   });
 
@@ -67,7 +53,6 @@ describe('image request serialization', () => {
         toImagesRequestJson({
           format: 'png',
           projection: 'orthographic',
-          includeLabel: true,
           views: [
             { id: 'front', label: 'Front', phi: 90, theta: 0 },
             { id: 'top', label: 'Top', phi: 0, theta: 0 },
@@ -77,7 +62,6 @@ describe('image request serialization', () => {
     ).toEqual({
       format: 'png',
       projection: 'orthographic',
-      includeLabel: true,
       views: [
         { id: 'front', label: 'Front', phi: 90, theta: 0 },
         { id: 'top', label: 'Top', phi: 0, theta: 0 },
@@ -106,10 +90,9 @@ describe('image request serialization', () => {
       { format: 'png', background: [0, 0, 0, Number.NaN] },
       { format: 'png', background: [0, 0, 0, -0.1] },
       { format: 'png', background: [0, 0, 0, 1.1] },
-      { format: 'png', includeAxes: 'yes' },
-      { format: 'png', includeScale: 'yes' },
-      { format: 'png', includeLabel: true },
-      { format: 'png', includeScale: true, width: 191 },
+      { format: 'png', axes: 'yes' },
+      { format: 'png', scaleBar: 'yes' },
+      { format: 'png', scaleBar: true, width: 191 },
       { format: 'png', label: ' ' },
       { format: 'png', label: 'x'.repeat(65) },
       { format: 'png', label: 'snowman ☃' },
@@ -132,7 +115,7 @@ describe('image request serialization', () => {
         { id: 'front', phi: 0, theta: 0 },
       ],
       [{ id: 'front', phi: Number.POSITIVE_INFINITY, theta: 0 }],
-      [{ id: 'front', phi: 90, theta: 0, format: 'png' }],
+      [{ id: 'front', phi: 90, theta: 0, zoom: 2 }],
     ];
     for (const views of invalid) {
       expect(() => toImagesRequestJson({ format: 'png', views } as unknown as RenderImagesOptions)).toThrow(
@@ -142,17 +125,6 @@ describe('image request serialization', () => {
     expect(() => toImagesRequestJson(null as unknown as RenderImagesOptions)).toThrow(
       'options must be an object',
     );
-  });
-
-  it('should preserve tuple literals in the option helpers', () => {
-    const singular = createRenderImageOptions({ format: 'png', width: 256 });
-    const plural = createRenderImagesOptions({
-      format: 'png',
-      views: [{ id: 'front', phi: 90, theta: 0 }] as const,
-    });
-
-    expect(singular).toEqual({ format: 'png', width: 256 });
-    expect(plural.views[0].id).toBe('front');
   });
 
   it('should normalize opaque hex and preserve tuple backgrounds', () => {
@@ -263,20 +235,164 @@ describe('image request serialization', () => {
     }
   });
 
-  it('should reject a missing batch label with a precise path', () => {
+  it('should serialize per-view output overrides and the timings flag', () => {
+    expect(
+      parse(
+        toImagesRequestJson({
+          format: 'webp',
+          quality: 0.9,
+          timings: true,
+          views: [
+            { id: 'card', phi: 60, theta: -45 },
+            { id: 'og', phi: 60, theta: -45, width: 1536, height: 804 },
+            { id: 'hero', phi: 60, theta: -45, format: 'png' },
+            { id: 'exact', phi: 60, theta: -45, quality: 1 },
+          ],
+        }),
+      ),
+    ).toEqual({
+      format: 'webp',
+      quality: 0.9,
+      timings: true,
+      views: [
+        { id: 'card', phi: 60, theta: -45 },
+        { id: 'og', phi: 60, theta: -45, width: 1536, height: 804 },
+        { id: 'hero', phi: 60, theta: -45, format: 'png' },
+        { id: 'exact', phi: 60, theta: -45, quality: 1 },
+      ],
+    });
+  });
+
+  it('should reject invalid per-view overrides and timings values by path', () => {
+    const cases: readonly (readonly [Record<string, unknown>, string])[] = [
+      [{ id: 'front', phi: 90, theta: 0, width: 15 }, 'views[0].width must be between 16 and 4096'],
+      [{ id: 'front', phi: 90, theta: 0, height: 4097 }, 'views[0].height must be between 16 and 4096'],
+      [
+        { id: 'front', phi: 90, theta: 0, format: 'gif' },
+        'views[0].format must be png, webp, jpeg, jpg, or raw',
+      ],
+      [{ id: 'front', phi: 90, theta: 0, quality: 1.5 }, 'views[0].quality must be between 0 and 1'],
+    ];
+    for (const [view, message] of cases) {
+      expect(() =>
+        toImagesRequestJson({ format: 'png', views: [view] } as unknown as RenderImagesOptions),
+      ).toThrow(message);
+    }
     expect(() =>
       toImagesRequestJson({
         format: 'png',
-        includeLabel: true,
+        axes: true,
+        views: [{ id: 'front', phi: 90, theta: 0, width: 191 }],
+      } as unknown as RenderImagesOptions),
+    ).toThrow('views[0]: annotated images must be at least 192x192');
+    expect(() =>
+      toImagesRequestJson({
+        format: 'png',
+        timings: 'yes',
         views: [{ id: 'front', phi: 90, theta: 0 }],
       } as unknown as RenderImagesOptions),
-    ).toThrow('views[0].label is required when includeLabel is true');
+    ).toThrow('timings must be a boolean');
+    expect(() =>
+      toImagesRequestJson({
+        format: 'png',
+        profile: true,
+        views: [{ id: 'front', phi: 90, theta: 0 }],
+      } as unknown as RenderImagesOptions),
+    ).toThrow('options contains unknown property "profile"');
+  });
+
+  it('should judge annotated dimensions per view, not against the shared pair', () => {
+    // The shared pair is a default for views that inherit it; a view that
+    // overrides both is the size that gets rendered and annotated.
+    expect(
+      parse(
+        toImagesRequestJson({
+          format: 'png',
+          axes: true,
+          width: 128,
+          height: 128,
+          views: [{ id: 'front', phi: 90, theta: 0, width: 512, height: 512 }],
+        }),
+      )['width'],
+    ).toBe(128);
+    // A view that inherits the small shared pair still fails on its own size.
+    expect(() =>
+      toImagesRequestJson({
+        format: 'png',
+        axes: true,
+        width: 128,
+        height: 128,
+        views: [{ id: 'front', phi: 90, theta: 0 }],
+      }),
+    ).toThrow('views[0]: annotated images must be at least 192x192');
+  });
+
+  it('should serialize a raw request and a raw per-view override', () => {
+    expect(parse(toImageRequestJson({ format: 'raw', width: 640, height: 480 }))).toEqual({
+      format: 'raw',
+      width: 640,
+      height: 480,
+    });
+    expect(
+      parse(
+        toImagesRequestJson({
+          format: 'webp',
+          views: [
+            { id: 'thumb', phi: 60, theta: -45 },
+            { id: 'frame', phi: 60, theta: -45, format: 'raw' },
+          ],
+        }),
+      )['views'],
+    ).toEqual([
+      { id: 'thumb', phi: 60, theta: -45 },
+      { id: 'frame', phi: 60, theta: -45, format: 'raw' },
+    ]);
+  });
+});
+
+describe('label presence as the annotation switch', () => {
+  it('should draw a label from its presence alone', () => {
+    expect(parse(toImageRequestJson({ format: 'png', label: 'gear' }))).toEqual({
+      format: 'png',
+      label: 'gear',
+    });
+    expect(() => toImageRequestJson({ format: 'png', label: 'gear', width: 191 })).toThrow(
+      'annotated images must be at least 192x192',
+    );
+    expect(() =>
+      toImagesRequestJson({
+        format: 'png',
+        views: [{ id: 'front', label: 'Front', phi: 90, theta: 0, width: 191 }],
+      }),
+    ).toThrow('views[0]: annotated images must be at least 192x192');
+  });
+
+  it('should leave an unlabelled view unannotated beside a labelled one', () => {
+    expect(
+      parse(
+        toImagesRequestJson({
+          format: 'png',
+          views: [
+            { id: 'front', label: 'Front', phi: 90, theta: 0 },
+            { id: 'thumb', phi: 0, theta: 0, width: 64, height: 64 },
+          ],
+        }),
+      )['views'],
+    ).toEqual([
+      { id: 'front', label: 'Front', phi: 90, theta: 0 },
+      { id: 'thumb', phi: 0, theta: 0, width: 64, height: 64 },
+    ]);
   });
 });
 
 describe('image filenames', () => {
   it('should derive singular and identified names', () => {
-    expect(imageFileName('webp')).toBe('thumbnail.webp');
-    expect(imageViewFileName('front', 'png')).toBe('thumbnail-front.png');
+    expect(imageFileName('webp')).toBe('render.webp');
+    expect(imageViewFileName('front', 'png')).toBe('render-front.png');
+  });
+
+  it('should name raw output by the same rule', () => {
+    expect(imageFileName('raw')).toBe('render.raw');
+    expect(imageViewFileName('frame', 'raw')).toBe('render-frame.raw');
   });
 });

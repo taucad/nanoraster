@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 const README = readFileSync(resolve(import.meta.dirname, 'README.md'), 'utf8');
 const LINE_BUDGET = 220; // Origin: bounded persona-routed top page in opencascade.js.
+const WORD_BUDGET = 400; // The npm page: quick start, one raw sentence, one reuse example.
 const REQUIRED = [
   '## Install',
   '## Quick start',
@@ -18,6 +19,10 @@ const REQUIRED = [
 describe('README shape', () => {
   it('should stay within the persona-routed line budget', () => {
     expect(README.split('\n').length).toBeLessThanOrEqual(LINE_BUDGET);
+  });
+
+  it('should stay within the word budget', () => {
+    expect(README.split(/\s+/u).filter(Boolean).length).toBeLessThanOrEqual(WORD_BUDGET);
   });
 
   it('should route readers to the docs and live demo before the first section', () => {

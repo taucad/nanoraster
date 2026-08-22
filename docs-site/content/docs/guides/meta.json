@@ -3,7 +3,9 @@
   "pages": [
     "frame-the-model",
     "render-multiple-views",
+    "reuse-the-renderer",
     "format-and-annotate",
+    "work-with-raw-pixels",
     "render-for-llms",
     "light-the-subject",
     "render-in-the-browser",

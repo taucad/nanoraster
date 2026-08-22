@@ -4,7 +4,9 @@ import { DynamicCodeBlock } from 'fumadocs-ui/components/dynamic-codeblock';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  cleanLabel,
   demoControls,
+  isRawDemo,
   readDemoLights,
   readDemoOptions,
   readDemoViews,
@@ -72,17 +74,28 @@ export const RenderDemo = ({
   const views = useMemo(() => readDemoViews(code), [code]);
   const lights = useMemo(() => readDemoLights(code), [code]);
   const batch = views.length > 0;
+  const raw = isRawDemo(code);
   const controls = demoControls(code).filter((control) => !batch || !angleKeys.has(control.key));
   const [values, setValues] = useState<Record<string, DemoValue>>(() => readDemoOptions(code));
   const [state, setState] = useState<State>('idle');
   const [message, setMessage] = useState('');
   const [srcs, setSrcs] = useState<readonly string[]>([]);
+  const [frame, setFrame] = useState<ImageData | undefined>();
   const [evidence, setEvidence] = useState<Evidence | undefined>();
   const urlsRef = useRef<readonly string[]>([]);
-  // Renders are not cancellable, so overlapping ones race: only the latest
-  // ticket may revoke URLs and commit state, or an older render finishing
-  // last would display stale output over the newer one.
-  const generation = useRef(0);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // At most one render is in flight; the newest values always render last.
+  // Renders are not cancellable, so without the guard a drag would stack
+  // concurrent renders and the intermediate frames would waste GPU time the
+  // final frame is waiting on. The pending slot coalesces every value change
+  // that arrives mid-render into one trailing rerun (last writer wins), which
+  // also serializes access to the shared renderer handle.
+  const inFlightRef = useRef(false);
+  const pendingRef = useRef<Record<string, DemoValue> | null>(null);
+  // Renders are not cancellable, so one can still be in flight when the
+  // component goes away. Its URLs would outlive the document that could revoke
+  // them, and its trailing value would render for nobody.
+  const mountedRef = useRef(true);
 
   const draw = useCallback(
     async (current: Record<string, DemoValue>): Promise<void> => {
@@ -90,37 +103,89 @@ export const RenderDemo = ({
         setState('unsupported');
         return;
       }
+      if (inFlightRef.current) {
+        pendingRef.current = current;
+        return;
+      }
 
-      const ticket = ++generation.current;
-      setState('rendering');
+      const render = async (values: Record<string, DemoValue>): Promise<void> => {
+        setState('rendering');
+        try {
+          const [renderer, source] = await Promise.all([loadWasmRenderer(), loadDemoModel()]);
+
+          const { material, request } = buildDemoRequest(values, { lights, size: RENDER_SIZE, views });
+          const glb = Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
+
+          const json = JSON.stringify(request);
+          const started = performance.now();
+
+          // `format: 'raw'` runs the same request through the same entry point
+          // and stops before the encoder, so the timing below is render and
+          // readback with no encoder in it. The bytes are straight-alpha sRGB
+          // RGBA8, top row first, which is what `ImageData` reads — so the tile
+          // shows the render itself, with nothing decoding it on the way in.
+          if (raw) {
+            // wasm-bindgen types every returned view as `Uint8Array<ArrayBufferLike>`;
+            // the bindings only ever hand back plain `ArrayBuffer` storage,
+            // which is what `ImageData` and `Blob` accept.
+            const bytes = (await renderer.render_image(glb, json)) as Uint8Array<ArrayBuffer>;
+            const ms = Math.round(performance.now() - started);
+            const { width, height } = RENDER_SIZE;
+            setFrame(new ImageData(new Uint8ClampedArray(bytes.buffer), width, height));
+            setEvidence({ mime: 'raw rgba', ms, sizes: [bytes.byteLength] });
+            setState('idle');
+            return;
+          }
+
+          const bytes = (
+            batch
+              ? (await renderer.render_images(glb, json)).images
+              : [await renderer.render_image(glb, json)]
+          ) as Uint8Array<ArrayBuffer>[];
+          const ms = Math.round(performance.now() - started);
+
+          for (const url of urlsRef.current) URL.revokeObjectURL(url);
+          const type = mimeTypes[String(request['format'])] ?? 'image/png';
+          const next = bytes.map((part) => URL.createObjectURL(new Blob([part], { type })));
+          if (!mountedRef.current) {
+            for (const url of next) URL.revokeObjectURL(url);
+            urlsRef.current = [];
+            return;
+          }
+          urlsRef.current = next;
+          setSrcs(urlsRef.current);
+          setEvidence({ mime: type, ms, sizes: bytes.map((part) => part.byteLength) });
+          setState('idle');
+        } catch (error) {
+          setMessage(error instanceof Error ? error.message : String(error));
+          setState('failed');
+        }
+      };
+
+      inFlightRef.current = true;
       try {
-        const [renderer, source] = await Promise.all([loadWasmRenderer(), loadDemoModel()]);
-
-        const { material, request } = buildDemoRequest(current, { lights, size: RENDER_SIZE, views });
-        const glb = Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
-
-        const json = JSON.stringify(request);
-        const started = performance.now();
-        const bytes = batch
-          ? await renderer.render_glb_to_images(glb, json)
-          : [await renderer.render_glb_to_image(glb, json)];
-        const ms = Math.round(performance.now() - started);
-        if (ticket !== generation.current) return;
-
-        for (const url of urlsRef.current) URL.revokeObjectURL(url);
-        const type = mimeTypes[String(request['format'])] ?? 'image/png';
-        urlsRef.current = bytes.map((part) => URL.createObjectURL(new Blob([part], { type })));
-        setSrcs(urlsRef.current);
-        setEvidence({ mime: type, ms, sizes: bytes.map((part) => part.byteLength) });
-        setState('idle');
-      } catch (error) {
-        if (ticket !== generation.current) return;
-        setMessage(error instanceof Error ? error.message : String(error));
-        setState('failed');
+        let values: Record<string, DemoValue> | null = current;
+        while (values !== null && mountedRef.current) {
+          await render(values);
+          values = pendingRef.current;
+          pendingRef.current = null;
+        }
+      } finally {
+        inFlightRef.current = false;
       }
     },
-    [batch, lights, views],
+    [batch, lights, raw, views],
   );
+
+  // The canvas only exists once there is a frame to paint, so the paint waits
+  // for the element the frame put on the page.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (frame === undefined || canvas === null) return;
+    canvas.width = frame.width;
+    canvas.height = frame.height;
+    canvas.getContext('2d')?.putImageData(frame, 0, 0);
+  }, [frame]);
 
   // Only the first paint is automatic; later renders follow a control change.
   const drawnOnce = useRef(false);
@@ -130,12 +195,15 @@ export const RenderDemo = ({
     void draw(values);
   }, [draw, values]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Reset on mount as well as unmount: StrictMode mounts, unmounts, and
+    // mounts again, and a flag left false there would discard every render.
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
       for (const url of urlsRef.current) URL.revokeObjectURL(url);
-    },
-    [],
-  );
+    };
+  }, []);
 
   const update = (key: string, value: DemoValue): void => {
     const next = { ...values, [key]: value };
@@ -147,12 +215,24 @@ export const RenderDemo = ({
 
   // The bytes the request produced, under the image they produced: the same
   // evidence `image.bytes.length` and `mimeType` carry in the example itself.
-  const badge = (index: number): React.JSX.Element | undefined =>
+  // `note` records what the number leaves out, which only the raw tile needs.
+  const badge = (index: number, note?: string): React.JSX.Element | undefined =>
     evidence === undefined ? undefined : (
       <p className={styles.badge} data-badge>
         {evidence.mime} · {((evidence.sizes[index] ?? 0) / 1024).toFixed(1)} KB · {evidence.ms} ms
+        {note === undefined ? '' : ` · ${note}`}
       </p>
     );
+
+  // Raw pixels have no file to point an <img> at, so the frame goes straight
+  // into a canvas. What is on screen is the render itself: no encoder ran, and
+  // the badge says so beside the bytes.
+  const painted = (
+    <figure className={styles.single}>
+      <canvas className={styles.image} ref={canvasRef} />
+      {badge(0, 'no encode, no decode')}
+    </figure>
+  );
 
   // One image per declared view, captioned with the angles the code states.
   const sheet = batch ? (
@@ -191,6 +271,12 @@ export const RenderDemo = ({
             </p>
           ) : state === 'failed' ? (
             <p className={styles.notice}>Render failed: {message}</p>
+          ) : raw ? (
+            frame === undefined ? (
+              <p className={styles.notice}>Rendering…</p>
+            ) : (
+              painted
+            )
           ) : srcs.length > 0 ? (
             sheet
           ) : (
@@ -204,7 +290,11 @@ export const RenderDemo = ({
         >
           {controls.map((control) => (
             <label className={styles.control} key={control.key}>
-              <span>{control.key}</span>
+              <span>
+                {control.kind === 'text' && control.view !== undefined
+                  ? `label · ${control.view}`
+                  : control.key}
+              </span>
 
               {control.kind === 'range' ? (
                 <input
@@ -232,6 +322,15 @@ export const RenderDemo = ({
                     </option>
                   ))}
                 </select>
+              ) : control.kind === 'text' ? (
+                <input
+                  onChange={(event) => {
+                    update(control.key, cleanLabel(event.currentTarget.value));
+                  }}
+                  placeholder="no label"
+                  type="text"
+                  value={String(values[control.key] ?? '')}
+                />
               ) : control.kind === 'colour' ? (
                 <input
                   onChange={(event) => {

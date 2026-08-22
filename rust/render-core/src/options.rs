@@ -59,7 +59,9 @@ impl<'de> Deserialize<'de> for LightingRequest {
     }
 }
 
-/// Wire shape for one image.
+/// Wire shape for one image. `format` is optional here only so an absent one
+/// is reported as the caller mistake it is (`format is required`) rather than
+/// as a serde field error; every request is rejected without one.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields, default)]
 pub struct RenderRequest {
@@ -74,13 +76,13 @@ pub struct RenderRequest {
     pub projection: Option<String>,
     pub background: Option<[f32; 4]>,
     pub label: Option<String>,
-    pub include_axes: Option<bool>,
-    pub include_label: Option<bool>,
-    pub include_scale: Option<bool>,
+    pub axes: Option<bool>,
+    pub scale_bar: Option<bool>,
     pub lighting: Option<LightingRequest>,
 }
 
-/// Wire shape for one identified camera in a batch.
+/// Wire shape for one identified camera in a batch: camera identity plus
+/// optional per-view output overrides defaulting to the shared values.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RenderImageViewRequest {
@@ -88,6 +90,10 @@ pub struct RenderImageViewRequest {
     pub label: Option<String>,
     pub phi: f32,
     pub theta: f32,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub format: Option<String>,
+    pub quality: Option<f32>,
 }
 
 /// Wire shape for ordered multi-image rendering.
@@ -102,34 +108,66 @@ pub struct RenderImagesRequest {
     pub up: Option<String>,
     pub projection: Option<String>,
     pub background: Option<[f32; 4]>,
-    pub include_axes: Option<bool>,
-    pub include_label: Option<bool>,
-    pub include_scale: Option<bool>,
+    pub axes: Option<bool>,
+    pub scale_bar: Option<bool>,
     pub lighting: Option<LightingRequest>,
+    pub timings: Option<bool>,
     pub views: Vec<RenderImageViewRequest>,
 }
 
-/// Resolved camera view. IDs are carried so failures can name the view.
+/// Resolved camera view. IDs are carried so failures can name the view; the
+/// output overrides are `None` when the shared values apply.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderView {
     pub id: String,
     pub label: Option<String>,
     pub phi_deg: f32,
     pub theta_deg: f32,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub format: Option<ImageFormat>,
+}
+
+/// Wire shape for `createRenderer` options.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+pub struct CreateRendererRequest {
+    pub power_preference: Option<String>,
+}
+
+impl CreateRendererRequest {
+    pub fn from_json(json: Option<&str>) -> Result<Self, RenderError> {
+        match json {
+            None => Ok(Self::default()),
+            Some(json) => serde_json::from_str(json)
+                .map_err(|error| RenderError::Parse(format!("options: {error}"))),
+        }
+    }
+
+    pub fn resolve(&self) -> Result<wgpu::PowerPreference, RenderError> {
+        match self.power_preference.as_deref() {
+            None | Some("high-performance") => Ok(wgpu::PowerPreference::HighPerformance),
+            Some("low-power") => Ok(wgpu::PowerPreference::LowPower),
+            Some(other) => Err(RenderError::Parse(format!(
+                "powerPreference {other:?} not high-performance/low-power"
+            ))),
+        }
+    }
 }
 
 struct CommonRequest<'a> {
     width: Option<u32>,
     height: Option<u32>,
-    format: Option<&'a str>,
-    quality: Option<f32>,
     margin: Option<f32>,
     up: Option<&'a str>,
     projection: Option<&'a str>,
     background: Option<[f32; 4]>,
-    include_axes: Option<bool>,
-    include_label: Option<bool>,
-    include_scale: Option<bool>,
+    axes: Option<bool>,
+    /// Whether the shared width/height must clear the annotated minimum. Only
+    /// a singular request renders at them; a batch renders at each view's
+    /// effective size, which the per-view rule checks instead.
+    annotated: bool,
+    scale_bar: Option<bool>,
     lighting: Option<&'a LightingRequest>,
 }
 
@@ -139,32 +177,34 @@ impl RenderRequest {
     }
 
     pub fn resolve(&self) -> Result<(RenderOptions, ImageFormat), RenderError> {
-        let (mut options, format) = resolve_common(self.common())?;
+        let options = self.resolve_options()?;
+        let (_, format) = resolve_required_format(self.format.as_deref(), self.quality)?;
+        Ok((options, format))
+    }
+
+    /// The camera and annotation settings alone, with no encoder chosen yet.
+    pub fn resolve_options(&self) -> Result<RenderOptions, RenderError> {
+        let mut options = resolve_common(self.common())?;
         validate_optional_label(self.label.as_deref(), "label")?;
-        if options.include_label && self.label.is_none() {
-            return Err(RenderError::Parse(
-                "label is required when includeLabel is true".into(),
-            ));
-        }
         options.label.clone_from(&self.label);
         options.phi_deg = finite_or_default(self.phi, options.phi_deg, "phi")?;
         options.theta_deg = finite_or_default(self.theta, options.theta_deg, "theta")?;
-        Ok((options, format))
+        Ok(options)
     }
 
     fn common(&self) -> CommonRequest<'_> {
         CommonRequest {
             width: self.width,
             height: self.height,
-            format: self.format.as_deref(),
-            quality: self.quality,
             margin: self.margin,
             up: self.up.as_deref(),
             projection: self.projection.as_deref(),
             background: self.background,
-            include_axes: self.include_axes,
-            include_label: self.include_label,
-            include_scale: self.include_scale,
+            axes: self.axes,
+            annotated: self.axes.unwrap_or(false)
+                || self.scale_bar.unwrap_or(false)
+                || self.label.is_some(),
+            scale_bar: self.scale_bar,
             lighting: self.lighting.as_ref(),
         }
     }
@@ -175,13 +215,18 @@ impl RenderImagesRequest {
         serde_json::from_str(json).map_err(|error| RenderError::Parse(format!("options: {error}")))
     }
 
-    pub fn resolve(&self) -> Result<(RenderOptions, ImageFormat, Vec<RenderView>), RenderError> {
-        let (options, format) = resolve_common(self.common())?;
+    pub fn resolve(
+        &self,
+    ) -> Result<(RenderOptions, ImageFormat, Vec<RenderView>, bool), RenderError> {
+        let options = resolve_common(self.common())?;
+        let (shared_format_name, format) =
+            resolve_required_format(self.format.as_deref(), self.quality)?;
         if self.views.is_empty() {
             return Err(RenderError::Parse(
                 "views must contain at least one view".into(),
             ));
         }
+        let shared_annotated = options.axes || options.scale_bar;
         let mut ids = HashSet::with_capacity(self.views.len());
         let mut views = Vec::with_capacity(self.views.len());
         for (index, view) in self.views.iter().enumerate() {
@@ -206,41 +251,72 @@ impl RenderImagesRequest {
                     "views[{index}].theta must be finite"
                 )));
             }
-            validate_optional_label(view.label.as_deref(), &format!("views[{index}].label"))?;
-            if options.include_label && view.label.is_none() {
+            for (name, value) in [("width", view.width), ("height", view.height)] {
+                if let Some(value) = value
+                    && !(MIN_DIMENSION..=MAX_DIMENSION).contains(&value)
+                {
+                    return Err(RenderError::Parse(format!(
+                        "views[{index}].{name} {value} outside {MIN_DIMENSION}..={MAX_DIMENSION}"
+                    )));
+                }
+            }
+            if (shared_annotated || view.label.is_some())
+                && (view.width.unwrap_or(options.width) < ANNOTATED_MIN_DIMENSION
+                    || view.height.unwrap_or(options.height) < ANNOTATED_MIN_DIMENSION)
+            {
                 return Err(RenderError::Parse(format!(
-                    "views[{index}].label is required when includeLabel is true"
+                    "views[{index}]: annotated images must be at least {ANNOTATED_MIN_DIMENSION}x{ANNOTATED_MIN_DIMENSION}"
                 )));
             }
+            if let Some(quality) = view.quality
+                && (!quality.is_finite() || !(0.0..=1.0).contains(&quality))
+            {
+                return Err(RenderError::Parse(format!(
+                    "views[{index}].quality {quality} outside 0..=1"
+                )));
+            }
+            // A per-view format or quality resolves against the same defaults
+            // and lossless-only-at-exactly-1 rule as the shared pair.
+            let view_format = if view.format.is_some() || view.quality.is_some() {
+                let name = view.format.as_deref().unwrap_or(shared_format_name);
+                Some(
+                    resolve_format(name, view.quality.or(self.quality))
+                        .map_err(|error| RenderError::Parse(format!("views[{index}]: {error}")))?,
+                )
+            } else {
+                None
+            };
+            validate_optional_label(view.label.as_deref(), &format!("views[{index}].label"))?;
             views.push(RenderView {
                 id: view.id.clone(),
                 label: view.label.clone(),
                 phi_deg: view.phi,
                 theta_deg: view.theta,
+                width: view.width,
+                height: view.height,
+                format: view_format,
             });
         }
-        Ok((options, format, views))
+        Ok((options, format, views, self.timings.unwrap_or(false)))
     }
 
     fn common(&self) -> CommonRequest<'_> {
         CommonRequest {
             width: self.width,
             height: self.height,
-            format: self.format.as_deref(),
-            quality: self.quality,
             margin: self.margin,
             up: self.up.as_deref(),
             projection: self.projection.as_deref(),
             background: self.background,
-            include_axes: self.include_axes,
-            include_label: self.include_label,
-            include_scale: self.include_scale,
+            axes: self.axes,
+            annotated: false,
+            scale_bar: self.scale_bar,
             lighting: self.lighting.as_ref(),
         }
     }
 }
 
-fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFormat), RenderError> {
+fn resolve_common(request: CommonRequest<'_>) -> Result<RenderOptions, RenderError> {
     let defaults = RenderOptions::default();
     let width = request.width.unwrap_or(defaults.width);
     let height = request.height.unwrap_or(defaults.height);
@@ -251,12 +327,9 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
             "dimensions {width}x{height} outside {MIN_DIMENSION}..={MAX_DIMENSION}"
         )));
     }
-    let include_axes = request.include_axes.unwrap_or(false);
-    let include_label = request.include_label.unwrap_or(false);
-    let include_scale = request.include_scale.unwrap_or(false);
-    if (include_axes || include_label || include_scale)
-        && (width < ANNOTATED_MIN_DIMENSION || height < ANNOTATED_MIN_DIMENSION)
-    {
+    let axes = request.axes.unwrap_or(false);
+    let scale_bar = request.scale_bar.unwrap_or(false);
+    if request.annotated && (width < ANNOTATED_MIN_DIMENSION || height < ANNOTATED_MIN_DIMENSION) {
         return Err(RenderError::Parse(format!(
             "annotated images must be at least {ANNOTATED_MIN_DIMENSION}x{ANNOTATED_MIN_DIMENSION}"
         )));
@@ -266,19 +339,6 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
     if !margin.is_finite() || !(0.0..=0.5).contains(&margin) {
         return Err(RenderError::Parse(format!(
             "margin {margin} outside 0..=0.5"
-        )));
-    }
-    // WebP defaults to 1 (lossless, matching earlier lossless-only releases);
-    // JPEG keeps 0.92. PNG ignores quality entirely.
-    let default_quality = if request.format == Some("webp") {
-        1.0
-    } else {
-        0.92
-    };
-    let quality = request.quality.unwrap_or(default_quality);
-    if !quality.is_finite() || !(0.0..=1.0).contains(&quality) {
-        return Err(RenderError::Parse(format!(
-            "quality {quality} outside 0..=1"
         )));
     }
     let up = match request.up {
@@ -309,7 +369,45 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
 
     let lighting = resolve_lighting(request.lighting)?;
 
-    let format_name = request.format.unwrap_or("png");
+    Ok(RenderOptions {
+        width,
+        height,
+        padding_factor: 1.0 - margin,
+        line_width: defaults.line_width,
+        up,
+        projection,
+        background: request.background,
+        axes,
+        scale_bar,
+        lighting,
+        ..defaults
+    })
+}
+
+/// Resolve the request's own format name and encoder settings. `format` is
+/// required on the wire — the TS façade makes it mandatory so a better default
+/// can be adopted later without an API break, which leaves no honest default
+/// to fall back to here. The name is handed back so a batch can resolve its
+/// per-view overrides against it.
+fn resolve_required_format(
+    name: Option<&str>,
+    quality: Option<f32>,
+) -> Result<(&str, ImageFormat), RenderError> {
+    let name = name.ok_or_else(|| RenderError::Parse("format is required".into()))?;
+    let format = resolve_format(name, quality).map_err(RenderError::Parse)?;
+    Ok((name, format))
+}
+
+/// Resolve a format name plus 0..=1 quality into the output format, applying
+/// the per-format quality default and the lossless-only-at-exactly-1 WebP
+/// rule. WebP defaults to 1 (lossless, matching earlier lossless-only
+/// releases); JPEG keeps 0.92. PNG and raw ignore quality entirely.
+fn resolve_format(name: &str, quality: Option<f32>) -> Result<ImageFormat, String> {
+    let default_quality = if name == "webp" { 1.0 } else { 0.92 };
+    let quality = quality.unwrap_or(default_quality);
+    if !quality.is_finite() || !(0.0..=1.0).contains(&quality) {
+        return Err(format!("quality {quality} outside 0..=1"));
+    }
     // Only an exact quality of 1 selects lossless WebP: rounding alone would
     // send 0.995..1.0 to 100, silently breaking the "below 1 is lossy"
     // contract.
@@ -317,26 +415,8 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<(RenderOptions, ImageFor
         100 if quality < 1.0 => 99,
         rounded => rounded,
     };
-    let format = ImageFormat::from_name(format_name, encoder_quality)
-        .map_err(|_| RenderError::Parse(format!("format {format_name:?} not png/webp/jpeg/jpg")))?;
-
-    Ok((
-        RenderOptions {
-            width,
-            height,
-            padding_factor: 1.0 - margin,
-            line_width: defaults.line_width,
-            up,
-            projection,
-            background: request.background,
-            include_axes,
-            include_label,
-            include_scale,
-            lighting,
-            ..defaults
-        },
-        format,
-    ))
+    ImageFormat::from_name(name, encoder_quality)
+        .map_err(|_| format!("format {name:?} not png/webp/jpeg/jpg/raw"))
 }
 
 /// `'studio'`, omitted, and the studio values spelled out all resolve to the
@@ -476,17 +556,120 @@ mod tests {
     use super::*;
 
     #[test]
-    fn singular_defaults_include_axes_off() {
-        let (options, format) = RenderRequest::from_json("{}")
+    fn singular_defaults_annotations_off() {
+        let (options, format) = RenderRequest::from_json(r#"{"format":"png"}"#)
             .expect("parse")
             .resolve()
             .expect("resolve");
         assert_eq!((options.width, options.height), (768, 432));
         assert_eq!((options.phi_deg, options.theta_deg), (60.0, -45.0));
-        assert!(!options.include_axes);
-        assert!(!options.include_label);
-        assert!(!options.include_scale);
+        assert!(!options.axes);
+        assert!(options.label.is_none());
+        assert!(!options.scale_bar);
         assert_eq!(format, ImageFormat::Png);
+    }
+
+    #[test]
+    fn a_label_alone_switches_the_label_annotation_on() {
+        let (options, _) = RenderRequest::from_json(r#"{"format":"png","label":"gear"}"#)
+            .expect("parse")
+            .resolve()
+            .expect("resolve");
+        assert_eq!(options.label.as_deref(), Some("gear"));
+        assert_eq!(
+            RenderRequest::from_json(r#"{"format":"png","label":"gear","width":191}"#)
+                .expect("parse")
+                .resolve()
+                .unwrap_err()
+                .to_string(),
+            "parse: annotated images must be at least 192x192"
+        );
+        assert_eq!(
+            RenderImagesRequest::from_json(
+                r#"{"format":"png","views":[{"id":"front","label":"Front","phi":90,"theta":0,"width":191}]}"#
+            )
+            .expect("parse")
+            .resolve()
+            .unwrap_err()
+            .to_string(),
+            "parse: views[0]: annotated images must be at least 192x192"
+        );
+    }
+
+    #[test]
+    fn a_batch_judges_annotated_dimensions_per_view() {
+        // The shared pair is only a default: a view that overrides both is the
+        // size that gets rendered and annotated.
+        let (options, _, views, _) = RenderImagesRequest::from_json(
+            r#"{"format":"png","axes":true,"width":128,"height":128,"views":[{"id":"front","phi":90,"theta":0,"width":512,"height":512}]}"#
+        )
+        .expect("parse")
+        .resolve()
+        .expect("resolve");
+        assert_eq!((options.width, options.height), (128, 128));
+        assert_eq!(views[0].width, Some(512));
+        // A view that inherits the small shared pair still fails on its own size.
+        assert_eq!(
+            RenderImagesRequest::from_json(
+                r#"{"format":"png","axes":true,"width":128,"height":128,"views":[{"id":"front","phi":90,"theta":0}]}"#
+            )
+            .expect("parse")
+            .resolve()
+            .unwrap_err()
+            .to_string(),
+            "parse: views[0]: annotated images must be at least 192x192"
+        );
+    }
+
+    #[test]
+    fn an_image_request_without_a_format_is_rejected() {
+        // The TS façade makes `format` required, so no default can be right
+        // here: an absent format is a caller mistake, not a request for PNG.
+        for json in ["{}", r#"{"width":256}"#, r#"{"quality":0.9}"#] {
+            let error = RenderRequest::from_json(json)
+                .expect("parse")
+                .resolve()
+                .unwrap_err();
+            assert_eq!(error.to_string(), "parse: format is required", "{json}");
+        }
+        assert_eq!(
+            RenderImagesRequest::from_json(r#"{"views":[{"id":"front","phi":90,"theta":0}]}"#)
+                .expect("parse")
+                .resolve()
+                .unwrap_err()
+                .to_string(),
+            "parse: format is required"
+        );
+        // The format-free resolution still answers, because it chooses no
+        // encoder: it is what `resolve` layers the required format onto.
+        let options = RenderRequest::from_json(r#"{"width":256}"#)
+            .expect("parse")
+            .resolve_options()
+            .expect("resolve");
+        assert_eq!(options.width, 256);
+    }
+
+    #[test]
+    fn raw_resolves_as_a_format_and_ignores_quality() {
+        for json in [r#"{"format":"raw"}"#, r#"{"format":"raw","quality":0.5}"#] {
+            let (options, format) = RenderRequest::from_json(json)
+                .expect("parse")
+                .resolve()
+                .expect("resolve");
+            assert_eq!(format, ImageFormat::Raw, "{json}");
+            assert_eq!((options.width, options.height), (768, 432));
+        }
+        // A per-view override picks it up through the same resolution, so one
+        // plan can mix an encoded view with an unencoded one.
+        let (_, shared, views, _) = RenderImagesRequest::from_json(
+            r#"{"format":"webp","views":[{"id":"thumb","phi":60,"theta":-45},{"id":"frame","phi":60,"theta":-45,"format":"raw"}]}"#,
+        )
+        .expect("parse")
+        .resolve()
+        .expect("resolve");
+        assert_eq!(shared, ImageFormat::WebP { quality: 100 });
+        assert_eq!(views[0].format, None);
+        assert_eq!(views[1].format, Some(ImageFormat::Raw));
     }
 
     #[test]
@@ -507,35 +690,68 @@ mod tests {
 
     #[test]
     fn plural_resolves_shared_settings_and_ordered_views() {
-        let (options, format, views) = RenderImagesRequest::from_json(
-            r#"{"format":"webp","includeAxes":true,"includeLabel":true,"includeScale":true,"views":[{"id":"front","label":"Front","phi":90,"theta":0},{"id":"top","label":"Top","phi":0,"theta":0}]}"#,
+        let (options, format, views, timings) = RenderImagesRequest::from_json(
+            r#"{"format":"webp","axes":true,"scaleBar":true,"views":[{"id":"front","label":"Front","phi":90,"theta":0},{"id":"top","label":"Top","phi":0,"theta":0}]}"#,
         )
         .expect("parse")
         .resolve()
         .expect("resolve");
-        assert!(options.include_axes);
-        assert!(options.include_label);
-        assert!(options.include_scale);
+        assert!(options.axes);
+        assert!(options.scale_bar);
+        assert!(!timings);
         assert_eq!(views[0].label.as_deref(), Some("Front"));
         assert_eq!(format, ImageFormat::WebP { quality: 100 });
         assert_eq!(views[0].id, "front");
         assert_eq!(views[1].id, "top");
+        assert_eq!(views[0].width, None);
+        assert_eq!(views[0].format, None);
+    }
+
+    #[test]
+    fn plural_resolves_per_view_output_overrides() {
+        let (options, format, views, timings) = RenderImagesRequest::from_json(
+            r#"{"format":"webp","quality":0.9,"width":768,"height":432,"timings":true,"views":[
+                {"id":"card","phi":60,"theta":-45},
+                {"id":"og","phi":60,"theta":-45,"width":1536,"height":804},
+                {"id":"hero","phi":60,"theta":-45,"format":"png"},
+                {"id":"print","phi":60,"theta":-45,"format":"jpeg","quality":0.8},
+                {"id":"exact","phi":60,"theta":-45,"quality":1}
+            ]}"#,
+        )
+        .expect("parse")
+        .resolve()
+        .expect("resolve");
+        assert!(timings);
+        // Shared pair: lossy webp at 0.9.
+        assert_eq!(format, ImageFormat::WebP { quality: 90 });
+        // No overrides: shared values apply.
+        assert_eq!(views[0].format, None);
+        // Dimensions only: format untouched.
+        assert_eq!((views[1].width, views[1].height), (Some(1536), Some(804)));
+        assert_eq!(views[1].format, None);
+        // Format override without quality: PNG ignores the shared quality.
+        assert_eq!(views[2].format, Some(ImageFormat::Png));
+        // Format + quality override.
+        assert_eq!(views[3].format, Some(ImageFormat::Jpeg { quality: 80 }));
+        // Quality override alone resolves against the shared format name, and
+        // exactly 1 selects lossless per the shared WebP rule.
+        assert_eq!(views[4].format, Some(ImageFormat::WebP { quality: 100 }));
+        assert_eq!(options.width, 768);
     }
 
     #[test]
     fn rejects_invalid_singular_requests() {
         for json in [
-            r#"{"width":15}"#,
-            r#"{"margin":0.6}"#,
-            r#"{"quality":1.5}"#,
-            r#"{"up":"w"}"#,
-            r#"{"projection":"fish-eye"}"#,
+            r#"{"format":"png","width":15}"#,
+            r#"{"format":"png","margin":0.6}"#,
+            r#"{"format":"png","quality":1.5}"#,
+            r#"{"format":"png","up":"w"}"#,
+            r#"{"format":"png","projection":"fish-eye"}"#,
             r#"{"format":"gif"}"#,
-            r#"{"background":[2.0,0.0,0.0,1.0]}"#,
-            r#"{"zoomLevel":1.8}"#,
-            r#"{"includeLabel":true}"#,
-            r#"{"includeAxes":true,"width":191}"#,
-            r#"{"label":"snowman ☃"}"#,
+            r#"{"format":"png","background":[2.0,0.0,0.0,1.0]}"#,
+            r#"{"format":"png","zoomLevel":1.8}"#,
+            r#"{"format":"png","axes":true,"width":191}"#,
+            r#"{"format":"png","label":"snowman ☃"}"#,
             "not json",
         ] {
             assert!(
@@ -549,12 +765,12 @@ mod tests {
     #[test]
     fn rejects_invalid_plural_views_before_rendering() {
         for json in [
-            r#"{"views":[]}"#,
-            r#"{"views":[{"id":"../front","phi":90,"theta":0}]}"#,
-            r#"{"views":[{"id":"front","phi":90,"theta":0},{"id":"front","phi":0,"theta":0}]}"#,
-            r#"{"views":[{"id":"front","phi":90,"theta":0,"format":"png"}]}"#,
-            r#"{"phi":90,"views":[{"id":"front","phi":90,"theta":0}]}"#,
-            r#"{"includeLabel":true,"views":[{"id":"front","phi":90,"theta":0}]}"#,
+            r#"{"format":"png","views":[]}"#,
+            r#"{"format":"png","views":[{"id":"../front","phi":90,"theta":0}]}"#,
+            r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0},{"id":"front","phi":0,"theta":0}]}"#,
+            r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"zoom":2}]}"#,
+            r#"{"format":"png","phi":90,"views":[{"id":"front","phi":90,"theta":0}]}"#,
+            r#"{"format":"png","label":"shared","views":[{"id":"front","phi":90,"theta":0}]}"#,
         ] {
             assert!(
                 RenderImagesRequest::from_json(json)
@@ -565,10 +781,83 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_per_view_output_overrides_by_name() {
+        let cases = [
+            (
+                r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"width":15}]}"#,
+                "parse: views[0].width 15 outside 16..=4096",
+            ),
+            (
+                r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"height":4097}]}"#,
+                "parse: views[0].height 4097 outside 16..=4096",
+            ),
+            (
+                r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"quality":1.5}]}"#,
+                "parse: views[0].quality 1.5 outside 0..=1",
+            ),
+            (
+                r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"format":"gif"}]}"#,
+                "parse: views[0]: format \"gif\" not png/webp/jpeg/jpg/raw",
+            ),
+            (
+                r#"{"format":"png","axes":true,"views":[{"id":"front","phi":90,"theta":0,"width":191}]}"#,
+                "parse: views[0]: annotated images must be at least 192x192",
+            ),
+        ];
+        for (json, expected) in cases {
+            let error = RenderImagesRequest::from_json(json)
+                .and_then(|request| request.resolve())
+                .unwrap_err()
+                .to_string();
+            assert_eq!(error, expected, "{json}");
+        }
+    }
+
+    #[test]
+    fn create_renderer_request_resolves_power_preferences() {
+        assert_eq!(
+            CreateRendererRequest::from_json(None)
+                .expect("parse")
+                .resolve()
+                .expect("resolve"),
+            wgpu::PowerPreference::HighPerformance
+        );
+        for (json, expected) in [
+            (
+                r#"{"powerPreference":"high-performance"}"#,
+                wgpu::PowerPreference::HighPerformance,
+            ),
+            (
+                r#"{"powerPreference":"low-power"}"#,
+                wgpu::PowerPreference::LowPower,
+            ),
+            (r"{}", wgpu::PowerPreference::HighPerformance),
+        ] {
+            assert_eq!(
+                CreateRendererRequest::from_json(Some(json))
+                    .expect("parse")
+                    .resolve()
+                    .expect("resolve"),
+                expected
+            );
+        }
+        assert_eq!(
+            CreateRendererRequest::from_json(Some(r#"{"powerPreference":"turbo"}"#))
+                .expect("parse")
+                .resolve()
+                .unwrap_err()
+                .to_string(),
+            "parse: powerPreference \"turbo\" not high-performance/low-power"
+        );
+        assert!(CreateRendererRequest::from_json(Some(r#"{"battery":true}"#)).is_err());
+        assert!(CreateRendererRequest::from_json(Some("not json")).is_err());
+    }
+
+    #[test]
     fn resolves_every_common_option_variant() {
         for up in ["x", "y", "z"] {
             let json = format!(
-                r#"{{"format":"jpeg","quality":0.8,"width":192,"height":193,"margin":0.2,"up":"{up}","projection":"orthographic","background":[0,0.25,0.5,1],"label":"µ—−","includeLabel":true}}"#
+                r#"{{"format":"jpeg","quality":0.8,"width":192,"height":193,"margin":0.2,"up":"{up}","projection":"orthographic","background":[0,0.25,0.5,1],"label":"µ—−","axes":true,"scaleBar":true}}"#
             );
             let (options, format) = RenderRequest::from_json(&json)
                 .expect("parse")
@@ -576,15 +865,19 @@ mod tests {
                 .expect("resolve");
             assert_eq!(options.width, 192);
             assert_eq!(options.height, 193);
+            assert!(options.axes);
+            assert!(options.scale_bar);
             assert_eq!(options.projection, Projection::Orthographic);
             assert_eq!(format, ImageFormat::Jpeg { quality: 80 });
         }
     }
 
+    /// Lighting is settled before any encoder is chosen, so these cases go
+    /// through the format-free resolution.
     fn lighting_of(json: &str) -> Result<ResolvedLighting, RenderError> {
         RenderRequest::from_json(json)
-            .and_then(|request| request.resolve())
-            .map(|(options, _)| options.lighting)
+            .and_then(|request| request.resolve_options())
+            .map(|options| options.lighting)
     }
 
     #[test]
@@ -599,8 +892,8 @@ mod tests {
             assert_eq!(lighting_of(json).expect("resolve"), studio, "{json}");
         }
         // The plural request carries the same field.
-        let (options, _, _) = RenderImagesRequest::from_json(
-            r#"{"lighting":"studio","views":[{"id":"front","phi":90,"theta":0}]}"#,
+        let (options, _, _, _) = RenderImagesRequest::from_json(
+            r#"{"format":"png","lighting":"studio","views":[{"id":"front","phi":90,"theta":0}]}"#,
         )
         .expect("parse")
         .resolve()
@@ -736,11 +1029,16 @@ mod tests {
     fn rejects_non_finite_views_labels_and_common_values() {
         for (phi, theta) in [(f32::NAN, 0.0), (0.0, f32::INFINITY)] {
             let request = RenderImagesRequest {
+                format: Some("png".into()),
                 views: vec![RenderImageViewRequest {
                     id: "front".into(),
                     label: None,
                     phi,
                     theta,
+                    width: None,
+                    height: None,
+                    format: None,
+                    quality: None,
                 }],
                 ..Default::default()
             };
@@ -750,16 +1048,20 @@ mod tests {
             assert!(validate_optional_label(Some(label), "label").is_err());
         }
         assert!(finite_or_default(Some(f32::NAN), 0.0, "angle").is_err());
+        let png = || Some("png".to_owned());
         for request in [
             RenderRequest {
+                format: png(),
                 margin: Some(f32::NAN),
                 ..Default::default()
             },
             RenderRequest {
+                format: png(),
                 quality: Some(f32::INFINITY),
                 ..Default::default()
             },
             RenderRequest {
+                format: png(),
                 background: Some([0.0, 0.0, f32::NAN, 1.0]),
                 ..Default::default()
             },

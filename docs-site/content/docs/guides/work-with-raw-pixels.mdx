@@ -1,0 +1,129 @@
+---
+title: Work with raw pixels
+description: Return the RGBA frame instead of an encoded file, for pixel diffs, video frames and texture uploads with no image decoder in the loop.
+---
+
+`format: 'raw'` stops after readback and returns the frame instead of a file.
+Use it when the next step wants pixels rather than an image: a diff, a video
+frame, a texture.
+
+### 1. Render the frame
+
+```typescript
+import { renderImage } from 'nanoraster';
+
+const { bytes, width, height } = await renderImage(glb, {
+  format: 'raw',
+  width: 640,
+  height: 480,
+});
+```
+
+`bytes` is straight-alpha (not premultiplied) sRGB RGBA8: exactly
+`width * height * 4` bytes, row-major, top row first, no padding. Other
+libraries return premultiplied, BGRA or bottom-up buffers; check before piping
+one into another. Other options apply unchanged, `quality` is ignored, and the
+[`RenderedImageFile`](../api#renderedimagefile) is named `render.raw` with
+`mimeType` `application/octet-stream`.
+
+Node has no image decoder (no `ImageData`, `createImageBitmap` or canvas), so
+an encoded file is where the pixels stop unless you add one, and a decoder is
+a multi-megabyte dependency. Raw output has nothing to decode.
+
+### 2. Diff two renders
+
+```typescript
+import { renderImage } from 'nanoraster';
+
+const options = { format: 'raw', width: 512, height: 512 } as const;
+const baseline = await renderImage(baselineGlb, options);
+const candidate = await renderImage(candidateGlb, options);
+
+let changed = 0;
+for (let index = 0; index < baseline.bytes.length; index += 1) {
+  if (Math.abs(baseline.bytes[index] - candidate.bytes[index]) > 8) changed += 1;
+}
+```
+
+[Determinism](../how-it-works#determinism) makes the count meaningful: one
+host and one request give identical bytes, so a non-zero count means the model
+or the request changed, and with no encoder in the loop it can mean nothing
+else. Across hosts, expect a few pixels of rasterisation difference and keep a
+tolerance. [pixelmatch](https://github.com/mapbox/pixelmatch) takes the same
+two buffers when you want a diff image.
+
+### 3. Render a turntable as one plan
+
+```typescript
+import { renderImages } from 'nanoraster';
+
+const frames = await renderImages(glb, {
+  format: 'raw',
+  width: 480,
+  height: 360,
+  views: Array.from({ length: 36 }, (_, step) => ({ id: `f${step}`, phi: 60, theta: step * 10 - 180 })),
+});
+
+for (const { file } of frames) encoder.stdin.write(file.bytes);
+```
+
+One [`renderImages`](../api#renderimages) call uploads the GLB once and
+pipelines the views, which a loop of single renders cannot. Pipe the frames, in
+order, into a video encoder that reads raw RGBA:
+
+```bash
+ffmpeg -f rawvideo -pixel_format rgba -video_size 480x360 -framerate 25 -i pipe:0 turntable.mp4
+```
+
+GIF encoders take the same flat RGBA, and a plan can mix formats, so one call
+can return a WebP poster beside the raw frames. Every view arrives at once, at
+`width * height * 4` bytes each (36 frames at 480×360 is 25 MB); for a long
+sequence hold a renderer and write each batch out before requesting the next,
+as [Reuse the renderer](reuse-the-renderer) shows.
+
+### 4. Paint it in the browser
+
+<RenderDemo>
+
+```typescript
+import { renderImage } from 'nanoraster';
+
+const { bytes, width, height } = await renderImage(glb, {
+  format: 'raw',
+  phi: 62,
+  theta: -38,
+  margin: 0.08,
+});
+
+// No copy and no decode: ImageData wraps the memory the renderer wrote.
+const frame = new ImageData(new Uint8ClampedArray(bytes.buffer), width, height);
+
+const canvas = document.querySelector('canvas');
+canvas.width = width;
+canvas.height = height;
+canvas.getContext('2d').putImageData(frame, 0, 0);
+```
+
+</RenderDemo>
+
+A browser can decode images, so here raw saves time rather than a dependency:
+painting the buffer through `ImageData` is about 2.5× faster per frame than
+decoding lossless WebP. The same buffer uploads unchanged as a WebGL or WebGPU
+texture and as a WebCodecs video frame. nanoraster renders stills and reads
+every frame back through the CPU; it is not a three.js replacement, so use a
+canvas renderer for live interaction.
+
+## Variations
+
+**Encode when the destination wants a file.** Documents, wires and viewers
+(PDFs, vision models, glTF textures, `<img>` and HTTP) take an encoded format;
+[Format and annotate](format-and-annotate) chooses one. Re-encoding a raw
+frame yourself gives up the byte-identical output the built-in encoders
+guarantee.
+
+**Annotations.** The axis indicator, label and scale bar are drawn before
+readback, so they are in the buffer.
+
+**Workers.** `postMessage(bytes, [bytes.buffer])` transfers a frame without a
+copy; [Render in the browser](render-in-the-browser) shows where the renderer
+belongs.

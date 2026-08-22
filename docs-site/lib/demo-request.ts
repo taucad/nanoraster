@@ -1,4 +1,12 @@
-import { isLightingKey, isMaterialKey, type DemoLight, type DemoValue, type DemoView } from './demo-options';
+import {
+  isLightingKey,
+  isMaterialKey,
+  isViewLabelKey,
+  viewLabelKey,
+  type DemoLight,
+  type DemoValue,
+  type DemoView,
+} from './demo-options';
 import type { MaterialFactors } from './glb-material';
 
 /**
@@ -21,7 +29,8 @@ const hexToRgba = (hex: string): readonly number[] => {
  * values travel inside `lighting`, alongside the lights the example declares.
  * The demo's own background and format are only fallbacks: an example that
  * states either one drives the render instead. The singular `label` belongs to
- * a one-image request; a batch labels each view.
+ * a one-image request; a batch labels each view. An empty label, singular or
+ * per view, is no label at all.
  */
 export const buildDemoRequest = (
   current: Record<string, DemoValue>,
@@ -40,18 +49,28 @@ export const buildDemoRequest = (
   const material = Object.fromEntries(entries.filter(([key]) => isMaterialKey(key))) as MaterialFactors;
   const rig = Object.fromEntries(entries.filter(([key]) => isLightingKey(key)));
   const options = Object.fromEntries(
-    entries.filter(([key]) => !isMaterialKey(key) && !isLightingKey(key) && !(batch && angleKeys.has(key))),
+    entries.filter(
+      ([key]) =>
+        !isMaterialKey(key) &&
+        !isLightingKey(key) &&
+        !isViewLabelKey(key) &&
+        key !== 'label' &&
+        !(batch && angleKeys.has(key)),
+    ),
   );
+  const label =
+    typeof current['label'] === 'string' && current['label'] !== '' ? current['label'] : undefined;
 
-  // Labels are required on every view once they are switched on, so a view
-  // that declares none falls back to its own identifier.
+  // A view is labelled when it says so and not otherwise: the control's value
+  // when one has been edited, else the example's own.
   const labelled = views.map((view) => {
-    const label = view.label ?? (current['includeLabel'] === true ? view.id : undefined);
+    const edited = current[viewLabelKey(view.id)];
+    const text = typeof edited === 'string' ? edited : view.label;
     return {
       id: view.id,
       phi: view.phi,
       theta: view.theta,
-      ...(label === undefined ? {} : { label }),
+      ...(text === undefined || text === '' ? {} : { label: text }),
     };
   });
 
@@ -60,7 +79,7 @@ export const buildDemoRequest = (
     format: 'png',
     ...options,
     ...size,
-    ...(current['includeLabel'] === true && !batch ? { label: 'gear' } : {}),
+    ...(label === undefined || batch ? {} : { label }),
     ...(batch ? { views: labelled } : {}),
     ...(lights === undefined ? {} : { lighting: { lights, ...rig } }),
   };

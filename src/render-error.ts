@@ -4,7 +4,7 @@
  * `encode:`); both the wasm and napi bindings surface it verbatim as a JS
  * error. {@link RenderError.from} parses that tag back into a typed `code` so
  * the transcoder can turn it into a structured issue and the browser worker /
- * CLI can decide whether to keep the last thumbnail (GPU faults) or report a
+ * CLI can decide whether to keep the last image (GPU faults) or report a
  * hard failure (bad GLB, encode error).
  */
 
@@ -12,9 +12,9 @@
  * Stable failure codes surfaced to callers.
  *
  * - `adapter-unavailable` — no GPU adapter (WebGPU unsupported, headless Linux
- *   without Mesa, multi-GPU laptop returning null). Keep-last-thumbnail case.
+ *   without Mesa, multi-GPU laptop returning null). Keep-last-image case.
  * - `device-lost` — the GPU device dropped mid-render (Safari 26 bug, driver
- *   reset). Keep-last-thumbnail case; retries on the next geometry settle.
+ *   reset). Keep-last-image case; retries on the next geometry settle.
  * - `gpu` — any other GPU/driver fault during the render pass.
  * - `parse` — malformed GLB or out-of-range options.
  * - `encode` — encoder failure (e.g. JPEG requested for a translucent render).
@@ -30,7 +30,7 @@ export type RenderFailureCode =
   | 'encode'
   | 'unknown';
 
-/** GPU-fault codes are transient: keep the last thumbnail and retry later. */
+/** GPU-fault codes are transient: keep the last image and retry later. */
 const gpuFaultCodes: ReadonlySet<RenderFailureCode> = new Set<RenderFailureCode>([
   'adapter-unavailable',
   'device-lost',
@@ -58,7 +58,7 @@ export class RenderError extends Error {
     }
 
     const message = error instanceof Error ? error.message : String(error);
-    return new RenderError(classify(message), message);
+    return new RenderError(classify(message), message, error);
   }
 
   /** Stable machine-readable failure classification. */
@@ -69,16 +69,17 @@ export class RenderError extends Error {
    *
    * @param code - Failure taxonomy code.
    * @param message - Human-readable message (typically the core's tagged text).
+   * @param cause - The value this error wraps, kept for its stack.
    */
-  public constructor(code: RenderFailureCode, message: string) {
-    super(message);
+  public constructor(code: RenderFailureCode, message: string, cause?: unknown) {
+    super(message, { cause });
     this.name = 'RenderError';
     this.code = code;
   }
 
   /**
    * `true` when the failure is a transient GPU fault (adapter/device/driver),
-   * where the caller should keep the existing thumbnail rather than surface an
+   * where the caller should keep the existing image rather than surface an
    * error. `false` for deterministic input/encode faults that will recur.
    *
    * @returns Whether the failure is a transient GPU fault.

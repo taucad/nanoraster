@@ -4,24 +4,64 @@ export const imageMimeTypes = {
   webp: 'image/webp',
   jpeg: 'image/jpeg',
   jpg: 'image/jpeg',
+  raw: 'application/octet-stream',
 } as const;
 
 /** Encoder format keys, including the `jpg` alias for `jpeg`. @internal */
 export type ImageFormat = keyof typeof imageMimeTypes;
 
-/** Named image bytes returned by nanoraster. @public */
-export type RenderedImageFile = {
-  /** Canonical output filename: `thumbnail.<format>` or `thumbnail-<id>.<format>`. */
+/** Output width when a request states none. @internal */
+export const defaultWidth = 768;
+
+/** Output height when a request states none. @internal */
+export const defaultHeight = 432;
+
+/**
+ * Named image bytes returned by nanoraster. The `Format` parameter narrows
+ * `mimeType` when the requesting format is known as a literal.
+ *
+ * For `format: 'raw'` the bytes are the frame itself rather than an encoded
+ * file: straight-alpha, sRGB-encoded RGBA8, exactly `width * height * 4` bytes,
+ * row-major with the top row first, four bytes per pixel and no padding —
+ * which is what a canvas `ImageData` expects after a `Uint8ClampedArray` wrap.
+ *
+ * @public
+ */
+export type RenderedImageFile<Format extends ImageFormat = ImageFormat> = {
+  /** Canonical output filename: `render.<format>` or `render-<id>.<format>`. */
   name: string;
-  /** Newly allocated encoded image bytes owned by the caller. */
+  /** Newly allocated image bytes owned by the caller. */
   bytes: Uint8Array<ArrayBuffer>;
-  /** MIME type matching the encoded image format. */
-  mimeType: (typeof imageMimeTypes)[keyof typeof imageMimeTypes];
+  /** MIME type matching the output format; `'application/octet-stream'` for raw. */
+  mimeType: (typeof imageMimeTypes)[Format];
+  /** Pixel width this view was rendered at, resolved from the request. */
+  readonly width: number;
+  /** Pixel height this view was rendered at, resolved from the request. */
+  readonly height: number;
 };
 
 /** Create a rendered image file with its canonical MIME type. @internal */
-export const createRenderedImageFile = (
-  format: ImageFormat,
-  name: string,
-  bytes: Uint8Array<ArrayBuffer>,
-): RenderedImageFile => ({ name, bytes, mimeType: imageMimeTypes[format] });
+export const createRenderedImageFile = <Format extends ImageFormat>({
+  format,
+  name,
+  bytes,
+  width,
+  height,
+}: {
+  /** Output format the bytes were encoded in, or `'raw'` for the frame itself. */
+  format: Format;
+  /** Canonical output filename. */
+  name: string;
+  /** Newly allocated image bytes to hand to the caller. */
+  bytes: Uint8Array<ArrayBuffer>;
+  /** Requested pixel width, or `undefined` to take the default. */
+  width: number | undefined;
+  /** Requested pixel height, or `undefined` to take the default. */
+  height: number | undefined;
+}): RenderedImageFile<Format> => ({
+  name,
+  bytes,
+  mimeType: imageMimeTypes[format],
+  width: width ?? defaultWidth,
+  height: height ?? defaultHeight,
+});

@@ -40,6 +40,13 @@ export default defineConfig({
       'nanoraster-wasm-candidate': resolve(
         process.env['NANORASTER_WASM_MODULE'] ?? 'src/wasm/render_wasm.js',
       ),
+      // The `bench` cargo feature is default-off, so the codec-conformance
+      // export exists only on this sibling build of the same source
+      // (`pnpm run build:wasm:bench`; CI builds and uploads it alongside the
+      // candidate).
+      'nanoraster-wasm-bench': resolve(
+        process.env['NANORASTER_BENCH_WASM_MODULE'] ?? 'tests/out/wasm-bench/render_wasm.js',
+      ),
     },
   },
   test: {

@@ -1,4 +1,4 @@
-//! Native codec benchmark: renders a GLB at the current thumbnail size and
+//! Native codec benchmark: renders a GLB at the current default size and
 //! historical comparison sizes, then
 //! times each encoder (`bench_encodes`). Prints one JSON object to stdout;
 //! progress goes to stderr.
@@ -8,7 +8,9 @@
 fn main() {
     let glb_path = std::env::args().nth(1).expect("usage: bench <in.glb>");
     let glb = std::fs::read(&glb_path).expect("read glb");
-    let adapter = pollster::block_on(render_core::describe_adapter()).expect("adapter");
+    let adapter = pollster::block_on(render_core::describe_adapter(None))
+        .expect("adapter description")
+        .expect("an adapter");
     eprintln!("adapter: {adapter}");
 
     let epoch = std::time::Instant::now();
@@ -30,10 +32,10 @@ fn main() {
         };
         let started = std::time::Instant::now();
         let rendered =
-            pollster::block_on(render_core::render_glb_to_rgba(&glb, &options)).expect("render");
-        let render_ms = started.elapsed().as_secs_f64() * 1000.0;
+            pollster::block_on(render_core::render_rgba(&glb, &options)).expect("render");
+        let render_duration = started.elapsed().as_secs_f64() * 1000.0;
         let mut report = render_core::bench_encodes(&rendered, &now).expect("bench");
-        report["renderMs"] = ((render_ms * 100.0).round() / 100.0).into();
+        report["render"] = ((render_duration * 100.0).round() / 100.0).into();
         eprintln!("{width}x{height} done");
         results.push(report);
     }

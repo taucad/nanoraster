@@ -8,7 +8,7 @@
   <a href="https://tau.new"><img src="https://img.shields.io/badge/Tau-ecosystem-6d28d9" alt="Part of the Tau ecosystem"></a>
 </p>
 
-Tiny headless WebGPU glTF renderer for deterministic PNG, WebP, and JPEG output.
+Tiny headless WebGPU glTF renderer for deterministic PNG, WebP, JPEG, and raw RGBA output.
 Runs on a native binary in Node.js and on WebGPU in the browser, from one Rust
 render core.
 
@@ -28,13 +28,13 @@ npm install nanoraster
 ## Quick start
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
 import { readFile, writeFile } from 'node:fs/promises';
 
 const glb = Uint8Array.from(await readFile('model.glb'));
-const image = await renderGlbToImage(glb, {
-  format: 'png',
+const image = await renderImage(glb, {
+  format: 'webp',
   width: 512,
   height: 512,
 });
@@ -42,8 +42,33 @@ await writeFile(image.name, image.bytes);
 ```
 
 Same request, same pixels: the camera, lighting and encoder are fixed for a
-given request, so a render can serve as evidence. Continue with the
-[tutorial and guides](https://nanoraster.xyz/docs).
+given request, so a render can serve as evidence. `format: 'raw'` returns the
+RGBA frame instead of a file, for pixel diffs, video frames and textures
+([Work with raw pixels](https://nanoraster.xyz/docs/guides/work-with-raw-pixels)).
+Continue with the [tutorial and guides](https://nanoraster.xyz/docs).
+
+## Reuse the renderer
+
+The one-shot calls share one renderer per process, so only the first call pays
+the GPU bring-up; create your own to control its lifetime or power preference.
+When you know the full set of outputs, declare them in one `renderImages` call
+with per-view overrides, about three times faster than separate renders:
+
+```typescript
+import { createRenderer } from 'nanoraster';
+
+using renderer = await createRenderer({ powerPreference: 'low-power' });
+
+const [card, og] = await renderer.renderImages(glb, {
+  format: 'webp',
+  views: [
+    { id: 'card', phi: 60, theta: -45, width: 768, height: 576 },
+    { id: 'og', phi: 60, theta: -45, width: 1536, height: 804, format: 'png' },
+  ],
+});
+```
+
+See [Reuse the renderer](https://nanoraster.xyz/docs/guides/reuse-the-renderer).
 
 ## Compatibility
 

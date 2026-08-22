@@ -15,45 +15,46 @@ Start with one view so the camera controls are visible on their own.
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
 import { readFile, writeFile } from 'node:fs/promises';
 
 const glb = Uint8Array.from(await readFile('model.glb'));
 
-const front = await renderGlbToImage(glb, {
-  format: 'png',
+const front = await renderImage(glb, {
+  format: 'webp',
   width: 512,
   height: 512,
   phi: 90,
   theta: 0,
 });
 
-await writeFile('front.png', front.bytes);
+await writeFile('front.webp', front.bytes);
 ```
 
 </RenderDemo>
 
-**Verify**: `front.png` shows the gear face-on, teeth all round the rim.
+**Verify**: `front.webp` shows the gear face-on, teeth all round the rim.
 
 ## Step 2: Switch to the batch call
 
 Rendering each view with its own call parses and uploads the GLB every time.
-`renderGlbToImages` does that once and renders every view in the list — start
+`renderImages` does that once and renders every view in the list — start
 with two, then add the rest in step 3. A sheet wants a tighter fit than a
-single hero image, so `margin` drops to `0.05`.
+single hero image, so `margin` drops to `0.05`; drag it and both views refit
+together.
 
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImages } from 'nanoraster';
+import { renderImages } from 'nanoraster';
 
 import { readFile, writeFile } from 'node:fs/promises';
 
 const glb = Uint8Array.from(await readFile('model.glb'));
 
-const sheet = await renderGlbToImages(glb, {
-  format: 'png',
+const sheet = await renderImages(glb, {
+  format: 'webp',
   width: 512,
   height: 512,
   margin: 0.05,
@@ -75,8 +76,8 @@ for (const { id, file } of sheet) {
 declared them:
 
 ```console
-front thumbnail-front.png
-right thumbnail-right.png
+front render-front.webp
+right render-right.webp
 ```
 
 The result filename carries the view `id`, not a counter.
@@ -84,18 +85,18 @@ The result filename carries the view `id`, not a counter.
 ## Step 3: Add the top and iso views
 
 The top view looks down the up axis; the iso view is the default three-quarter
-angle. `includeAxes` draws a camera-aware marker in each image, which is what
+angle. `axes` draws a camera-aware marker in each image, which is what
 orients the top view once it is on its own.
 
 <RenderDemo>
 
 ```typescript
-const sheet = await renderGlbToImages(glb, {
-  format: 'png',
+const sheet = await renderImages(glb, {
+  format: 'webp',
   width: 512,
   height: 512,
   margin: 0.05,
-  includeAxes: true,
+  axes: true,
   views: [
     { id: 'front', phi: 90, theta: 0 },
     { id: 'right', phi: 90, theta: 90 },
@@ -107,28 +108,27 @@ const sheet = await renderGlbToImages(glb, {
 
 </RenderDemo>
 
-**Verify**: four files. `thumbnail-top.png` looks down at the model, and `thumbnail-iso.png` uses
+**Verify**: four files. `render-top.webp` looks down at the model, and `render-iso.webp` uses
 [the quick start's angles](/docs), because those are the defaults.
 
 ## Step 4: Label each view
 
 Labels are drawn into the image, screen-upright, so a sheet stays readable
-once the images are separated from their filenames. Turning them on makes
-`label` required on every view; TypeScript rejects the call if one is missing.
-`includeScale` adds the bottom-left bar, so the finished sheet carries its own
-units too.
+once the images are separated from their filenames. A view carries one when
+its entry sets `label`; there is no flag to turn on, and clearing a label
+below removes it. `scaleBar` adds the bottom-left bar, so the finished sheet
+carries its own units too.
 
 <RenderDemo>
 
 ```typescript
-const sheet = await renderGlbToImages(glb, {
-  format: 'png',
+const sheet = await renderImages(glb, {
+  format: 'webp',
   width: 512,
   height: 512,
   margin: 0.05,
-  includeAxes: true,
-  includeScale: true,
-  includeLabel: true,
+  axes: true,
+  scaleBar: true,
   views: [
     { id: 'front', phi: 90, theta: 0, label: 'Front' },
     { id: 'right', phi: 90, theta: 90, label: 'Right' },

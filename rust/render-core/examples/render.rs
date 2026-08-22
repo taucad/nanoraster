@@ -27,13 +27,15 @@ fn main() {
         options.background = Some([1.0, 1.0, 1.0, 1.0]);
     }
 
-    let adapter = pollster::block_on(render_core::describe_adapter()).expect("adapter");
+    let adapter = pollster::block_on(render_core::describe_adapter(None))
+        .expect("adapter description")
+        .expect("an adapter");
     eprintln!("adapter: {adapter}");
 
     let glb = std::fs::read(&input).expect("read glb");
     let started = std::time::Instant::now();
-    let bytes = pollster::block_on(render_core::render_glb_to_image(&glb, &options, format))
-        .expect("render");
+    let bytes =
+        pollster::block_on(render_core::render_image(&glb, &options, format)).expect("render");
     eprintln!(
         "rendered {}x{} in {:?}",
         options.width,

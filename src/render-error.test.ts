@@ -37,6 +37,13 @@ describe('RenderError', () => {
       expect(error.message).toBe('raw string failure');
     });
 
+    it('should keep the foreign throw as the cause', () => {
+      const thrown = new Error('gpu: poll failed');
+      expect(RenderError.from(thrown).cause).toBe(thrown);
+      expect(RenderError.from('raw string failure').cause).toBe('raw string failure');
+      expect(new RenderError('parse', 'parse: bad', thrown).cause).toBe(thrown);
+    });
+
     it('should return the same instance when given a RenderError', () => {
       const original = new RenderError('parse', 'parse: bad');
       expect(RenderError.from(original)).toBe(original);

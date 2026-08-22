@@ -207,8 +207,19 @@ fn extend_bounds(
     model: Mat4,
 ) -> Result<(), String> {
     for primitive in &mesh.primitives {
+        // A closed triangle mesh references each vertex ~6 times through its
+        // indices; a visited bitmask transforms each referenced vertex once
+        // while keeping the exact same bounds (min/max over the same set).
+        let vertex_count = primitive.positions.len() / 3;
+        let mut visited = vec![0u64; vertex_count.div_ceil(64)];
         for &index in &primitive.indices {
-            let offset = index as usize * 3;
+            let vertex = index as usize;
+            let (word, bit) = (vertex / 64, 1u64 << (vertex % 64));
+            if visited[word] & bit != 0 {
+                continue;
+            }
+            visited[word] |= bit;
+            let offset = vertex * 3;
             let local = Vec3::from_slice(&primitive.positions[offset..offset + 3]);
             let world = model.transform_point3(local);
             if !world.is_finite() {

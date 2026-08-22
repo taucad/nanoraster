@@ -1,14 +1,14 @@
 {
   "version": "0.3.0",
-  "measuredAt": "2026-08-20T06:03:04.195Z",
+  "measuredAt": "2026-08-21T22:47:51.725Z",
   "wasm": {
-    "raw": 875874,
-    "gzip": 350646,
-    "brotli": 279276
+    "raw": 857495,
+    "gzip": 344892,
+    "brotli": 276011
   },
   "js": {
-    "raw": 1196,
-    "gzip": 379
+    "raw": 1193,
+    "gzip": 385
   },
   "native": {
     "darwin-arm64": 4445413,

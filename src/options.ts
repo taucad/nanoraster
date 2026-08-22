@@ -1,6 +1,7 @@
 /** Consumer options and strict wire serialization for image rendering. */
 
 import type { ImageFormat, RenderedImageFile } from '#image-file.js';
+import { defaultHeight, defaultWidth } from '#image-file.js';
 
 /**
  * One directional light.
@@ -53,16 +54,21 @@ export type RenderLightingRig = {
 export type RenderLighting = 'studio' | RenderLightingRig;
 
 type RenderImageSharedOptions = {
-  /** Required output encoder. `jpg` is an alias for `jpeg`. */
-  readonly format: 'png' | 'webp' | 'jpeg' | 'jpg';
+  /**
+   * Required output format. `jpg` is an alias for `jpeg`. `'raw'` skips the
+   * encoder and returns the frame itself: straight-alpha, sRGB-encoded RGBA8,
+   * exactly `width * height * 4` bytes, row-major with the top row first, four
+   * bytes per pixel and no padding, owned by the caller.
+   */
+  readonly format: 'png' | 'webp' | 'jpeg' | 'jpg' | 'raw';
   /** Output width in pixels, inclusive range 16–4096. @default 768 */
   readonly width?: number;
   /** Output height in pixels, inclusive range 16–4096. @default 432 */
   readonly height?: number;
   /**
    * Encoder quality from 0 to 1. For WebP, 1 is lossless and anything lower
-   * encodes lossy, following Chrome's canvas `toBlob` semantics. PNG ignores
-   * quality.
+   * encodes lossy, following Chrome's canvas `toBlob` semantics. PNG and raw
+   * ignore quality.
    *
    * @default 0.92 (jpeg), 1 (webp)
    */
@@ -75,18 +81,16 @@ type RenderImageSharedOptions = {
   readonly projection?: 'perspective' | 'orthographic';
   /** Transparent by default; otherwise `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. @default transparent */
   readonly background?: readonly [number, number, number, number] | string;
-  /** Include the bottom-right camera-aware XYZ indicator and front-on depth marker. @default false */
-  readonly includeAxes?: boolean;
-  /** Include the top-left caller-authored label verbatim. Requires `label` on every rendered view. @default false */
-  readonly includeLabel?: boolean;
+  /** Draw the bottom-right camera-aware XYZ indicator and front-on depth marker. @default false */
+  readonly axes?: boolean;
   /**
-   * Include a bottom-left physical scale. Perspective labels identify the
+   * Draw a bottom-left physical scale bar. Perspective labels identify the
    * subject-center measurement plane with `@ center`; orthographic scale is
    * depth-invariant.
    *
    * @default false
    */
-  readonly includeScale?: boolean;
+  readonly scaleBar?: boolean;
   /**
    * Studio preset by default; a supplied rig replaces the direct lights and
    * inherits the other studio values. Determinism is unchanged: a fixed rig
@@ -97,48 +101,48 @@ type RenderImageSharedOptions = {
   readonly lighting?: RenderLighting;
 };
 
-type RenderLabelOptions =
-  | {
-      readonly includeLabel: true;
-      /** Screen-upright text; 1–64 supported Unicode code points and required when labels are enabled. */
-      readonly label: string;
-    }
-  | {
-      readonly includeLabel?: false;
-      readonly label?: string;
-    };
+/** The singular camera plus the top-left label, whose presence is its switch. */
+type RenderCameraOptions = {
+  /** Screen-upright text drawn top-left; 1–64 supported Unicode code points. Omit it to draw no label. */
+  readonly label?: string;
+  /** Polar camera angle from the selected up axis, in finite degrees. @default 60 */
+  readonly phi?: number;
+  /** Right-handed camera azimuth around the selected up axis, in finite degrees. @default -45 */
+  readonly theta?: number;
+};
 
 /**
  * Options for one rendered image.
  *
  * @public
  */
-export type RenderImageOptions = RenderImageSharedOptions &
-  RenderLabelOptions & {
-    /** Polar camera angle from the selected up axis, in finite degrees. @default 60 */
-    readonly phi?: number;
-    /** Right-handed camera azimuth around the selected up axis, in finite degrees. @default -45 */
-    readonly theta?: number;
-  };
+export type RenderImageOptions = RenderImageSharedOptions & RenderCameraOptions;
 
 /**
- * One identified camera in a multi-image request.
+ * One identified camera in a multi-image request: camera identity plus
+ * optional per-view output overrides. An override defaults to the shared
+ * call-level value, so one plan call can render a whole resolution or format
+ * ladder of the same subject.
  *
  * @public
  */
 export type RenderImageView<Id extends string = string> = {
   /** Unique result and filename identity matching `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`. */
   readonly id: Id;
-  /** Screen-upright caller-authored text rendered verbatim; required when `includeLabel` is true. */
+  /** Screen-upright caller-authored text rendered verbatim. Its presence draws this view's label. */
   readonly label?: string;
   /** Polar camera angle from the selected up axis, in finite degrees. */
   readonly phi: number;
   /** Right-handed camera azimuth around the selected up axis, in finite degrees. */
   readonly theta: number;
-};
-
-type LabeledViews<Views extends readonly RenderImageView[]> = {
-  readonly [Index in keyof Views]: Views[Index] & { readonly label: string };
+  /** Output width override for this view, inclusive range 16–4096. @default the shared `width` */
+  readonly width?: number;
+  /** Output height override for this view, inclusive range 16–4096. @default the shared `height` */
+  readonly height?: number;
+  /** Output format override for this view, `'raw'` included. @default the shared `format` */
+  readonly format?: 'png' | 'webp' | 'jpeg' | 'jpg' | 'raw';
+  /** Encoder quality override for this view with the shared semantics (WebP: 1 is lossless, below 1 is lossy). @default the shared `quality` */
+  readonly quality?: number;
 };
 
 /**
@@ -147,38 +151,96 @@ type LabeledViews<Views extends readonly RenderImageView[]> = {
  * @public
  */
 export type RenderImagesOptions<Views extends readonly RenderImageView[] = readonly RenderImageView[]> =
-  RenderImageSharedOptions &
-    (
-      | {
-          readonly includeLabel: true;
-          /** Non-empty ordered view tuple with unique IDs; every view needs a label when labels are enabled. */
-          readonly views: LabeledViews<Views>;
-        }
-      | {
-          readonly includeLabel?: false;
-          readonly views: Views;
-        }
-    );
+  RenderImageSharedOptions & {
+    /**
+     * Attach stage timings (parse, setup, per-view render/overlay/encode) to
+     * the result as a `timings` property. Rendering is unchanged.
+     *
+     * @default false
+     */
+    readonly timings?: boolean;
+    /** Non-empty ordered view tuple with unique IDs. */
+    readonly views: Views;
+  };
 
 /**
  * One identified rendered file.
  *
  * @public
  */
-export type RenderedImage<Id extends string = string> = {
+export type RenderedImage<Id extends string = string, Format extends ImageFormat = ImageFormat> = {
   /** Stable identity copied from the corresponding input view. */
   readonly id: Id;
-  /** Owned encoded image file for this view. */
-  readonly file: RenderedImageFile;
+  /** Owned output file for this view. */
+  readonly file: RenderedImageFile<Format>;
 };
 
+type ViewOutputFormat<View, SharedFormat extends ImageFormat> = View extends {
+  readonly format: infer Format extends ImageFormat;
+}
+  ? Format
+  : SharedFormat;
+
 /**
- * Result tuple whose IDs and order follow the input view tuple.
+ * Result tuple whose IDs and order follow the input view tuple. Each entry's
+ * MIME type follows its view's `format` override, falling back to the shared
+ * format.
  *
  * @public
  */
-export type RenderedImages<Views extends readonly RenderImageView[]> = {
-  readonly [Index in keyof Views]: Views[Index] extends RenderImageView<infer Id> ? RenderedImage<Id> : never;
+export type RenderedImages<
+  Views extends readonly RenderImageView[],
+  SharedFormat extends ImageFormat = ImageFormat,
+> = {
+  readonly [Index in keyof Views]: Views[Index] extends RenderImageView<infer Id>
+    ? RenderedImage<Id, ViewOutputFormat<Views[Index], SharedFormat>>
+    : never;
+};
+
+/**
+ * Result of one plan call: the ordered tuple, plus the parsed timings when
+ * the options literal set `timings: true`. This is what
+ * `renderImages`/`Renderer.renderImages` resolve to, so consumers can name
+ * their own return types.
+ *
+ * @public
+ */
+export type RenderedImagesResult<Options extends RenderImagesOptions> = RenderedImages<
+  Options['views'],
+  Options['format']
+> &
+  (Options extends { readonly timings: true } ? { readonly timings: RenderTimings } : unknown);
+
+/**
+ * Stage timings for one rendered view within a timed plan call.
+ *
+ * @public
+ */
+export type RenderViewTimings = {
+  /** Identity copied from the corresponding input view. */
+  readonly id: string;
+  /** Milliseconds. GPU render, resolve, and pixel readback for this view. */
+  readonly render: number;
+  /** Milliseconds. Annotation stamping (zero when no annotations were requested). */
+  readonly overlay: number;
+  /** Milliseconds. Image encoding in the requested format. */
+  readonly encode: number;
+};
+
+/**
+ * Stage timings for one timed plan call. The fields map onto the render
+ * pipeline's stages: parse, setup (device acquisition and geometry upload),
+ * then per-view rasterise, annotation overlay, and encode.
+ *
+ * @public
+ */
+export type RenderTimings = {
+  /** Milliseconds. GLB parse, validation, and world-bounds computation. */
+  readonly parse: number;
+  /** Milliseconds. Renderer acquisition plus scene upload for this call. */
+  readonly setup: number;
+  /** Per-view render/overlay/encode timings in plan order. */
+  readonly views: readonly RenderViewTimings[];
 };
 
 type NoExtraKeys<Value, Shape> = Value & Record<Exclude<keyof Value, keyof Shape>, never>;
@@ -196,9 +258,12 @@ type StrictViews<Views extends readonly RenderImageView[]> = Views['length'] ext
     };
 
 /**
- * Internal exact form used by the façade.
+ * The exact form `renderImages` accepts: {@link RenderImagesOptions} plus
+ * compile-time rejection of extra keys, empty view tuples, and misplaced
+ * per-view settings. Name it when wrapping the plan call in your own generic
+ * function.
  *
- * @internal
+ * @public
  */
 export type StrictRenderImagesOptions<Options extends RenderImagesOptions> = NoExtraKeys<
   Options,
@@ -207,30 +272,6 @@ export type StrictRenderImagesOptions<Options extends RenderImagesOptions> = NoE
   readonly views: StrictViews<Options['views']>;
   readonly lighting?: StrictLighting<Options['lighting']>;
 };
-
-/**
- * Preserve literal singular option values while rejecting misspelled keys.
- *
- * @public
- * @param options - Singular image settings
- * @returns The same settings with literal types preserved
- */
-export const createRenderImageOptions = <const Options extends RenderImageOptions>(
-  options: NoExtraKeys<Options, RenderImageOptions> & {
-    readonly lighting?: StrictLighting<Options['lighting']>;
-  },
-): Options => options;
-
-/**
- * Preserve literal view IDs and order while rejecting misplaced or misspelled keys.
- *
- * @public
- * @param options - Shared settings and ordered views
- * @returns The same settings with literal view IDs and order preserved
- */
-export const createRenderImagesOptions = <const Options extends RenderImagesOptions>(
-  options: StrictRenderImagesOptions<Options>,
-): Options => options;
 
 const singularKeys = new Set([
   'format',
@@ -244,9 +285,8 @@ const singularKeys = new Set([
   'projection',
   'background',
   'label',
-  'includeAxes',
-  'includeLabel',
-  'includeScale',
+  'axes',
+  'scaleBar',
   'lighting',
 ]);
 
@@ -259,14 +299,14 @@ const pluralKeys = new Set([
   'up',
   'projection',
   'background',
-  'includeAxes',
-  'includeLabel',
-  'includeScale',
+  'axes',
+  'scaleBar',
   'lighting',
+  'timings',
   'views',
 ]);
 
-const viewKeys = new Set(['id', 'label', 'phi', 'theta']);
+const viewKeys = new Set(['id', 'label', 'phi', 'theta', 'width', 'height', 'format', 'quality']);
 
 const lightingKeys = new Set(['lights', 'ambient', 'environment', 'space', 'exposure']);
 
@@ -309,8 +349,6 @@ export const renderImageViewIdPattern = /^[\dA-Za-z][\w-]{0,63}$/u;
 export const renderImageBackgroundPattern = /^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u;
 
 const viewIdDescription = '[A-Za-z0-9][A-Za-z0-9_-]{0,63}';
-const defaultWidth = 768;
-const defaultHeight = 432;
 const minimumLightDirectionLength = 1e-6;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -454,8 +492,18 @@ const parseHexColor = (value: string): readonly [number, number, number, number]
   ];
 };
 
-const validateAnnotatedDimensions = (options: Omit<RenderImageOptions, 'phi' | 'theta'>): void => {
-  if (![options.includeAxes, options.includeLabel, options.includeScale].includes(true)) {
+type CameraCommonOptions = Omit<RenderImageSharedOptions, 'format' | 'quality'> & {
+  readonly label?: string;
+};
+
+/**
+ * Hold an annotated request to the minimum size its overlays stay legible at.
+ * `annotated` is decided by the caller because only a singular request renders
+ * at the shared width/height: a batch renders at each view's effective size,
+ * which the per-view rule in {@link toImagesRequestJson} checks instead.
+ */
+const validateAnnotatedDimensions = (options: CameraCommonOptions, annotated: boolean): void => {
+  if (!annotated) {
     return;
   }
   if (
@@ -485,18 +533,22 @@ const validateBackground = (background: unknown): void => {
   }
 };
 
-const validateCommon = (options: Omit<RenderImageOptions, 'phi' | 'theta'>): void => {
-  if (!['png', 'webp', 'jpeg', 'jpg'].includes(options.format)) {
-    throw new TypeError('format must be png, webp, jpeg, or jpg');
+const validateCommon = (options: Omit<RenderImageOptions, 'phi' | 'theta'>, annotated: boolean): void => {
+  if (!['png', 'webp', 'jpeg', 'jpg', 'raw'].includes(options.format)) {
+    throw new TypeError('format must be png, webp, jpeg, jpg, or raw');
   }
+  if (options.quality !== undefined) {
+    assertRange(options.quality, 'quality', renderImageQualityRange);
+  }
+  validateCameraCommon(options, annotated);
+};
+
+const validateCameraCommon = (options: CameraCommonOptions, annotated: boolean): void => {
   if (options.width !== undefined) {
     assertRange(options.width, 'width', renderImageDimensionRange);
   }
   if (options.height !== undefined) {
     assertRange(options.height, 'height', renderImageDimensionRange);
-  }
-  if (options.quality !== undefined) {
-    assertRange(options.quality, 'quality', renderImageQualityRange);
   }
   if (options.margin !== undefined) {
     assertRange(options.margin, 'margin', renderImageMarginRange);
@@ -507,10 +559,9 @@ const validateCommon = (options: Omit<RenderImageOptions, 'phi' | 'theta'>): voi
   if (options.projection !== undefined && !['perspective', 'orthographic'].includes(options.projection)) {
     throw new TypeError('projection must be perspective or orthographic');
   }
-  assertOptionalBoolean(options.includeAxes, 'includeAxes');
-  assertOptionalBoolean(options.includeLabel, 'includeLabel');
-  assertOptionalBoolean(options.includeScale, 'includeScale');
-  validateAnnotatedDimensions(options);
+  assertOptionalBoolean(options.axes, 'axes');
+  assertOptionalBoolean(options.scaleBar, 'scaleBar');
+  validateAnnotatedDimensions(options, annotated);
   validateBackground(options.background);
   validateLighting(options.lighting);
 };
@@ -533,12 +584,9 @@ export const toImageRequestJson = (options: RenderImageOptions): string => {
     throw new TypeError('options must be an object');
   }
   assertKnownKeys(input, singularKeys, 'options');
-  validateCommon(options);
+  validateCommon(options, options.axes === true || options.scaleBar === true || options.label !== undefined);
   if (options.label !== undefined) {
     assertLabel(options.label, 'label');
-  }
-  if (input['includeLabel'] === true && input['label'] === undefined) {
-    throw new TypeError('label is required when includeLabel is true');
   }
   assertOptionalFinite(options.phi, 'phi');
   assertOptionalFinite(options.theta, 'theta');
@@ -554,9 +602,8 @@ export const toImageRequestJson = (options: RenderImageOptions): string => {
     projection: options.projection,
     background: normalizedBackground(options.background),
     label: options.label,
-    includeAxes: options.includeAxes,
-    includeLabel: options.includeLabel,
-    includeScale: options.includeScale,
+    axes: options.axes,
+    scaleBar: options.scaleBar,
     lighting: options.lighting,
   });
 };
@@ -574,7 +621,9 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     throw new TypeError('options must be an object');
   }
   assertKnownKeys(input, pluralKeys, 'options');
-  validateCommon(options);
+  validateCommon(options, false);
+  assertOptionalBoolean(options.timings, 'timings');
+  const sharedAnnotated = options.axes === true || options.scaleBar === true;
   const { views } = input;
   if (!isUnknownArray(views) || views.length === 0) {
     throw new TypeError('views must contain at least one view');
@@ -586,7 +635,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
       throw new TypeError(`views[${index}] must be an object`);
     }
     assertKnownKeys(view, viewKeys, `views[${index}]`);
-    const { id, label, phi, theta } = view;
+    const { id, label, phi, theta, width, height, format, quality } = view;
     if (typeof id !== 'string' || !renderImageViewIdPattern.test(id)) {
       throw new TypeError(`views[${index}].id must match ${viewIdDescription}`);
     }
@@ -596,13 +645,41 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     ids.add(id);
     assertFinite(phi, `views[${index}].phi`);
     assertFinite(theta, `views[${index}].theta`);
+    if (width !== undefined) {
+      assertRange(width, `views[${index}].width`, renderImageDimensionRange);
+    }
+    if (height !== undefined) {
+      assertRange(height, `views[${index}].height`, renderImageDimensionRange);
+    }
+    if (format !== undefined && !['png', 'webp', 'jpeg', 'jpg', 'raw'].some((name) => name === format)) {
+      throw new TypeError(`views[${index}].format must be png, webp, jpeg, jpg, or raw`);
+    }
+    if (quality !== undefined) {
+      assertRange(quality, `views[${index}].quality`, renderImageQualityRange);
+    }
+    if (
+      (sharedAnnotated || label !== undefined) &&
+      (((width as number | undefined) ?? options.width ?? defaultWidth) < renderImageAnnotatedMinDimension ||
+        ((height as number | undefined) ?? options.height ?? defaultHeight) <
+          renderImageAnnotatedMinDimension)
+    ) {
+      throw new TypeError(
+        `views[${index}]: annotated images must be at least ${renderImageAnnotatedMinDimension}x${renderImageAnnotatedMinDimension}`,
+      );
+    }
     if (label !== undefined) {
       assertLabel(label, `views[${index}].label`);
     }
-    if (options.includeLabel && label === undefined) {
-      throw new TypeError(`views[${index}].label is required when includeLabel is true`);
-    }
-    normalizedViews.push({ id, label, phi, theta });
+    normalizedViews.push({
+      id,
+      label,
+      phi,
+      theta,
+      width: width as number | undefined,
+      height: height as number | undefined,
+      format: format as RenderImageView['format'],
+      quality: quality as number | undefined,
+    });
   }
   return JSON.stringify({
     format: options.format,
@@ -613,29 +690,29 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     up: options.up,
     projection: options.projection,
     background: normalizedBackground(options.background),
-    includeAxes: options.includeAxes,
-    includeLabel: options.includeLabel,
-    includeScale: options.includeScale,
+    axes: options.axes,
+    scaleBar: options.scaleBar,
     lighting: options.lighting,
+    timings: options.timings,
     views: normalizedViews,
   });
 };
 
 /**
- * Derive the singular output filename.
+ * Derive the singular output filename (`render.raw` for the raw format).
  *
  * @internal
- * @param format - Encoded image format
- * @returns The singular thumbnail filename
+ * @param format - Output image format
+ * @returns The singular output filename
  */
-export const imageFileName = (format: ImageFormat): string => `thumbnail.${format}`;
+export const imageFileName = (format: ImageFormat): string => `render.${format}`;
 
 /**
- * Derive an identified-view output filename.
+ * Derive an identified-view output filename (`render-<id>.raw` for raw).
  *
  * @internal
  * @param id - Validated view identifier
- * @param format - Encoded image format
- * @returns The identified thumbnail filename
+ * @param format - Output image format
+ * @returns The identified output filename
  */
-export const imageViewFileName = (id: string, format: ImageFormat): string => `thumbnail-${id}.${format}`;
+export const imageViewFileName = (id: string, format: ImageFormat): string => `render-${id}.${format}`;

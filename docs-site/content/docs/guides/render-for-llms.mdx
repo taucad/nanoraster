@@ -45,24 +45,23 @@ latency matters more than fidelity.
 A model reading a render has no camera, no ruler, and no filename. The three
 annotations exist to put that context into the pixels themselves:
 
-- `includeAxes` draws a camera-aware XYZ indicator, so the model knows which
+- `axes` draws a camera-aware XYZ indicator, so the model knows which
   way the part is oriented.
-- `includeScale` draws physical size in model units; without it a gearbox
+- `scaleBar` draws physical size in model units; without it a gearbox
   and a wristwatch gear read identically.
-- `includeLabel` names the subject or view, so a multi-image prompt stays
-  attributable.
+- `label` names the subject or view, so a multi-image prompt stays
+  attributable. Setting it is what draws it.
 
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'webp',
   background: '#101418',
-  includeAxes: true,
-  includeScale: true,
-  includeLabel: true,
+  axes: true,
+  scaleBar: true,
   label: 'gear',
 });
 ```

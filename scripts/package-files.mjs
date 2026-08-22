@@ -1,7 +1,10 @@
 import path from 'node:path';
 
-// Initial 0.1.0 package contract measured on 2026-08-15; changes require explicit admission.
-const PACKAGE_FILE_COUNT_CEILING = 26;
+// Initial 0.1.0 package contract measured on 2026-08-15; changes require
+// explicit admission. 2026-08-20: +6 for the handles-first surface
+// (create-renderer, raw-pixels, describe-adapter modules). 2026-08-22: -2 as
+// `format: 'raw'` folded the raw-pixels module into the image paths.
+const PACKAGE_FILE_COUNT_CEILING = 30;
 
 export const PACKAGE_FILES = [
   'BREAKING_CHANGES.md',
@@ -11,6 +14,10 @@ export const PACKAGE_FILES = [
   'compatibility.md',
   'dist/cjs-error.cjs',
   'dist/cjs-error.d.cts',
+  'dist/create-renderer.d.mts',
+  'dist/create-renderer.mjs',
+  'dist/describe-adapter.d.mts',
+  'dist/describe-adapter.mjs',
   'dist/image-file.d.mts',
   'dist/image-file.mjs',
   'dist/index.d.mts',
@@ -19,10 +26,10 @@ export const PACKAGE_FILES = [
   'dist/options.mjs',
   'dist/render-error.d.mts',
   'dist/render-error.mjs',
-  'dist/render-glb-to-image.d.mts',
-  'dist/render-glb-to-image.mjs',
-  'dist/render-glb-to-images.d.mts',
-  'dist/render-glb-to-images.mjs',
+  'dist/render-image.d.mts',
+  'dist/render-image.mjs',
+  'dist/render-images.d.mts',
+  'dist/render-images.mjs',
   'dist/renderer.mjs',
   'dist/wasm/render_wasm.d.ts',
   'dist/wasm/render_wasm.js',

@@ -1,56 +1,61 @@
 /* tslint:disable */
 /* eslint-disable */
 
-/** Render ordered identified views through one batch-scoped render session. */
-export function render_glb_to_images(glb: Uint8Array, options_json: string): Promise<Array<Uint8Array>>;
+/** Ordered encoded images plus the optional JSON timings from `timings: true`. */
+export type RenderImagesResult = { images: Array<Uint8Array>; timings?: string };
+/**
+ * Persistent GPU renderer: one adapter/device/pipeline set reused across
+ * calls in this worker. Calls must be awaited in sequence; after dispose()
+ * every call rejects.
+ */
+export class Renderer {
+    private constructor();
+    free(): void;
+    static create(options_json?: string): Promise<Renderer>;
+    render_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
+    render_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
+    trim_targets(): void;
+    dispose(): void;
+}
+
+
+
+/** Render ordered identified views through one batch-scoped plan call. */
+export function render_images(glb: Uint8Array, options_json: string): Promise<RenderImagesResult>;
 
 
 
 /**
- * Benchmark the codec encoders over one render (white background so JPEG
- * participates): JSON report with per-format avg ms / bytes / FNV-1a
- * fingerprints for cross-artifact byte-identity checks.
+ * Render a kernel GLB to image bytes — encoded, or the raw frame itself for
+ * `"raw"`. `options_json` is the shared
+ * render-request contract (`render_core::RenderRequest`): a required
+ * format `"png" | "webp" | "jpeg" | "jpg" | "raw"`, width/height, quality 0..=1,
+ * phi/theta degrees, margin 0..=0.5, up `"x" | "y" | "z"`, background
+ * `[r, g, b, a]` in 0..=1.
+ * One-shot sugar: creates and destroys a device per call — hold a `Renderer`
+ * to amortize that across calls.
  */
-export function bench_codecs(glb: Uint8Array, width: number, height: number): Promise<string>;
-
-/**
- * Compare six singular calls with one six-view batch.
- */
-export function bench_multi_view(glb: Uint8Array, width: number, height: number): Promise<string>;
-
-/**
- * GPU-independent PNG/WebP/JPEG fingerprints for native/wasm conformance.
- */
-export function codec_conformance(): string;
-
-/**
- * Backend + device name of the adapter the browser hands us.
- */
-export function describe_adapter(): Promise<string>;
-
-/**
- * Render a kernel GLB to encoded image bytes. `options_json` is the shared
- * render-request contract (`render_core::RenderRequest`): width/height,
- * format `"png" | "webp" | "jpeg" | "jpg"`, quality 0..=1, phi/theta degrees,
- * margin 0..=0.5, up `"x" | "y" | "z"`, background `[r, g, b, a]` in 0..=1.
- */
-export function render_glb_to_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
+export function render_image(glb: Uint8Array, options_json: string): Promise<Uint8Array>;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly render_glb_to_image: (a: number, b: number, c: number, d: number) => number;
-    readonly render_glb_to_images: (a: number, b: number, c: number, d: number) => number;
-    readonly bench_codecs: (a: number, b: number, c: number, d: number) => number;
-    readonly bench_multi_view: (a: number, b: number, c: number, d: number) => number;
-    readonly codec_conformance: (a: number) => void;
-    readonly describe_adapter: () => number;
-    readonly __wasm_bindgen_func_elem_1938: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_958: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_958_2: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_958_3: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1955: (a: number, b: number, c: number, d: number) => void;
+    readonly __wbg_renderer_free: (a: number, b: number) => void;
+    readonly renderer_create: (a: number, b: number) => number;
+    readonly renderer_render_image: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly renderer_render_images: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly renderer_trim_targets: (a: number) => void;
+    readonly renderer_dispose: (a: number) => void;
+    readonly render_image: (a: number, b: number, c: number, d: number) => number;
+    readonly render_images: (a: number, b: number, c: number, d: number) => number;
+    readonly __wasm_bindgen_func_elem_1975: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_981: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_981_4: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_981_5: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1992: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_978: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_978_3: (a: number, b: number, c: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

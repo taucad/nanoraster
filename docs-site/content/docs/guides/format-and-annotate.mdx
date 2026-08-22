@@ -3,24 +3,25 @@ title: Format and annotate
 description: Choose the encoder, background, and quality, then add the axis indicator, label, and scale bar that let a render stand on its own.
 ---
 
-Five choices decide what leaves the renderer, in order: format, background,
-quality, annotations, and the dimensions annotations require.
+Five choices decide what leaves the renderer: format, background, quality,
+annotations, and the dimensions annotations require.
 
 ### 1. Pick the format
 
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
-const image = await renderGlbToImage(glb, {
+const image = await renderImage(glb, {
   format: 'webp',
-  background: '#101418',
-  quality: 0.8,
+  quality: 1,
 });
 ```
 
 </RenderDemo>
+
+Switch `format`: the badge's MIME type and bytes change, the pixels do not.
 
 | Format | Alpha | Lossy                          | Use for                                                  |
 | ------ | ----- | ------------------------------ | -------------------------------------------------------- |
@@ -28,25 +29,33 @@ const image = await renderGlbToImage(glb, {
 | `webp` | Yes   | Only when `quality` is below 1 | Web delivery; lossless by default, optionally lossy      |
 | `jpeg` | No    | Yes                            | Interop with tools that accept nothing else              |
 | `jpg`  | No    | Yes                            | Alias for `jpeg`; the filename keeps the `jpg` extension |
+| `raw`  | Yes   | No                             | The frame itself, for a diff, a video frame or a texture |
 
 `mimeType` reflects the true type, so `jpg` and `jpeg` both report `image/jpeg`;
-the full [MIME map](../api#imagemimetypes) is in the reference.
+the full [MIME map](../api#imagemimetypes) is in the reference. `raw` runs no
+encoder; see [Work with raw pixels](work-with-raw-pixels).
 
 ### 2. Decide on a background
 
-The default background is transparent, which only PNG and WebP can represent. A
-JPEG request must set an opaque background; omitting it fails with an
-[`encode` failure](handle-render-failures) rather than silently flattening onto
-an arbitrary colour.
-
-Backgrounds accept `#RRGGBB`, `#RRGGBBAA`, or normalised straight-alpha RGBA:
+<RenderDemo>
 
 ```typescript
-const image = await renderGlbToImage(glb, {
-  format: 'png',
-  background: [0.05, 0.06, 0.08, 1],
+import { renderImage } from 'nanoraster';
+
+const image = await renderImage(glb, {
+  format: 'webp',
+  background: '#101418',
 });
 ```
+
+</RenderDemo>
+
+The default background is transparent, which PNG, WebP and `raw` can
+represent and JPEG cannot. A JPEG request must set an opaque background;
+omitting it fails with an
+[`encode` failure](handle-render-failures) rather than silently flattening onto
+an arbitrary colour. Backgrounds accept `#RRGGBB`, `#RRGGBBAA`, or normalised
+straight-alpha RGBA such as `[0.05, 0.06, 0.08, 1]`.
 
 ### 3. Tune quality per format
 
@@ -54,17 +63,13 @@ const image = await renderGlbToImage(glb, {
 
 - **JPEG** is always lossy; `quality` sets the compression level and defaults
   to `0.92`.
-- **WebP** defaults to `1`, which encodes lossless — the same output as
-  omitting `quality`. Any value below `1` switches to lossy encoding, which
-  keeps the alpha channel. This follows the semantics of Chrome's canvas
-  `toBlob('image/webp', quality)`: lossless is the `1` endpoint, not a very
-  high quality. The switch happens because lossy WebP is a different codec
-  (VP8, with chroma subsampling) than lossless WebP (VP8L), so no lossy
-  quality reaches exact pixels.
-- **PNG** is always lossless and ignores `quality`.
+- **WebP** defaults to `1`, which encodes lossless. Any value below `1`
+  switches to the lossy codec, which keeps alpha but never reaches exact
+  pixels; this matches Chrome's canvas `toBlob('image/webp', quality)`.
+- **PNG** and **raw** ignore `quality`.
 
-Every field's exact range lives on
-[`RenderImageOptions`](../api#renderimageoptions).
+Drag `quality` below `1` on the tile in step 1 and watch the badge: the file
+shrinks and the pixels stop being exact.
 
 ### 4. Add an axis indicator, label and scale
 
@@ -74,28 +79,27 @@ render's context once it is separated from the request.
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
-const image = await renderGlbToImage(glb, {
-  format: 'png',
+const image = await renderImage(glb, {
+  format: 'webp',
   width: 512,
   height: 512,
-  includeAxes: true,
-  includeScale: true,
-  includeLabel: false,
+  axes: true,
+  scaleBar: true,
   label: 'gear',
 });
 ```
 
 </RenderDemo>
 
-The axis indicator is a camera-aware XYZ marker in the bottom-right, drawn with
-a front-on depth marker. It rotates with the camera, so it reports the view's
-orientation rather than a fixed key.
+The axis indicator is a camera-aware XYZ marker in the bottom-right; it
+rotates with the camera, so it reports the view's orientation rather than a
+fixed key.
 
-The label is drawn top-left, screen-upright, and rendered verbatim. Enabling
-labels makes `label` mandatory on every view of a
-[batch call](render-multiple-views).
+The label is drawn top-left, screen-upright, verbatim. Setting `label` is what
+draws it; in a [batch call](render-multiple-views), a view is labelled when its
+own entry sets `label`.
 
 The scale bar is drawn bottom-left in the model's own units. Under perspective
 it is only accurate at one depth, so its label names that plane with
@@ -109,11 +113,11 @@ minimum output size to **192 pixels** on both axes. A smaller request fails
 validation rather than producing an unreadable overlay.
 
 ```typescript
-const image = await renderGlbToImage(glb, {
-  format: 'png',
+const image = await renderImage(glb, {
+  format: 'webp',
   width: 192,
   height: 192,
-  includeAxes: true,
+  axes: true,
 });
 ```
 
@@ -123,21 +127,17 @@ Below that, drop the annotations.
 
 **Smallest useful thumbnail.** WebP at `quality: 0.9` with `width: 256` is
 around 60 percent smaller than the lossless default and a third the size of
-the equivalent PNG, while keeping transparency — for shaded and filled
-flat-colour models alike. Sparse line art on an empty canvas — wireframes,
-schematics, near-blank drawings — can still encode smaller lossless than
-lossy, so measure both there and when every byte matters.
+the equivalent PNG, with transparency kept. Sparse line art can still encode
+smaller lossless than lossy, so measure both when every byte matters.
 
-**Byte-exact comparison.** Use PNG. Lossy encoders are
-[deterministic](../how-it-works#determinism) for a fixed request, but a format
-that discards information makes a poor diffing baseline.
+**Byte-exact comparison.** Any lossless format works: PNG, or WebP at the
+default `quality: 1`. A lossy baseline is
+[deterministic](../how-it-works#determinism) but diffs the encoder's losses
+along with the render; [`format: 'raw'`](work-with-raw-pixels) removes the
+encoder from the comparison.
 
 **Alpha over an unknown page background.** Use PNG or WebP and leave the
 background transparent, then let the page composite it.
-
-**All three annotations at once.** They occupy different corners (axes
-bottom-right, label top-left, scale bottom-left), so they combine without
-overlapping.
 
 **Annotations plus a tight fit.** Overlays are drawn inside the frame, so a
 `margin` near `0` can put the subject underneath them. Keep the default margin

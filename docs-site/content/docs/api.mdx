@@ -1,6 +1,6 @@
 ---
 title: API reference
-description: Every public export of nanoraster — the two render calls, the option helpers, the request and result types, the failure codes, and the validation constants.
+description: Every public export of nanoraster — the two render calls, the renderer handle, the request and result types, the failure codes, and the validation constants.
 ---
 
 Everything below is imported from `nanoraster`. GLB bytes you pass in are owned by
@@ -9,79 +9,81 @@ the call; the bytes you get back are newly allocated and yours.
 ## Every option and its default
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
-const image = await renderGlbToImage(glb, {
-  format: 'png', // required
+const image = await renderImage(glb, {
+  format: 'webp', // required: 'png' | 'webp' | 'jpeg' | 'jpg' | 'raw'
   width: 768, // default
   height: 432, // default
-  quality: 0.92, // jpeg default; webp defaults to 1 (lossless); png ignores it
+  quality: 1, // webp default (lossless); jpeg defaults to 0.92; png and raw ignore it
   margin: 0.1, // default
   up: 'y', // default
   projection: 'perspective', // default
   background: undefined, // default (transparent)
-  includeAxes: false, // default
-  includeLabel: false, // default
-  includeScale: false, // default
+  axes: false, // default
+  scaleBar: false, // default
   lighting: 'studio', // default
-  label: undefined, // required only when includeLabel is true
+  label: undefined, // default (no label drawn)
   phi: 60, // default
   theta: -45, // default
 });
 ```
 
-`renderGlbToImages` takes the same shared keys, minus `phi`, `theta` and `label`,
-plus `views: [{ id, label?, phi, theta }]`: one entry per image, in result order.
+`renderImages` takes the same shared keys, minus `phi`, `theta` and `label`,
+plus `views: [{ id, label?, phi, theta, width?, height?, format?, quality? }]`,
+one entry per image in result order, and `timings: true` to attach stage
+timings. `format: 'raw'` skips the encoder and returns the frame itself, at
+call level or per view; see [Work with raw pixels](guides/work-with-raw-pixels).
 
 ## Render
 
-### `renderGlbToImage`
+### `renderImage`
 
-Render one GLB camera view to one owned image file.
+Render one GLB camera view to one owned output.
 
 ```typescript
-export declare const renderGlbToImage: (
+export declare const renderImage: (
   glb: Uint8Array<ArrayBuffer>,
   options: RenderImageOptions,
 ) => Promise<RenderedImageFile>;
 ```
 
 - **Parameters:** owned GLB bytes and one validated render request.
-- **Returns:** a newly allocated `thumbnail.<format>` file.
+- **Returns:** a newly allocated `render.<format>` file with the resolved
+  width and height.
 - **Throws:** `RenderError` for invalid requests, malformed GLB data, GPU faults,
   or encoding failures.
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
-const image = await renderGlbToImage(glb, { format: 'png', width: 512 });
+const image = await renderImage(glb, { format: 'webp', width: 512 });
 ```
 
-### `renderGlbToImages`
+### `renderImages`
 
-Parse and upload a GLB once, then render an ordered set of identified views.
+Parse and upload a GLB once, then render an ordered set of identified views:
+the plan call. Each view may override the shared `width`, `height`, `format`
+and `quality`, so one call renders a whole resolution or format ladder.
 
 ```typescript
-export declare const renderGlbToImages: <const Options extends RenderImagesOptions>(
+export declare const renderImages: <const Options extends RenderImagesOptions>(
   glb: Uint8Array<ArrayBuffer>,
   options: StrictRenderImagesOptions<Options>,
-) => Promise<RenderedImages<Options['views']>>;
+) => Promise<RenderedImagesResult<Options>>;
 ```
 
-`StrictRenderImagesOptions` is the package's internal exactness check: callers
-pass `RenderImagesOptions`, while TypeScript rejects extra keys, empty view
-tuples, and misplaced per-view settings.
-
 - **Parameters:** owned GLB bytes and shared settings with a non-empty view tuple.
-- **Returns:** a tuple with the input view IDs and order preserved.
+- **Returns:** a tuple with the input view IDs and order preserved; each
+  entry's MIME type follows its own `format` override.
 - **Throws:** as above, plus a mismatch between the views requested and the
-  images the renderer returned.
+  images returned.
 
 ```typescript
-import { renderGlbToImages } from 'nanoraster';
+import { renderImages } from 'nanoraster';
 
-const [iso, front] = await renderGlbToImages(glb, {
-  format: 'png',
+const [iso, front] = await renderImages(glb, {
+  format: 'webp',
   views: [
     { id: 'iso', phi: 60, theta: -45 },
     { id: 'front', phi: 90, theta: 0 },
@@ -89,51 +91,106 @@ const [iso, front] = await renderGlbToImages(glb, {
 });
 ```
 
-## Option helpers
+## Renderer reuse
 
-Both helpers return their argument unchanged and add no runtime work. They stop
-TypeScript widening literal values when options are assigned to a variable
-before the call.
+The one-shot functions share one lazily created renderer per process, run in
+sequence and never disposed; create your own to control its lifetime or power
+preference. [Reuse the renderer](guides/reuse-the-renderer) covers when and how.
 
-### `createRenderImageOptions`
+### `createRenderer`
 
-Preserve literal singular option values while rejecting misspelled keys.
-`NoExtraKeys` is an internal compile-time check.
+Create a renderer that keeps the GPU device, shader and pipelines alive across
+calls.
 
 ```typescript
-export declare const createRenderImageOptions: <const Options extends RenderImageOptions>(
-  options: NoExtraKeys<Options, RenderImageOptions>,
-) => Options;
+export declare const createRenderer: (options?: CreateRendererOptions) => Promise<Renderer>;
 ```
 
-```typescript
-import { createRenderImageOptions, renderGlbToImage } from 'nanoraster';
+- **Parameters:** optional GPU selection hints.
+- **Returns:** a [`Renderer`](#renderer) bound to one warm device.
+- **Throws:** `RenderError` with code `adapter-unavailable` when no compatible
+  adapter exists, or `parse` for invalid options.
 
-const options = createRenderImageOptions({ format: 'webp', quality: 0.8 });
-const image = await renderGlbToImage(glb, options);
+```typescript
+import { createRenderer } from 'nanoraster';
+
+using renderer = await createRenderer({ powerPreference: 'low-power' });
+const image = await renderer.renderImage(glb, { format: 'webp' });
 ```
 
-### `createRenderImagesOptions`
+### `Renderer`
 
-Preserve literal view IDs and tuple order while rejecting misplaced or
-misspelled keys.
+The persistent handle returned by [`createRenderer`](#createrenderer). Its two
+render methods mirror the module-level functions exactly (same options, same
+results, byte-identical pixels on the same adapter) but reuse one device.
 
 ```typescript
-export declare const createRenderImagesOptions: <const Options extends RenderImagesOptions>(
-  options: StrictRenderImagesOptions<Options>,
-) => Options;
+export type Renderer = {
+  readonly renderImage: (
+    glb: Uint8Array<ArrayBuffer>,
+    options: RenderImageOptions,
+  ) => Promise<RenderedImageFile>;
+  readonly renderImages: <const Options extends RenderImagesOptions>(
+    glb: Uint8Array<ArrayBuffer>,
+    options: StrictRenderImagesOptions<Options>,
+  ) => Promise<RenderedImagesResult<Options>>;
+  readonly dispose: () => void;
+  readonly [Symbol.dispose]: () => void;
+};
 ```
 
-```typescript
-import { createRenderImagesOptions, renderGlbToImages } from 'nanoraster';
+- A renderer is **single-realm**: create it inside the worker that uses it;
+  bytes cross `postMessage`, handles do not.
+- Calls on one renderer run **in sequence**; a declared set of images goes
+  through one `renderImages` call, never a loop.
+- **Device loss is recovered** on the next call, which rebuilds the device and
+  re-uploads.
+- `dispose()` marks the renderer disposed at once, is idempotent, and backs
+  `using` through `Symbol.dispose`; every later call rejects with
+  `RenderError` code `'gpu'`, so recreate rather than retry. GPU teardown
+  follows the queued calls, with no completion signal.
 
-const options = createRenderImagesOptions({
-  format: 'png',
+### `CreateRendererOptions`
+
+<auto-type-table path="./props.ts" name="CreateRendererOptions" caption="CreateRendererOptions properties" />
+
+### `describeAdapter`
+
+Describe the adapter a renderer created with these options would bind; pass
+the same `powerPreference` you would pass `createRenderer`.
+
+```typescript
+export declare const describeAdapter: (options?: CreateRendererOptions) => Promise<AdapterInfo | undefined>;
+```
+
+`deviceType === 'cpu'` means software rasterisation, an order of magnitude
+slower; use this as the preflight when performance matters. Native hosts
+report the full device class; browsers report `'unknown'` unless the adapter
+declares itself a fallback. No adapter resolves `undefined`; only invalid
+options reject.
+
+### `AdapterInfo`
+
+<auto-type-table path="./props.ts" name="AdapterInfo" caption="AdapterInfo properties" />
+
+## Options held in a variable
+
+A variable widens `'webp'` to `string` and the view IDs with it, so the result
+tuple loses its names; `as const satisfies` keeps the literals and still checks
+the keys, at compile time only.
+
+```typescript
+import { renderImages, type RenderImagesOptions } from 'nanoraster';
+
+const options = {
+  format: 'webp',
   views: [{ id: 'iso', phi: 60, theta: -45 }],
-});
+} as const satisfies RenderImagesOptions;
 
-const [iso] = await renderGlbToImages(glb, options);
+const [iso] = await renderImages(glb, options);
 ```
+
+`satisfies RenderImageOptions` does the same for the singular call.
 
 ## Options
 
@@ -150,7 +207,7 @@ export type RenderImageOptions = RenderImageSharedOptions &
 ```
 
 `RenderImageSharedOptions` and `RenderLabelOptions` are internal composition
-types; the table below is the complete consumer-visible shape.
+types; the table is the complete consumer-visible shape.
 
 <auto-type-table path="./props.ts" name="RenderImageOptions" caption="RenderImageOptions properties" />
 
@@ -162,10 +219,17 @@ export type RenderImageView<Id extends string = string> = {
   readonly label?: string;
   readonly phi: number;
   readonly theta: number;
+  readonly width?: number;
+  readonly height?: number;
+  readonly format?: 'png' | 'webp' | 'jpeg' | 'jpg' | 'raw';
+  readonly quality?: number;
 };
 ```
 
-IDs must be unique within a request.
+IDs must be unique within a request. The four output fields are per-view
+overrides: each defaults to the shared value, follows the same validation, and
+flows into that entry's filename and MIME type; `format: 'raw'` is accepted
+here too.
 
 <auto-type-table path="./props.ts" name="RenderImageView" caption="RenderImageView properties" />
 
@@ -173,18 +237,35 @@ IDs must be unique within a request.
 
 ```typescript
 export type RenderImagesOptions<Views extends readonly RenderImageView[] = readonly RenderImageView[]> =
-  RenderImageSharedOptions &
-    (
-      | { readonly includeLabel: true; readonly views: LabeledViews<Views> }
-      | { readonly includeLabel?: false; readonly views: Views }
-    );
+  RenderImageSharedOptions & {
+    readonly timings?: boolean;
+    readonly views: Views;
+  };
 ```
 
-`views` must be a non-empty ordered tuple with unique IDs. When `includeLabel`
-is `true`, every view must carry a label. `LabeledViews` is the internal mapped
-tuple that enforces that relationship without losing IDs or order.
+`views` must be a non-empty ordered tuple with unique IDs; a view is labelled
+when its own entry sets `label`. `timings: true` attaches a
+[`RenderTimings`](#rendertimings) to the result without changing what is
+rendered.
 
 <auto-type-table path="./props.ts" name="RenderImagesOptions" caption="RenderImagesOptions properties" />
+
+### `StrictRenderImagesOptions`
+
+The exact parameter type of [`renderImages`](#renderimages) and
+`Renderer.renderImages`: `RenderImagesOptions` narrowed so extra keys, empty
+view tuples, and per-view settings placed at call level are compile errors.
+Callers pass plain `RenderImagesOptions` literals; name this type only when
+you forward the plan call through a generic wrapper:
+
+```typescript
+import { renderImages, type RenderImagesOptions, type StrictRenderImagesOptions } from 'nanoraster';
+
+const renderCatalogue = async <const Options extends RenderImagesOptions>(
+  glb: Uint8Array<ArrayBuffer>,
+  options: StrictRenderImagesOptions<Options>,
+) => renderImages(glb, options);
+```
 
 ### `RenderLighting`
 
@@ -193,9 +274,9 @@ export type RenderLighting = 'studio' | RenderLightingRig;
 ```
 
 The studio preset by name, or a rig. Omitting `lighting`, passing `'studio'`
-and spelling out the studio values render the same bytes; one rig applies to a
-singular render and to every view of a batch. [Light the subject](guides/light-the-subject)
-shows each field in use.
+and spelling out the studio values render the same bytes; one rig applies to
+every view of a batch. [Light the subject](guides/light-the-subject) shows each
+field in use.
 
 ### `RenderLightingRig`
 
@@ -217,16 +298,21 @@ channel within `renderImageLightColorRange`.
 
 ### `RenderedImageFile`
 
-Returned directly by [`renderGlbToImage`](#renderglbtoimage).
+Returned by [`renderImage`](#renderimage), and as the `file` of every batch
+entry. `width` and `height` are the dimensions the request resolved to. With
+`format: 'raw'`, `bytes` is the frame itself (straight-alpha sRGB RGBA8,
+`width * height * 4` bytes, top row first) and `mimeType` is
+`application/octet-stream`; [Work with raw pixels](guides/work-with-raw-pixels)
+has the layout in full.
 
 <auto-type-table path="./props.ts" name="RenderedImageFile" caption="RenderedImageFile properties" />
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
 import { writeFile } from 'node:fs/promises';
 
-const image = await renderGlbToImage(glb, { format: 'png' });
+const image = await renderImage(glb, { format: 'webp' });
 await writeFile(image.name, image.bytes);
 ```
 
@@ -239,31 +325,60 @@ the matching view.
 
 ### `RenderedImages`
 
-The tuple returned by [`renderGlbToImages`](#renderglbtoimages).
+The ordered tuple inside every plan-call result.
 
 ```typescript
-export type RenderedImages<Views extends readonly RenderImageView[]> = {
-  readonly [Index in keyof Views]: Views[Index] extends RenderImageView<infer Id> ? RenderedImage<Id> : never;
+export type RenderedImages<
+  Views extends readonly RenderImageView[],
+  SharedFormat extends ImageFormat = ImageFormat,
+> = {
+  readonly [Index in keyof Views]: Views[Index] extends RenderImageView<infer Id>
+    ? RenderedImage<Id, ViewOutputFormat<Views[Index], SharedFormat>>
+    : never;
 };
 ```
 
-This mapped tuple preserves each input view's literal ID, position, and tuple
-length. It does not expose `Array` prototype members as result fields.
+This mapped tuple preserves each input view's literal ID, position and length,
+and narrows each entry's MIME type through its view's `format` override,
+falling back to the shared format. Entry files are named
+`render-<id>.<format>`.
+
+### `RenderedImagesResult`
+
+What [`renderImages`](#renderimages) resolves to: the
+[`RenderedImages`](#renderedimages) tuple, plus a
+[`RenderTimings`](#rendertimings) on `timings` when the options literal set
+`timings: true`. Reading `timings` without having requested it is a compile
+error.
 
 ```typescript
-import { renderGlbToImages } from 'nanoraster';
+import { renderImages, type RenderedImagesResult, type RenderImagesOptions } from 'nanoraster';
 
-const [iso, top] = await renderGlbToImages(glb, {
-  format: 'png',
-  views: [
-    { id: 'iso', phi: 60, theta: -45 },
-    { id: 'top', phi: 0, theta: 0 },
-  ],
-});
+const options = {
+  format: 'webp',
+  timings: true,
+  views: [{ id: 'iso', phi: 60, theta: -45 }],
+} as const satisfies RenderImagesOptions;
 
-console.log(iso.id, iso.file.name); // 'iso' 'thumbnail-iso.png'
-console.log(top.id, top.file.name); // 'top' 'thumbnail-top.png'
+const result: RenderedImagesResult<typeof options> = await renderImages(glb, options);
+console.log(result[0].file.name, result.timings.parse); // 'render-iso.webp' 0.42
 ```
+
+### `RenderTimings`
+
+Attached to a plan call's result when the options set `timings: true`. The
+fields map onto the [pipeline stages](how-it-works): parse, setup (device
+acquisition plus geometry upload), then per-view rasterise, annotate and
+encode, all in milliseconds.
+
+<auto-type-table path="./props.ts" name="RenderTimings" caption="RenderTimings properties" />
+
+### `RenderViewTimings`
+
+One view's stage timings within a [`RenderTimings`](#rendertimings), in plan
+order.
+
+<auto-type-table path="./props.ts" name="RenderViewTimings" caption="RenderViewTimings properties" />
 
 ### `imageMimeTypes`
 
@@ -276,16 +391,16 @@ export declare const imageMimeTypes: {
   readonly webp: 'image/webp';
   readonly jpeg: 'image/jpeg';
   readonly jpg: 'image/jpeg';
+  readonly raw: 'application/octet-stream';
 };
 ```
 
 ## Errors
 
 Rendering rejects with `RenderError`. Parse and encode failures are
-deterministic for the same request; GPU faults may succeed after the host or
-device recovers, which
-[Handle render failures](guides/handle-render-failures) turns into a retry
-policy.
+deterministic for the same request; GPU faults may succeed after the host
+recovers, so [Handle render failures](guides/handle-render-failures) retries
+them.
 
 ### `RenderFailureCode`
 
@@ -321,17 +436,15 @@ export declare class RenderError extends Error {
 }
 ```
 
-- `constructor(code, message)` creates an explicitly classified error.
-- `RenderError.from(error)` returns an existing `RenderError` unchanged or
-  classifies any other thrown value; it never throws.
-- `code` is the stable machine-readable classification.
-- `isGpuFault` is `true` for `adapter-unavailable`, `device-lost`, and `gpu`.
+`RenderError.from(error)` returns an existing `RenderError` unchanged or
+classifies any other thrown value, and never throws. `isGpuFault` is `true`
+for `adapter-unavailable`, `device-lost` and `gpu`.
 
 ```typescript
-import { RenderError, renderGlbToImage } from 'nanoraster';
+import { RenderError, renderImage } from 'nanoraster';
 
 try {
-  await renderGlbToImage(glb, { format: 'png' });
+  await renderImage(glb, { format: 'webp' });
 } catch (error) {
   const failure = RenderError.from(error);
   if (!failure.isGpuFault) throw failure;
@@ -340,9 +453,8 @@ try {
 
 ## Constants
 
-Every exported bound and pattern the validator applies. Ranges are inclusive and
-the regular expressions are the exact runtime values. Import them rather than
-restating them, so caller-side checks cannot drift.
+Every bound and pattern the validator applies, as the exact runtime values;
+import them rather than restating them, so caller-side checks cannot drift.
 
 | Export                             | Runtime value                             | Unit or syntax              | Affected field              |
 | ---------------------------------- | ----------------------------------------- | --------------------------- | --------------------------- |
@@ -382,13 +494,13 @@ Minimum width and height when any annotation is enabled.
 ### `renderImageQualityRange`
 
 Inclusive encoder-quality bounds. JPEG treats the value as compression level
-(default `0.92`). WebP treats `1` — its default — as lossless and anything
-lower as lossy, matching Chrome's canvas `toBlob` semantics. PNG ignores it.
+(default `0.92`); WebP treats `1`, its default, as lossless and anything lower
+as lossy; PNG and raw ignore it.
 
 ### `renderImageBackgroundPattern`
 
-Hex clear-colour syntax. Backgrounds may also be supplied as normalised
-straight-alpha RGBA, which this pattern does not cover.
+Hex clear-colour syntax; normalised straight-alpha RGBA backgrounds are not
+covered by it.
 
 ### `renderImageLabelMaxLength`
 
@@ -401,8 +513,8 @@ minus sign.
 
 ### `renderImageViewIdPattern`
 
-Stable view identifier syntax. IDs become result filenames, which is why the
-first character is restricted.
+Stable view identifier syntax; IDs become result filenames, so the first
+character is restricted.
 
 ### `renderImageMaxLights`
 

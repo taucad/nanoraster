@@ -1,15 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
-const nativePackage = {
-  'darwin-arm64': 'nanoraster-darwin-arm64',
-  'linux-x64': 'nanoraster-linux-x64-gnu',
-  'win32-x64': 'nanoraster-win32-x64-msvc',
-}[`${process.platform}-${process.arch}`];
-
-if (!nativePackage) throw new Error(`unsupported benchmark host: ${process.platform}-${process.arch}`);
-
-const native = createRequire(import.meta.url)(nativePackage);
+// `codecConformance` lives behind the default-off `bench` cargo feature, so the
+// benchmark runs on the feature-enabled sibling addon built by
+// `pnpm run build:napi:bench` — same source, same release profile, but never
+// packed into a platform package.
+const native = createRequire(import.meta.url)('../tests/out/native-bench/nanoraster.node');
 const glb = readFileSync(new URL('../tests/fixtures/gear-12.glb', import.meta.url));
 const options = JSON.stringify({ width: 512, height: 384, format: 'png' });
 const iterations = 15;
@@ -23,12 +19,12 @@ const fnv64 = (bytes) => {
   return hash.toString(16).padStart(16, '0');
 };
 
-native.renderGlbToImage(glb, options);
+await native.renderImage(glb, options);
 const durations = [];
 let output;
 for (let index = 0; index < iterations; index += 1) {
   const started = performance.now();
-  output = native.renderGlbToImage(glb, options);
+  output = await native.renderImage(glb, options);
   durations.push(performance.now() - started);
 }
 durations.sort((left, right) => left - right);
@@ -39,8 +35,13 @@ const report = {
   // v3: the vendored image-webp update that added lossy encoding also revised
   // its lossless encoder, so codecConformance's webp fingerprints changed on
   // purpose (pixels and PNG output are untouched).
-  name: 'gear-parse-raster-encode-512x384-v3',
-  adapter: native.describeAdapter(),
+  // v4: codecConformance gained a lossy-webp fingerprint per fixture, and
+  // restoring the fork's deterministic Huffman tie-break — which that same
+  // vendored update had dropped, taking native and wasm lossless output apart
+  // — changed the lossless webp fingerprints on purpose. PNG, JPEG and every
+  // rendered pixel are untouched.
+  name: 'gear-parse-raster-encode-512x384-v4',
+  adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,
   medianMs: Math.round(durations[Math.floor(iterations / 2)] * 1_000) / 1_000,

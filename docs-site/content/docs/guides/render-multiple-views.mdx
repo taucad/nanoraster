@@ -1,30 +1,33 @@
 ---
 title: Render multiple views
-description: Render an ordered set of identified camera views from one GLB without reparsing it for each image.
+description: Declare an ordered plan of identified camera views — with per-view size and format overrides — and render it in one call from one GLB.
 ---
 
-Render several camera angles of one model in a single call, keeping the IDs and
-order you declared, as [the tutorial](../tutorial) does for its contact sheet.
+Render several outputs of one model in a single call — the plan call — keeping
+the IDs and order you declared, as [the tutorial](../tutorial) does for its
+contact sheet. One call parses and uploads the GLB once, shares the GPU device
+across every view, and schedules the whole set together, which a loop of
+single renders never can.
 
 ### 1. Declare the views as a tuple
 
-Each view needs a unique `id` and its own angles. `includeAxes` marks the
+Each view needs a unique `id` and its own angles. `axes` marks the
 orientation of each one, which a set of angles alone does not show.
 
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImages } from 'nanoraster';
+import { renderImages } from 'nanoraster';
 
 import { readFile } from 'node:fs/promises';
 
 const glb = Uint8Array.from(await readFile('model.glb'));
 
-const images = await renderGlbToImages(glb, {
+const images = await renderImages(glb, {
   format: 'webp',
   width: 640,
   height: 480,
-  includeAxes: true,
+  axes: true,
   views: [
     { id: 'iso', phi: 60, theta: -45 },
     { id: 'front', phi: 90, theta: 0 },
@@ -42,40 +45,80 @@ The result is a tuple, not a map: position and length match the input.
 const [iso, front] = images;
 
 console.log(iso.id); // 'iso'
-console.log(front.file.name); // 'thumbnail-front.webp'
+console.log(front.file.name); // 'render-front.webp'
 ```
 
 TypeScript types `iso.id` as `'iso'` rather than `string`, but only while the
 options object is inferred as const.
 
-### 3. Preserve literal types across a variable
+### 3. Ladder sizes and formats with per-view overrides
 
-Assigning options to a variable widens the literals and loses the IDs;
-`createRenderImagesOptions` prevents that without changing runtime behaviour.
+A view is more than a camera: `width`, `height`, `format` and `quality` can be
+overridden per entry, defaulting to the shared values. One subject becomes a
+card, a social image and a print asset in one call.
 
 ```typescript
-import { createRenderImagesOptions, renderGlbToImages } from 'nanoraster';
+const [card, og, print] = await renderImages(glb, {
+  format: 'webp',
+  width: 768,
+  height: 576,
+  views: [
+    { id: 'card', phi: 60, theta: -45 },
+    { id: 'og', phi: 60, theta: -45, width: 1536, height: 804 },
+    { id: 'print', phi: 60, theta: -45, width: 1536, height: 804, format: 'png' },
+  ],
+});
 
-const options = createRenderImagesOptions({
-  format: 'png',
+console.log(og.file.name); // 'render-og.webp'
+console.log(print.file.mimeType); // 'image/png'
+```
+
+Each entry's filename and MIME type follow its own resolved format, and
+TypeScript narrows `print.file.mimeType` to `'image/png'` while `card` and
+`og` stay `'image/webp'`. Overrides pass the same validation as the shared
+values — a per-view `quality: 1` on WebP still means lossless, and annotated
+views still need 192 pixels each way.
+
+### 4. Preserve literal types across a variable
+
+Assigning options to a variable widens the literals and loses the IDs.
+`as const satisfies RenderImagesOptions` prevents that: `as const` keeps every
+literal, and `satisfies` still rejects misspelled or misplaced keys — all at
+compile time, with nothing added to the bundle.
+
+```typescript
+import { renderImages, type RenderImagesOptions } from 'nanoraster';
+
+const options = {
+  format: 'webp',
   views: [
     { id: 'iso', phi: 60, theta: -45 },
     { id: 'top', phi: 0, theta: 0 },
   ],
-});
+} as const satisfies RenderImagesOptions;
 
-const images = await renderGlbToImages(glb, options);
+const images = await renderImages(glb, options);
 ```
 
 ## Variations
 
-**One image only.** Use `renderGlbToImage`. The batch call requires a non-empty
+**One image only.** Use `renderImage`. The batch call requires a non-empty
 tuple and returns a tuple even for one view, under the same
-[exactness rules](../api#renderglbtoimages).
+[exactness rules](../api#renderimages).
 
-**Labels on every view.** `includeLabel: true` makes `label` required on every
-entry; see [Format and annotate](format-and-annotate).
+**Labels per view.** Give an entry a `label` and that view is labelled; leave
+it off and it is not. See [Format and annotate](format-and-annotate).
 
-**Different formats per view.** Not supported. Format, dimensions, quality,
-background and annotations are shared across the whole request; only `id`,
-`label`, `phi` and `theta` vary per view.
+**Shared-only settings.** `axes`, `scaleBar`, `background`, `lighting`,
+`margin`, `up` and `projection` apply to the whole request; the camera pair,
+`label` and the four output fields vary per view.
+
+**Renders spread over time.** The plan call shares the device across views
+_within_ one call; [`createRenderer`](reuse-the-renderer) shares it across
+calls _over time_. They compose — a warm renderer accepts the same plan calls.
+Either way, when you can write the full list of images down, send it as one
+call rather than a loop: only the renderer can schedule work it can see.
+
+**Stage timings.** `timings: true` attaches parse, setup, and per-view render,
+overlay and encode milliseconds to the result as `results.timings`; see
+[`RenderTimings`](../api#rendertimings).

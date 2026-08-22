@@ -44,16 +44,42 @@ tone maps with the ACES filmic curve, then draws authored edge lines. Failures h
 represent, such as a transparent JPEG, fails as `encode`. Because the failure
 code names the stage that rejected the work, the
 [retry decision](guides/handle-render-failures) is mechanical rather than a
-guess.
+guess. With `format: 'raw'` this stage is skipped and the frame is returned as
+read back; see [Work with raw pixels](guides/work-with-raw-pixels).
 
-[`renderGlbToImages`](api#renderglbtoimages) parses and uploads once, then fits,
-rasterises and encodes once per view.
+[`renderImages`](api#renderimages) parses and uploads once, then fits,
+rasterises and encodes once per view. [`RenderTimings`](api#rendertimings)
+fields map onto these stages: `parse` for parse and fit, `setup` for device
+acquisition and upload, then per-view `render`, `overlay` for the annotation
+pass, and `encode`.
 
 [Both hosts](install), Node.js native and
 [browser WebGPU](guides/render-in-the-browser), wrap the same Rust core and
-codecs. The stages are identical; only GPU rasterisation differs between hosts,
-so bytes may differ by a shade (see [Determinism](#determinism)) but any
-structural difference between hosts is a bug, not a configuration difference.
+codecs. Only GPU rasterisation differs, so bytes may differ by a shade (see
+[Determinism](#determinism)) but any structural difference between hosts is a
+bug.
+
+## Device lifetime
+
+**State crosses the boundary as handles; work crosses as plans.** A
+[`Renderer`](api#renderer) is the state: the GPU device, shader, pipelines and
+render targets, whose lifetime is the process or worker. A `views` plan is the
+work: every requested image in one value, so the core can schedule the next
+view's GPU pass while the previous one encodes, which a loop over single
+renders can never grant.
+
+A renderer keeps the device, shader, pipelines and the last output size's
+render targets between calls; parsing, camera fitting and the geometry upload
+happen per call. The one-shot functions run through one shared renderer per
+process: created on the first call, run in call order, never disposed, and
+trimmed of render targets larger than 2048² after each call so one large
+render does not hold that memory.
+
+Reuse changes no pixels: it skips re-creation, not arithmetic, so a warm
+renderer's output is byte-identical to the one-shot functions on the same
+adapter. If the device is lost between calls, the renderer rebuilds it on the
+next call; the loss surfaces once, as a GPU-class failure on the call that hit
+it.
 
 ## Determinism
 
@@ -61,10 +87,9 @@ Renders are used as evidence: a CI artifact that proves a part changed, a
 screenshot an agent compares across a tool loop. Evidence that varies for
 reasons unrelated to the subject invites false conclusions, so nanoraster
 removes inputs rather than seeding them. Lighting is the studio preset unless
-the request carries a [rig](guides/light-the-subject), and then the rig is held
-constant like any other input; tone map and gamma are fixed; camera distance is
-derived from the model's bounds; angles, format, size, background and
-annotations are yours.
+the request carries a [rig](guides/light-the-subject); tone map and gamma are
+fixed; camera distance is derived from the model's bounds; angles, format,
+size, background and annotations are yours.
 
 What is guaranteed:
 
@@ -85,10 +110,13 @@ What is not guaranteed:
 - Byte stability across nanoraster versions: a render fix changes pixels, so
   treat a version bump as a baseline reset.
 
-For byte-exact comparison in CI, pin the runner image as well as the options.
-Treat cross-host differences as expected and compare perceptually rather than
-by hash. Prefer [PNG](guides/format-and-annotate) for baselines, so a diff points
-at the render rather than the encoder.
+For byte-exact comparison in CI, pin the runner image as well as the options,
+and compare cross-host perceptually rather than by hash. Any
+[lossless format](guides/format-and-annotate) works as a baseline, but a
+byte-locked baseline also locks the encoder, and a version bump can change
+lossless WebP bytes as well as pixels.
+[`format: 'raw'`](guides/work-with-raw-pixels) removes the encoder from the
+comparison, so a diff can only report the render.
 
 ## Material model
 
@@ -133,9 +161,8 @@ surface, camera and lighting.
 
 A texture-backed material is ignored rather than rejected: it falls back to its
 factors, so the render succeeds and looks flatter than the authoring tool
-showed. Metals read as grey at small sizes: with only an analytic environment to
-reflect, a fully metallic subject loses contrast as it shrinks; prefer a
-dielectric for thumbnails. Authored edge lines are drawn in their own pass,
-unaffected by the material factors. With `lighting` held constant, a difference
-between two renders of the same model is a material difference and nothing
-else.
+showed. Metals read as grey at small sizes, because only an analytic
+environment is there to reflect; prefer a dielectric for thumbnails. Authored
+edge lines are drawn in their own pass, unaffected by the material factors.
+With `lighting` held constant, a difference between two renders of the same
+model is a material difference and nothing else.

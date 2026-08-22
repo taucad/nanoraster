@@ -33,9 +33,12 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 IGNORE_PATHS='vendor/image-webp|render-wasm|render-napi'
 
 cd "$REPO_ROOT"
+# --all-features keeps the default-off `bench` surface measured rather than
+# silently uncompiled: its code counts, and its tests run.
 cargo llvm-cov \
   --manifest-path rust/Cargo.toml \
   --workspace \
+  --all-features \
   --ignore-filename-regex "$IGNORE_PATHS" \
   --fail-under-lines 100 \
   --summary-only

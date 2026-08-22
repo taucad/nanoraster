@@ -15,20 +15,23 @@ pnpm add nanoraster
 ```
 
 Save this as `render.mjs` and run it with `node render.mjs`. The camera angles
-are written out here so you can drag them, but `phi: 60` and `theta: -45` are
-the defaults. The live tile renders at 960×720, so its byte count differs.
+are written out so you can drag them; `phi: 60` and `theta: -45` are the
+defaults. The live tile renders at 960×720, so its byte count differs, and its
+milliseconds drop after the first frame because dragging reuses one renderer;
+[Reuse the renderer](/docs/guides/reuse-the-renderer) is the same move in your
+own code.
 
 <RenderDemo>
 
 ```typescript
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
 import { readFile, writeFile } from 'node:fs/promises';
 
 const glb = Uint8Array.from(await readFile('model.glb'));
 
-const image = await renderGlbToImage(glb, {
-  format: 'png',
+const image = await renderImage(glb, {
+  format: 'webp',
   width: 512,
   height: 512,
   phi: 60,
@@ -44,18 +47,20 @@ console.log(`wrote ${image.name} (${image.bytes.length} bytes, ${image.mimeType}
 ## Expected output
 
 ```console
-wrote thumbnail.png (29965 bytes, image/png)
+wrote render.webp (26628 bytes, image/webp)
 ```
 
-The result is a plain object with three fields: `name`, `bytes` and
-`mimeType`. nanoraster never writes to disk, so the bytes are yours to save,
-upload or hand to another process. Run the script again and the bytes are
-identical: camera, lighting and encoder are fixed for a given request.
+The result is a plain object: `name`, `bytes`, `mimeType`, and the `width` and
+`height` the request resolved to. nanoraster never writes to disk, so the bytes
+are yours to save, upload or hand to another process. Run the script again and
+the bytes are identical: camera, lighting and encoder are fixed for a given
+request.
 
-The same call produces PNG, WebP or JPEG (`jpg` is an alias); see
-[Format and annotate](/docs/guides/format-and-annotate). Every rejection is a
-`RenderError` with a stable machine-readable code, so you can classify failures
-without string matching; see
+The same call produces PNG, WebP or JPEG (`jpg` is an alias), or the
+unencoded frame with `format: 'raw'`; see
+[Format and annotate](/docs/guides/format-and-annotate) and
+[Work with raw pixels](/docs/guides/work-with-raw-pixels). Every rejection is a
+`RenderError` with a stable machine-readable code; see
 [Handle render failures](/docs/guides/handle-render-failures).
 
 ## What it does not do

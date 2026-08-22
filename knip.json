@@ -11,7 +11,7 @@
         "*.config.ts",
         "*.test.ts"
       ],
-      "ignore": ["docs-site/.source/**", "src/cjs-error.d.cts", "src/wasm/**"],
+      "ignore": ["src/cjs-error.d.cts", "src/wasm/**"],
       "ignoreBinaries": ["wasm-pack"],
       "ignoreDependencies": ["@nx/js"]
     },
@@ -26,5 +26,8 @@
       ],
       "ignore": ["public/demo/render_wasm.js"]
     }
+  },
+  "ignoreIssues": {
+    "tests/browser/render.browser.test.mjs": ["unlisted", "unresolved"]
   }
 }

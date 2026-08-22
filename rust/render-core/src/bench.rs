@@ -4,8 +4,8 @@
 //! images around.
 
 use crate::{
-    ImageFormat, RenderError, RenderOptions, RenderView, Rendered, encode, render_glb_to_image,
-    render_glb_to_images_profiled,
+    ImageFormat, RenderError, RenderOptions, RenderView, Rendered, encode, render_image,
+    render_images_timed,
 };
 
 /// FNV-1a 64 — enough to compare artifacts for equality across legs.
@@ -18,15 +18,21 @@ pub fn fnv64(bytes: &[u8]) -> u64 {
     hash
 }
 
+/// Every codec path the package can take, including the lossy WebP one — the
+/// newest and the only forked encoder, and therefore the one a fingerprint
+/// table is most worth having.
+const CONFORMANCE_CODECS: [(&str, ImageFormat); 4] = [
+    ("png", ImageFormat::Png),
+    ("webp", ImageFormat::WebP { quality: 100 }),
+    ("webpLossy", ImageFormat::WebP { quality: 90 }),
+    ("jpeg", ImageFormat::Jpeg { quality: 85 }),
+];
+
 fn codec_fingerprints(rendered: &Rendered) -> Result<serde_json::Value, RenderError> {
     let mut report = serde_json::json!({
         "pixelFnv": format!("{:016x}", fnv64(&rendered.rgba)),
     });
-    for (name, format) in [
-        ("png", ImageFormat::Png),
-        ("webp", ImageFormat::WebP { quality: 100 }),
-        ("jpeg", ImageFormat::Jpeg { quality: 85 }),
-    ] {
+    for (name, format) in CONFORMANCE_CODECS {
         let bytes = encode(rendered, format)?;
         report[name] = serde_json::json!({
             "bytes": bytes.len(),
@@ -78,10 +84,9 @@ pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
         let options = RenderOptions {
             width,
             height,
-            label: Some("View".into()),
-            include_axes: bits & 1 != 0,
-            include_label: bits & 2 != 0,
-            include_scale: bits & 4 != 0,
+            label: (bits & 2 != 0).then(|| "View".to_owned()),
+            axes: bits & 1 != 0,
+            scale_bar: bits & 4 != 0,
             ..Default::default()
         };
         let prepared = crate::capture_overlay::prepare_view(&scene, &options)?;
@@ -101,63 +106,50 @@ pub async fn bench_multi_view(
     glb: &[u8],
     width: u32,
     height: u32,
-    now: &dyn Fn() -> f64,
+    now: &crate::TimingsClock,
 ) -> Result<serde_json::Value, RenderError> {
+    let view = |id: &str, label: &str, phi_deg: f32, theta_deg: f32| RenderView {
+        id: id.into(),
+        label: Some(label.into()),
+        phi_deg,
+        theta_deg,
+        width: None,
+        height: None,
+        format: None,
+    };
     let views = [
-        RenderView {
-            id: "front".into(),
-            label: Some("Front".into()),
-            phi_deg: 90.0,
-            theta_deg: 270.0,
-        },
-        RenderView {
-            id: "back".into(),
-            label: Some("Back".into()),
-            phi_deg: 90.0,
-            theta_deg: 90.0,
-        },
-        RenderView {
-            id: "right".into(),
-            label: Some("Right".into()),
-            phi_deg: 90.0,
-            theta_deg: 0.0,
-        },
-        RenderView {
-            id: "left".into(),
-            label: Some("Left".into()),
-            phi_deg: 90.0,
-            theta_deg: 180.0,
-        },
-        RenderView {
-            id: "top".into(),
-            label: Some("Top".into()),
-            phi_deg: 0.0,
-            theta_deg: 0.0,
-        },
-        RenderView {
-            id: "bottom".into(),
-            label: Some("Bottom".into()),
-            phi_deg: 180.0,
-            theta_deg: 0.0,
-        },
+        view("front", "Front", 90.0, 270.0),
+        view("back", "Back", 90.0, 90.0),
+        view("right", "Right", 90.0, 0.0),
+        view("left", "Left", 90.0, 180.0),
+        view("top", "Top", 0.0, 0.0),
+        view("bottom", "Bottom", 180.0, 0.0),
     ];
     let mut variants = Vec::new();
     for bits in 0..8 {
-        let include_axes = bits & 1 != 0;
-        let include_label = bits & 2 != 0;
-        let include_scale = bits & 4 != 0;
+        let axes = bits & 1 != 0;
+        let labeled = bits & 2 != 0;
+        let scale_bar = bits & 4 != 0;
         let options = RenderOptions {
             width,
             height,
             background: Some([1.0, 1.0, 1.0, 1.0]),
-            include_axes,
-            include_label,
-            include_scale,
+            axes,
+            scale_bar,
             ..Default::default()
         };
+        // A label is drawn where one is set, so the label leg strips them
+        // rather than flipping a flag.
+        let views: Vec<RenderView> = views
+            .iter()
+            .map(|view| RenderView {
+                label: labeled.then(|| view.label.clone()).flatten(),
+                ..view.clone()
+            })
+            .collect();
         let singular_started = now();
         let mut singular = Vec::with_capacity(views.len());
-        let mut singular_ms = Vec::with_capacity(views.len());
+        let mut view_durations = Vec::with_capacity(views.len());
         for view in &views {
             let mut view_options = options.clone();
             view_options.phi_deg = view.phi_deg;
@@ -165,14 +157,14 @@ pub async fn bench_multi_view(
             view_options.label.clone_from(&view.label);
             let started = now();
             let bytes =
-                render_glb_to_image(glb, &view_options, ImageFormat::WebP { quality: 100 }).await?;
-            singular_ms.push(now() - started);
+                render_image(glb, &view_options, ImageFormat::WebP { quality: 100 }).await?;
+            view_durations.push(now() - started);
             singular.push(bytes);
         }
-        let singular_wall_ms = now() - singular_started;
+        let singular_wall = now() - singular_started;
 
         let batch_started = now();
-        let (batch, profile) = render_glb_to_images_profiled(
+        let (batch, timings) = render_images_timed(
             glb,
             &options,
             ImageFormat::WebP { quality: 100 },
@@ -180,25 +172,25 @@ pub async fn bench_multi_view(
             now,
         )
         .await?;
-        let batch_wall_ms = now() - batch_started;
+        let batch_wall = now() - batch_started;
         ensure_batch_matches(&batch, &singular)?;
         let fingerprints: Vec<String> = batch
             .iter()
             .map(|bytes| format!("{:016x}", fnv64(bytes)))
             .collect();
         variants.push(serde_json::json!({
-            "includeAxes": include_axes,
-            "includeLabel": include_label,
-            "includeScale": include_scale,
+            "axes": axes,
+            "label": labeled,
+            "scaleBar": scale_bar,
             "singular": {
-                "wallMs": singular_wall_ms,
-                "viewMs": singular_ms,
+                "wall": singular_wall,
+                "view": view_durations,
                 "glbParses": views.len(),
                 "renderSessions": views.len(),
             },
             "batch": {
-                "wallMs": batch_wall_ms,
-                "profile": profile,
+                "wall": batch_wall,
+                "timings": timings,
             },
             "fingerprints": fingerprints,
         }));
@@ -295,13 +287,27 @@ mod tests {
             "base", "include1", "include2", "include3", "include4", "include5", "include6",
             "include7",
         ] {
-            for codec in ["png", "webp", "jpeg"] {
+            for (codec, _) in CONFORMANCE_CODECS {
                 assert_eq!(
                     first[fixture][codec]["fnv"].as_str().map(str::len),
                     Some(16)
                 );
             }
         }
+    }
+
+    /// Half of the native↔wasm byte-identity gate: the browser suite asserts
+    /// the wasm build against this same table, so a codec that drifts on
+    /// either artifact fails CI instead of being asserted in a comment.
+    ///
+    /// Regenerate deliberately, never to make a red build green:
+    /// `pnpm run build:napi:bench && node scripts/record-codec-conformance.mjs`
+    #[test]
+    fn codec_fixtures_match_the_committed_fingerprints() {
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/codec-conformance.json"))
+                .expect("committed fingerprints");
+        assert_eq!(codec_conformance().expect("conformance"), expected);
     }
 
     #[test]

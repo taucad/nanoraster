@@ -66,12 +66,12 @@ try {
     join(work, 'consumer.mjs'),
     `import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { renderGlbToImage } from 'nanoraster';
+import { renderImage } from 'nanoraster';
 
 const wasm = await readFile(new URL(import.meta.resolve('nanoraster/wasm')));
 await WebAssembly.compile(wasm);
 const glb = await readFile(process.argv[2]);
-const image = await renderGlbToImage(new Uint8Array(glb), { format: 'png', width: 64, height: 64 });
+const image = await renderImage(new Uint8Array(glb), { format: 'png', width: 64, height: 64 });
 assert.equal(image.mimeType, 'image/png');
 assert.deepEqual([...image.bytes.slice(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
 `,

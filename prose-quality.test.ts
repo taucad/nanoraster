@@ -6,9 +6,23 @@ import { describe, expect, it } from 'vitest';
 import { MAX_PROSE_WORDS, countWords } from './tools/eslint-plugin/prose-rules.js';
 
 const ROOT = resolve(import.meta.dirname);
+// Generated output is excluded for the same reason Vale's `git ls-files` never
+// sees it: the exported site republishes every page as Markdown, so a docs
+// build would otherwise double the corpus and lint a stale copy of prose the
+// source has already fixed. The list mirrors `eslint.config.mjs`.
 const DOCUMENTS = globSync('**/*.{md,mdx}', {
   cwd: ROOT,
-  exclude: ['.nx/**', 'coverage/**', 'dist/**', 'node_modules/**', 'rust/target/**'],
+  exclude: [
+    '.nx/**',
+    'coverage/**',
+    'dist/**',
+    'docs-site/.next/**',
+    'docs-site/.source/**',
+    'docs-site/out/**',
+    'node_modules/**',
+    'rust/target/**',
+    'tests/out/**',
+  ],
 })
   // Route segments such as `docs-site/app/docs.mdx/` are directories, not documents.
   .filter((path) => statSync(resolve(ROOT, path)).isFile())

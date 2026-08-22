@@ -6,14 +6,25 @@ publish = false
 license.workspace = true
 repository.workspace = true
 
+# Benchmark and codec-conformance entry points. Default-off: they are
+# development surface, so no published artifact carries them. CI builds
+# feature-enabled siblings of the same source for the benchmark and the
+# native/wasm fingerprint gates.
+[features]
+bench = []
+
 [dependencies]
 bytemuck = "1.25.1"
 futures-channel = "0.3.32"
 glam = "0.33.2"
 gltf = { version = "=1.4.1", default-features = false, features = ["utils"] }
 image-webp = { path = "../vendor/image-webp" }
-jpeg-encoder = "0.7.0"
-png = "0.18.1"
+# Exactly pinned like `gltf` and `fontdue`: these two decide the bytes every
+# artifact must agree on, and a codec's own defaults are not semver-protected
+# — jpeg-encoder 0.8.0 adds an opt-in `use_wide` SIMD path, which is exactly
+# the kind of change a caret range would take silently.
+jpeg-encoder = "=0.7.0"
+png = "=0.18.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 
@@ -37,6 +48,11 @@ wgpu = { version = "30.0.0", default-features = false, features = ["std", "webgp
 [dev-dependencies]
 pollster = "1.0.1"
 zune-jpeg = "0.5.15"
+
+# `render_core::bench_encodes` and `bench_multi_view` only exist with `bench`.
+[[example]]
+name = "bench"
+required-features = ["bench"]
 
 [build-dependencies]
 fontdue = { version = "=0.9.4", default-features = false, features = ["std"] }

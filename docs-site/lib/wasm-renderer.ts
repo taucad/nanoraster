@@ -1,33 +1,59 @@
-type WasmRenderer = {
+import type { Renderer } from '../../src/wasm/render_wasm.js';
+
+/**
+ * The part of the wasm artifact's persistent renderer the demos call, taken
+ * from the generated bindings rather than restated: a wasm-bindgen signature
+ * change then fails here at type-check instead of in a browser.
+ * `render_images` returns the ordered images in view order.
+ */
+export type WasmRendererHandle = Pick<Renderer, 'render_image' | 'render_images'>;
+
+type WasmModule = {
   readonly default: (input: { readonly module_or_path: URL }) => Promise<unknown>;
-  readonly render_glb_to_image: (
-    glb: Uint8Array<ArrayBuffer>,
-    optionsJson: string,
-  ) => Promise<Uint8Array<ArrayBuffer>>;
-  /** Ordered identified views through one batch-scoped session; result order is view order. */
-  readonly render_glb_to_images: (
-    glb: Uint8Array<ArrayBuffer>,
-    optionsJson: string,
-  ) => Promise<Uint8Array<ArrayBuffer>[]>;
+  readonly Renderer: { readonly create: (optionsJson?: string) => Promise<WasmRendererHandle> };
 };
 
-let renderer: Promise<WasmRenderer> | undefined;
+/**
+ * Serialize calls on one shared handle. The wasm renderer rejects overlapping
+ * calls outright, and the per-tile guards in the demo component cannot see
+ * each other — several tiles on one page would otherwise race the handle.
+ */
+export const serializeRenders = (handle: WasmRendererHandle): WasmRendererHandle => {
+  // Same idiom as the package façade (src/create-renderer.ts): the chain keeps
+  // ordering while the catch keeps one failed render from wedging later calls.
+  let queue: Promise<unknown> = Promise.resolve();
+  const enqueue = <Value>(job: () => Promise<Value>): Promise<Value> => {
+    const next = queue.then(job);
+    queue = next.catch(() => undefined);
+    return next;
+  };
+  return {
+    render_image: (glb, optionsJson) => enqueue(() => handle.render_image(glb, optionsJson)),
+    render_images: (glb, optionsJson) => enqueue(() => handle.render_images(glb, optionsJson)),
+  };
+};
+
+let renderer: Promise<WasmRendererHandle> | undefined;
 let model: Promise<Uint8Array<ArrayBuffer>> | undefined;
 
 /** The subject every documentation demo renders. */
 const demoModelUrl = '/demo/gear-12-metal.glb';
 
-/** Load the browser binding once per document. */
-export const loadWasmRenderer = async (): Promise<WasmRenderer> => {
+/**
+ * Load the browser binding and create one persistent renderer per document:
+ * the GPU device, shader, and pipelines come up once, and every later draw —
+ * every slider tick — pays only render and encode.
+ */
+export const loadWasmRenderer = async (): Promise<WasmRendererHandle> => {
   // A failure must not stick in the cache, or every later render would fail
   // until a reload; clearing it lets the next control change retry the load.
   renderer ??= (async () => {
     const moduleUrl = new URL('/demo/render_wasm.js', window.location.href).href;
-    const module = (await import(/* webpackIgnore: true */ moduleUrl)) as unknown as WasmRenderer;
+    const module = (await import(/* webpackIgnore: true */ moduleUrl)) as unknown as WasmModule;
     await module.default({
       module_or_path: new URL('/demo/render_wasm_bg.wasm', window.location.href),
     });
-    return module;
+    return serializeRenders(await module.Renderer.create());
   })().catch((error: unknown) => {
     renderer = undefined;
     throw error;

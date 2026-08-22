@@ -10,7 +10,9 @@
 6. Update a byte budget in the causing pull request when the larger artifact is
    intentional. Explain the measured origin beside the threshold.
 7. Rename the gated benchmark when its semantics change; do not overwrite its
-   identity to hide a new workload.
+   identity to hide a new workload. Build the addon it reads with
+   `pnpm run build:napi:bench`: the benchmark surface is behind the default-off
+   `bench` cargo feature, so no published artifact carries it.
 8. Open a pull request with commands and results.
 
 Only GitHub Actions publishes npm packages, creates tags or releases, and

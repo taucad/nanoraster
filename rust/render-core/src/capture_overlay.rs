@@ -90,14 +90,8 @@ pub(crate) fn prepare_view(
     debug_assert_ne!(FONT_ATLAS_FNV, 0);
     let mut camera = camera_state(scene, options);
     let alignment = classify_alignment(camera.forward);
-    let label = if options.include_label {
-        let label = options.label.as_deref().ok_or_else(|| {
-            RenderError::Parse("label is required when includeLabel is true".into())
-        })?;
-        Some(label.to_owned())
-    } else {
-        None
-    };
+    // A label's presence is its own switch — there is no flag to disagree with.
+    let label = options.label.clone();
     let mut layout = measure_layout(options, label.as_deref())?;
     camera = overlay_safe_camera(scene, options, camera, &layout)?;
 
@@ -253,7 +247,7 @@ fn measure_layout(
         ));
     }
 
-    let scale_rect = options.include_scale.then(|| Rect {
+    let scale_rect = options.scale_bar.then(|| Rect {
         x: inset,
         y: options
             .height
@@ -262,7 +256,7 @@ fn measure_layout(
         height: (font_px * 3.0).ceil() as u32,
     });
     let axes_side = (min_dimension * 0.18).round().max(16.0) as u32;
-    let axes_rect = options.include_axes.then(|| Rect {
+    let axes_rect = options.axes.then(|| Rect {
         x: options.width.saturating_sub(inset + axes_side),
         y: options.height.saturating_sub(inset + axes_side),
         width: axes_side,
@@ -1035,7 +1029,6 @@ mod tests {
                     phi_deg,
                     theta_deg,
                     label: Some("Housing datum A".into()),
-                    include_label: true,
                     ..RenderOptions::default()
                 },
             )
@@ -1058,9 +1051,8 @@ mod tests {
                     up,
                     projection,
                     label: Some("Top".into()),
-                    include_axes: true,
-                    include_label: true,
-                    include_scale: true,
+                    axes: true,
+                    scale_bar: true,
                     ..RenderOptions::default()
                 };
                 let prepared = prepare_view(&scene(), &options).expect("annotated polar view");
@@ -1100,7 +1092,7 @@ mod tests {
                         theta_deg: 0.0,
                         up,
                         projection,
-                        include_axes: true,
+                        axes: true,
                         ..RenderOptions::default()
                     };
                     let prepared = prepare_view(&scene(), &options).expect("polar view");
@@ -1161,7 +1153,7 @@ mod tests {
                         theta_deg: 0.0,
                         up,
                         projection,
-                        include_axes: true,
+                        axes: true,
                         ..RenderOptions::default()
                     };
                     let prepared = prepare_view(&scene(), &options).expect("polar view");
@@ -1200,7 +1192,7 @@ mod tests {
                             theta_deg: 0.0,
                             up,
                             projection,
-                            include_axes: true,
+                            axes: true,
                             ..RenderOptions::default()
                         },
                     )
@@ -1224,7 +1216,7 @@ mod tests {
             let options = RenderOptions {
                 width,
                 height,
-                include_axes: true,
+                axes: true,
                 ..RenderOptions::default()
             };
             let layout = measure_layout(&options, Some("I")).expect("overlay layout");
@@ -1290,9 +1282,8 @@ mod tests {
 
         let annotated_options = RenderOptions {
             label: Some("Front".into()),
-            include_axes: true,
-            include_label: true,
-            include_scale: true,
+            axes: true,
+            scale_bar: true,
             ..options
         };
         let annotated = prepare_view(&scene(), &annotated_options).expect("annotated view");
@@ -1344,9 +1335,8 @@ mod tests {
                         theta_deg,
                         projection,
                         label: Some("V".into()),
-                        include_axes: true,
-                        include_label: true,
-                        include_scale: true,
+                        axes: true,
+                        scale_bar: true,
                         ..RenderOptions::default()
                     };
                     let prepared = prepare_view(&scene, &options).expect("canonical view");
@@ -1416,7 +1406,7 @@ mod tests {
                         width,
                         height,
                         projection,
-                        include_scale: true,
+                        scale_bar: true,
                         ..RenderOptions::default()
                     },
                 )
@@ -1512,19 +1502,14 @@ mod tests {
 
     #[test]
     fn overlay_edge_cases_are_bounded_and_rejected() {
-        let missing_label = RenderOptions {
-            include_label: true,
-            ..Default::default()
-        };
-        assert!(prepare_view(&scene(), &missing_label).is_err());
         assert!(measure_layout(&RenderOptions::default(), Some(&"W".repeat(200))).is_err());
         assert!(
             measure_layout(
                 &RenderOptions {
                     width: 16,
                     height: 16,
-                    include_axes: true,
-                    include_scale: true,
+                    axes: true,
+                    scale_bar: true,
                     ..Default::default()
                 },
                 None,
@@ -1541,7 +1526,7 @@ mod tests {
                 &RenderOptions {
                     width: 16,
                     height: 16,
-                    include_scale: true,
+                    scale_bar: true,
                     ..Default::default()
                 }
             )
