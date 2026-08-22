@@ -41,12 +41,26 @@ const DEPENDENCY_ALLOW_LIST = {
     'libm.so.5',
     'libthr.so.3',
   ],
-  glibc: ['libc.so.6', 'libdl.so.2', 'libgcc_s.so.1', 'libm.so.6', 'libpthread.so.0', 'librt.so.1'],
+  glibc: [
+    // The glibc dynamic loaders the cross toolchains name in DT_NEEDED
+    // (ld-linux-x86-64.so.2, ld-linux-armhf.so.3, ld64.so.2 on ppc64le,
+    // ld64.so.1 on s390x); observed in the first sixteen-target assembly.
+    /^ld-linux-[\w-]+\.so\.\d+$/u,
+    /^ld64\.so\.\d+$/u,
+    'libc.so.6',
+    'libdl.so.2',
+    'libgcc_s.so.1',
+    'libm.so.6',
+    'libpthread.so.0',
+    'librt.so.1',
+  ],
   musl: [/^ld-musl-[\w-]+\.so\.1$/u, /^libc\.musl-[\w-]+\.so\.1$/u, 'libc.so'],
   windows: [
     /^api-ms-win-[\w-]+\.dll$/u,
     'advapi32.dll',
     'bcrypt.dll',
+    // std's random source and wgpu's adapter enumeration (observed 2026-08-22).
+    'bcryptprimitives.dll',
     'crypt32.dll',
     'd3d12.dll',
     'd3dcompiler_47.dll',
@@ -64,6 +78,7 @@ const DEPENDENCY_ALLOW_LIST = {
     'powrprof.dll',
     'propsys.dll',
     'secur32.dll',
+    'setupapi.dll',
     'shell32.dll',
     'synchronization.dll',
     'ucrtbase.dll',
