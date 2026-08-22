@@ -1,7 +1,6 @@
 packages:
   - .
   - docs-site
-  - npm/*
 
 allowBuilds:
   '@napi-rs/cli': true

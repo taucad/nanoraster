@@ -5,9 +5,19 @@
     "limit": "1.1 kB"
   },
   {
+    "name": "node ESM facade",
+    "path": "dist/index.node.mjs",
+    "limit": "1.1 kB"
+  },
+  {
     "name": "runtime selector",
     "path": "dist/renderer.mjs",
     "limit": "1.6 kB"
+  },
+  {
+    "name": "native addon boundary",
+    "path": "dist/native-backend.mjs",
+    "limit": "700 B"
   },
   {
     "name": "request serializer",

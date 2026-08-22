@@ -11,7 +11,7 @@ const site = new URL('../', import.meta.url);
 const root = new URL('../../', import.meta.url);
 const target = new URL('lib/sizes.json', site);
 const previous = existsSync(target) ? JSON.parse(readFileSync(target, 'utf8')) : {};
-const { version } = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'));
+const { name: rootName, version } = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'));
 
 const wasm = readFileSync(new URL('public/demo/render_wasm_bg.wasm', site));
 const shipped = new URL('src/wasm/render_wasm_bg.wasm', root);
@@ -28,30 +28,44 @@ if (!existsSync(distribution)) {
 }
 const javascript = readFileSync(distribution);
 
-const platforms = ['darwin-arm64', 'linux-x64-gnu', 'win32-x64-msvc'];
-const nativeSize = async (platform) => {
-  const manifest = JSON.parse(readFileSync(new URL(`npm/${platform}/package.json`, root), 'utf8'));
+// Platform names are read off the registry rather than listed here. The published root
+// manifest's `optionalDependencies` is the only record of which platform packages a released
+// nanoraster ships, and `npm/` is generated during release assembly, so neither the source tree
+// nor this script can name them. The rule: measure the working version when the registry serves
+// it, otherwise the release tagged `latest` — a version bump that has not reached npm keeps
+// quoting the last released figures instead of inventing a size for a package nobody can
+// install. With no registry reachable the committed figures stand; with neither, this fails.
+const registry = async (path) => {
   try {
-    const response = await fetch(`https://registry.npmjs.org/${manifest.name}/${version}`, {
+    const response = await fetch(`https://registry.npmjs.org/${path}`, {
       signal: AbortSignal.timeout(15_000),
     });
-    const published = response.ok ? await response.json() : undefined;
-    if (published?.dist?.unpackedSize) return [published.dist.unpackedSize, `registry ${version}`];
+    return response.ok ? await response.json() : undefined;
   } catch (error) {
-    console.warn(`warning: registry lookup for ${manifest.name} failed: ${error.message}`);
+    console.warn(`warning: registry lookup for ${path} failed: ${error.message}`);
+    return undefined;
   }
-
-  const binary = new URL(`npm/${platform}/${manifest.main}`, root);
-  if (existsSync(binary)) return [statSync(binary).size, 'local binary'];
-  if (previous.native?.[platform]) return [previous.native[platform], 'previously committed'];
-  throw new Error(`no size available for ${manifest.name}: unpublished, unbuilt, and never committed`);
 };
 
+const published = (await registry(`${rootName}/${version}`)) ?? (await registry(`${rootName}/latest`));
 const native = {};
-for (const platform of platforms) {
-  const [size, source] = await nativeSize(platform);
-  native[platform] = size;
-  console.log(`${platform}: ${size} B (${source})`);
+for (const packageName of Object.keys(published?.optionalDependencies ?? {}).toSorted()) {
+  const platform = packageName.slice(`${rootName}-`.length);
+  const size = (await registry(`${packageName}/${published.version}`))?.dist?.unpackedSize;
+  if (size) native[platform] = size;
+  console.log(
+    size
+      ? `${platform}: ${size} B (registry ${published.version})`
+      : `warning: ${packageName}@${published.version} serves no unpacked size; omitting ${platform}`,
+  );
+}
+
+if (Object.keys(native).length === 0) {
+  if (!previous.native) {
+    throw new Error(`no native sizes available: ${rootName} is unpublished and none were ever committed`);
+  }
+  Object.assign(native, previous.native);
+  console.log(`kept the committed native sizes for ${Object.keys(native).join(', ')}`);
 }
 
 const measured = {

@@ -208,9 +208,74 @@ fn note_device_lost(lost: &AtomicBool, reason: wgpu::DeviceLostReason) {
     }
 }
 
+/// What glibc hands a default-attribute thread through `RLIMIT_STACK`, and the
+/// size [`raise_default_thread_stack`] gives musl's process-wide default. Also
+/// musl's own ceiling for that default, which clamps anything larger.
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+const DRIVER_THREAD_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+unsafe extern "C" {
+    // musl 1.1.21 and later. The libc crate declares neither for musl targets,
+    // so both are named here rather than imported.
+    fn pthread_getattr_default_np(attr: *mut libc::pthread_attr_t) -> libc::c_int;
+    fn pthread_setattr_default_np(attr: *const libc::pthread_attr_t) -> libc::c_int;
+}
+
+/// Raise musl's process-wide default thread stack to
+/// [`DRIVER_THREAD_STACK_BYTES`], never shrinking a larger default. Reports
+/// whether the default moved.
+///
+/// musl gives a default-attribute thread 128 KiB where glibc gives it
+/// `RLIMIT_STACK`, and mesa's `u_thread_create` passes no attributes at all, so
+/// lavapipe's `util_queue` worker — the thread that JIT-compiles a shader
+/// variant on first draw — inherits that 128 KiB. LLVM 22's AArch64
+/// `AsmPrinter::doFinalization` overruns it and the host process dies with
+/// SIGSEGV mid-render (Alpine 3.24, mesa 26.1.6, LLVM 22.1.3; a 256 KiB
+/// default still faults, 512 KiB and above survive). Matching glibc is what
+/// makes the musl render agree with every other host.
+///
+/// The new default is process-global for threads created after it with default
+/// attributes. Rust pins its own 2 MiB on the threads it spawns and libuv sizes
+/// its pool from `RLIMIT_STACK`, so in practice only the driver's threads move.
+///
+/// One way, and idempotent: musl's own default only ever grows, and it clamps
+/// to [`DRIVER_THREAD_STACK_BYTES`], so a second call finds the target already
+/// in place. The read is what states that here rather than borrowing it.
+///
+/// Delete once mesa sizes `util_queue` thread stacks itself on musl.
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+fn raise_default_thread_stack() -> bool {
+    let mut attr = std::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
+    let mut size = 0;
+    unsafe {
+        if pthread_getattr_default_np(attr.as_mut_ptr()) != 0 {
+            return false;
+        }
+        let mut attr = attr.assume_init();
+        let raised = libc::pthread_attr_getstacksize(&attr, &mut size) == 0
+            && size < DRIVER_THREAD_STACK_BYTES
+            && libc::pthread_attr_setstacksize(&mut attr, DRIVER_THREAD_STACK_BYTES) == 0
+            && pthread_setattr_default_np(&attr) == 0;
+        libc::pthread_attr_destroy(&mut attr);
+        raised
+    }
+}
+
 pub(crate) async fn request_adapter(
     power: wgpu::PowerPreference,
 ) -> Result<wgpu::Adapter, RenderError> {
+    // Ahead of the instance, because the raise only reaches threads created
+    // after it and the Vulkan driver spawns its own out of the instance. Best
+    // effort: a refusal leaves musl's default in place and the render proceeds
+    // exactly as it would have without this call.
+    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    {
+        static RAISED: std::sync::Once = std::sync::Once::new();
+        RAISED.call_once(|| {
+            let _ = raise_default_thread_stack();
+        });
+    }
     #[cfg(target_arch = "wasm32")]
     let backends = wgpu::Backends::BROWSER_WEBGPU;
     #[cfg(not(target_arch = "wasm32"))]
@@ -1242,13 +1307,17 @@ impl Renderer {
     /// the submission's poll, which also delivers the map callback).
     #[cfg(not(target_arch = "wasm32"))]
     fn finish_view_blocking(&self, mut view: InFlightView) -> Result<Rendered, RenderError> {
-        self.state
-            .device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(view.submission.clone()),
-                timeout: None,
-            })
-            .map_err(poll_error)?;
+        if let Err(error) = self.state.device.poll(wgpu::PollType::Wait {
+            submission_index: Some(view.submission.clone()),
+            timeout: None,
+        }) {
+            // A submission that failed validation never advances the device's
+            // successful-submission index, so the wait fails with a symptom
+            // ("submission index … not returned"); the uncaptured handler
+            // already holds the cause, and that is the message to surface.
+            self.take_uncaptured()?;
+            return Err(poll_error(error));
+        }
         // A callback that is missing after the awaited poll is a wgpu contract
         // violation, but not a reason to panic the host process: the wasm
         // sibling maps the same condition to `gpu:`, so this path does too.
@@ -1942,6 +2011,94 @@ mod tests {
     }
 
     #[test]
+    fn finish_view_reports_the_failed_submission_rather_than_the_poll_symptom() {
+        let renderer = pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+            .expect("renderer");
+        let device = &renderer.state.device;
+        let source = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("destroyed source"),
+            size: 256,
+            usage: wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: 256,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_buffer_to_buffer(&source, 0, &readback, 0, 256);
+        let commands = encoder.finish();
+        // Destroying a referenced buffer makes the submission fail validation:
+        // wgpu reports it through the uncaptured handler and never advances the
+        // successful-submission index, so the wait alone would only say so.
+        source.destroy();
+        let submission = renderer.state.queue.submit(Some(commands));
+        let (_sender, receiver) = futures_channel::oneshot::channel();
+        let view = InFlightView {
+            buffer: readback,
+            receiver,
+            submission,
+            height: 1,
+            unpadded_bytes_per_row: 256,
+            padded_bytes_per_row: 256,
+        };
+
+        let error = renderer
+            .finish_view_blocking(view)
+            .err()
+            .expect("a failed submission must not read back");
+        assert!(matches!(&error, RenderError::Gpu(message) if message.contains("destroyed")));
+        // The cause is drained; a later poll symptom is reported as itself.
+        assert!(renderer.take_uncaptured().is_ok());
+        renderer.destroy();
+    }
+
+    #[test]
+    fn finish_view_reports_the_poll_symptom_when_no_cause_was_captured() {
+        let renderer = pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+            .expect("renderer");
+        let device = &renderer.state.device;
+        let source = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("destroyed source"),
+            size: 256,
+            usage: wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: 256,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_buffer_to_buffer(&source, 0, &readback, 0, 256);
+        let commands = encoder.finish();
+        source.destroy();
+        let submission = renderer.state.queue.submit(Some(commands));
+        // Another consumer drained the cause first: the wait's own error is
+        // all that is left to report, and it must still be a `gpu: poll:` one.
+        assert!(renderer.take_uncaptured().is_err());
+        let (_sender, receiver) = futures_channel::oneshot::channel();
+        let view = InFlightView {
+            buffer: readback,
+            receiver,
+            submission,
+            height: 1,
+            unpadded_bytes_per_row: 256,
+            padded_bytes_per_row: 256,
+        };
+
+        let error = renderer
+            .finish_view_blocking(view)
+            .err()
+            .expect("a failed submission must not read back");
+        assert!(error.to_string().starts_with("gpu: poll:"), "{error}");
+        renderer.destroy();
+    }
+
+    #[test]
     fn renderer_surfaces_uncaptured_errors_and_recovers_from_device_loss() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
@@ -2034,5 +2191,32 @@ mod tests {
             targets.padded_bytes_per_row % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
             0
         );
+    }
+
+    /// musl starts every process at a 128 KiB default and never lowers it, so
+    /// the raise is observable once per process: it reports movement exactly
+    /// when there was room to move, and leaves the target in place after.
+    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    mod musl_default_thread_stack {
+        use super::*;
+
+        fn default_stack_bytes() -> usize {
+            let mut attr = std::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
+            let mut size = 0;
+            unsafe {
+                assert_eq!(pthread_getattr_default_np(attr.as_mut_ptr()), 0);
+                assert_eq!(libc::pthread_attr_getstacksize(attr.as_ptr(), &mut size), 0);
+            }
+            size
+        }
+
+        #[test]
+        fn raises_the_default_to_the_size_glibc_would_have_given_and_holds_it() {
+            let below_target = default_stack_bytes() < DRIVER_THREAD_STACK_BYTES;
+            assert_eq!(raise_default_thread_stack(), below_target);
+            assert_eq!(default_stack_bytes(), DRIVER_THREAD_STACK_BYTES);
+            assert!(!raise_default_thread_stack());
+            assert_eq!(default_stack_bytes(), DRIVER_THREAD_STACK_BYTES);
+        }
     }
 }

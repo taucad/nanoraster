@@ -3,11 +3,15 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { readNapiTargets } from './lib/napi-targets.mjs';
+
 const PROVENANCE_TYPE = 'https://slsa.dev/provenance/v1';
 const BUILD_TYPE = 'https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1';
 const BUILDER_ID = 'https://github.com/actions/runner/github-hosted';
 const REPOSITORY = 'https://github.com/taucad/nanoraster';
 const WORKFLOW = '.github/workflows/ci.yml';
+
+const byText = (left, right) => Number(left > right) - Number(left < right);
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -26,36 +30,34 @@ const expectedDigest = (integrity) => {
   return Buffer.from(integrity.slice('sha512-'.length), 'base64').toString('hex');
 };
 
-const verifyPackage = ({ audit, candidate, commit, runId }) => {
+const verifyPackage = ({ audit, packed, commit, runId }) => {
   const entry = audit.verified?.find(
-    ({ name, version }) => name === candidate.name && version === candidate.version,
+    ({ name, version }) => name === packed.name && version === packed.version,
   );
-  assert(entry, `${candidate.name}@${candidate.version} has no verified npm signature`);
+  assert(entry, `${packed.name}@${packed.version} has no verified npm signature`);
   assert(
     entry.attestations?.provenance?.predicateType === PROVENANCE_TYPE,
-    `${candidate.name} lacks provenance`,
+    `${packed.name} lacks provenance`,
   );
 
   const statement = decodeProvenance(entry);
-  const subject = statement.subject?.find(
-    ({ name }) => name === `pkg:npm/${candidate.name}@${candidate.version}`,
-  );
-  assert(subject?.digest?.sha512 === expectedDigest(candidate.integrity), `${candidate.name} digest differs`);
+  const subject = statement.subject?.find(({ name }) => name === `pkg:npm/${packed.name}@${packed.version}`);
+  assert(subject?.digest?.sha512 === expectedDigest(packed.integrity), `${packed.name} digest differs`);
 
   const definition = statement.predicate?.buildDefinition;
   const workflow = definition?.externalParameters?.workflow;
-  assert(definition?.buildType === BUILD_TYPE, `${candidate.name} has the wrong build type`);
-  assert(workflow?.repository === REPOSITORY, `${candidate.name} has the wrong source repository`);
-  assert(workflow?.path === WORKFLOW, `${candidate.name} has the wrong source workflow`);
-  assert(workflow?.ref === 'refs/heads/main', `${candidate.name} was not built from main`);
+  assert(definition?.buildType === BUILD_TYPE, `${packed.name} has the wrong build type`);
+  assert(workflow?.repository === REPOSITORY, `${packed.name} has the wrong source repository`);
+  assert(workflow?.path === WORKFLOW, `${packed.name} has the wrong source workflow`);
+  assert(workflow?.ref === 'refs/heads/main', `${packed.name} was not built from main`);
 
   const source = definition.resolvedDependencies?.find(
     ({ uri }) => uri === `git+${REPOSITORY}@refs/heads/main`,
   );
-  assert(source?.digest?.gitCommit === commit, `${candidate.name} has the wrong source commit`);
+  assert(source?.digest?.gitCommit === commit, `${packed.name} has the wrong source commit`);
   assert(
     statement.predicate?.runDetails?.builder?.id === BUILDER_ID,
-    `${candidate.name} used the wrong builder`,
+    `${packed.name} used the wrong builder`,
   );
   // Any attempt of the publishing run is the same commit, workflow and builder,
   // and a partial re-run of `registry-verify` carries a later attempt number than
@@ -64,27 +66,47 @@ const verifyPackage = ({ audit, candidate, commit, runId }) => {
     new RegExp(`^${REPOSITORY}/actions/runs/${runId}/attempts/[1-9]\\d*$`, 'u').test(
       statement.predicate?.runDetails?.metadata?.invocationId ?? '',
     ),
-    `${candidate.name} has the wrong workflow invocation`,
+    `${packed.name} has the wrong workflow invocation`,
   );
 };
 
-export const verifyReleaseAttestations = ({ audit, manifest, commit, runId }) => {
+const verifyPackageSet = (tarballs, expectedNames) => {
+  const packed = Object.keys(tarballs.packages);
+  const expected = new Set(expectedNames);
+  const missing = [...expected].filter((name) => !packed.includes(name)).sort(byText);
+  const extra = packed.filter((name) => !expected.has(name)).sort(byText);
+  assert(
+    missing.length === 0 && extra.length === 0,
+    `packed set differs from the configured target set; missing=[${missing.join(', ')}] extra=[${extra.join(', ')}]`,
+  );
+  for (const [name, entry] of Object.entries(tarballs.packages)) {
+    assert(
+      entry.version === tarballs.version,
+      `${name} is recorded at ${entry.version}, not the release version ${tarballs.version}`,
+    );
+  }
+};
+
+export const verifyReleaseAttestations = ({ audit, commit, expectedNames, runId, tarballs }) => {
   assert((audit.invalid ?? []).length === 0, 'npm reported invalid signatures');
   assert((audit.missing ?? []).length === 0, 'npm reported missing signatures');
-  for (const candidate of manifest.packages) {
-    verifyPackage({ audit, candidate, commit, runId });
+  if (expectedNames) verifyPackageSet(tarballs, expectedNames);
+  for (const [name, entry] of Object.entries(tarballs.packages)) {
+    verifyPackage({ audit, packed: { name, ...entry }, commit, runId });
   }
 };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const [auditPath, manifestPath, commit, runId] = process.argv.slice(2);
-    assert(auditPath && manifestPath && commit && runId, 'expected audit, manifest, commit, run');
+    const [auditPath, tarballsPath, commit, runId] = process.argv.slice(2);
+    assert(auditPath && tarballsPath && commit && runId, 'expected audit, tarballs, commit, run');
+    const { manifest, packages } = readNapiTargets(new URL('../package.json', import.meta.url));
     verifyReleaseAttestations({
       audit: JSON.parse(readFileSync(auditPath, 'utf8')),
-      manifest: JSON.parse(readFileSync(manifestPath, 'utf8')),
       commit,
+      expectedNames: [manifest.name, ...packages.map(({ name }) => name)],
       runId,
+      tarballs: JSON.parse(readFileSync(tarballsPath, 'utf8')),
     });
     process.stdout.write('release provenance matches taucad/nanoraster ci.yml\n');
   } catch (error) {

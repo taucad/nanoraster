@@ -4,7 +4,10 @@ import path from 'node:path';
 // explicit admission. 2026-08-20: +6 for the handles-first surface
 // (create-renderer, raw-pixels, describe-adapter modules). 2026-08-22: -2 as
 // `format: 'raw'` folded the raw-pixels module into the image paths.
-const PACKAGE_FILE_COUNT_CEILING = 30;
+// 2026-08-22: +4 for the Node entry point behind the `node` export condition
+// (index.node.mjs, its declarations, native-backend.mjs) and the generated
+// NAPI-RS loader it imports (native/index.js).
+const PACKAGE_FILE_COUNT_CEILING = 34;
 
 export const PACKAGE_FILES = [
   'BREAKING_CHANGES.md',
@@ -22,6 +25,10 @@ export const PACKAGE_FILES = [
   'dist/image-file.mjs',
   'dist/index.d.mts',
   'dist/index.mjs',
+  'dist/index.node.d.mts',
+  'dist/index.node.mjs',
+  'dist/native-backend.mjs',
+  'dist/native/index.js',
   'dist/options.d.mts',
   'dist/options.mjs',
   'dist/render-error.d.mts',
@@ -43,8 +50,16 @@ export const validatePackageFiles = (files) => {
   const normalized = files.map((file) => file.replaceAll(path.sep, '/')).sort();
   const missing = PACKAGE_FILES.filter((file) => !normalized.includes(file));
   const extra = normalized.filter((file) => !PACKAGE_FILES.includes(file));
+  // `napi artifacts` copies every addon into the package root as well as into
+  // its platform directory, and the generated loader declarations are a build
+  // input: neither may ever reach the root tarball.
   const forbidden = normalized.filter(
-    (file) => file.endsWith('.rs') || file.endsWith('.d.ts.map') || file.includes('/target/'),
+    (file) =>
+      file.endsWith('.rs') ||
+      file.endsWith('.node') ||
+      file.endsWith('.d.ts.map') ||
+      file === 'dist/native/index.d.ts' ||
+      file.includes('/target/'),
   );
 
   if (

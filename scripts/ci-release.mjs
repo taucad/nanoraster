@@ -6,14 +6,16 @@ import { fileURLToPath } from 'node:url';
 const SHA = /^[0-9a-f]{40}$/u;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const RELEASE_SUBJECT = /^chore\(release\): nanoraster v(.+?)(?: \(#\d+\))?$/u;
-const RELEASE_FILES = new Set([
-  'CHANGELOG.md',
-  'npm/darwin-arm64/package.json',
-  'npm/linux-x64-gnu/package.json',
-  'npm/win32-x64-msvc/package.json',
-  'package.json',
-  'pnpm-lock.yaml',
-]);
+/** Files a root release always rewrites. */
+export const RELEASE_FILES = new Set(['CHANGELOG.md', 'package.json']);
+/**
+ * Bumping only the root version leaves `pnpm-lock.yaml` byte-identical: the
+ * lockfile records no importer version, and the native platform packages are
+ * generated at release assembly rather than declared in source. The lockfile is
+ * therefore permitted in a release commit but never required. Every other path
+ * — a generated platform manifest above all — is unexpected.
+ */
+const ALLOWED_FILES = new Set([...RELEASE_FILES, 'pnpm-lock.yaml']);
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -30,7 +32,7 @@ const validateRelease = ({ changedFiles, changelog, packageVersion, subject }) =
     assert(changedFiles.includes(file), `release commit must change ${file}`);
   }
   assert(changedFiles.some(isVersionPlan), 'release commit must consume a Version Plan');
-  const unexpected = changedFiles.filter((file) => !RELEASE_FILES.has(file) && !isVersionPlan(file));
+  const unexpected = changedFiles.filter((file) => !ALLOWED_FILES.has(file) && !isVersionPlan(file));
   assert(unexpected.length === 0, `release commit has unexpected files: ${unexpected.join(', ')}`);
   assert(
     changelog
@@ -40,6 +42,15 @@ const validateRelease = ({ changedFiles, changelog, packageVersion, subject }) =
   );
 };
 
+/**
+ * Classify one CI run: what evidence it owes, and whether it may publish.
+ *
+ * Publication has exactly one source — a `push` of an exact release commit to
+ * `refs/heads/main`. A `workflow_dispatch` is evidence only, from any ref: it
+ * exists so a pull request can prove the slow emulated and virtualized smoke
+ * lanes before merge, so it never publishes and never derives `release`, not
+ * even from main and not even when the head commit is a release commit.
+ */
 export const deriveRelease = ({
   event,
   ref,
@@ -62,7 +73,9 @@ export const deriveRelease = ({
     };
   }
 
-  assert(event === 'push' || event === 'workflow_dispatch', `unsupported event: ${event}`);
+  if (event === 'workflow_dispatch') return { kind: 'dispatch', npmPublish: false, version: packageVersion };
+
+  assert(event === 'push', `unsupported event: ${event}`);
   assert(ref === 'refs/heads/main', `publication source must be protected main: ${ref}`);
   if (!release) {
     assert(!subject.startsWith('chore(release): nanoraster v'), `malformed release subject: ${subject}`);

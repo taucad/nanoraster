@@ -18,21 +18,36 @@ const SHIPPED_GLUE = [
 ];
 
 describe('npm package file contract', () => {
-  it('accepts exactly the public package files', () => {
+  it('should accept exactly the public package files', () => {
     expect(validatePackageFiles([...PACKAGE_FILES].reverse())).toEqual(PACKAGE_FILES);
   });
 
-  it('rejects missing, extra, and source files', () => {
+  it('should ship the generated loader and the Node entry point', () => {
+    expect(PACKAGE_FILES).toContain('dist/native/index.js');
+    expect(PACKAGE_FILES).toContain('dist/index.node.mjs');
+    expect(PACKAGE_FILES).toContain('dist/index.node.d.mts');
+    // The loader declarations are a build input, not shipped output.
+    expect(PACKAGE_FILES).not.toContain('dist/native/index.d.ts');
+  });
+
+  it('should reject missing, extra, and source files', () => {
     expect(() => validatePackageFiles(PACKAGE_FILES.slice(1))).toThrow('missing=[');
     expect(() => validatePackageFiles([...PACKAGE_FILES, 'dist/accidental.txt'])).toThrow('extra=[');
     expect(() => validatePackageFiles([...PACKAGE_FILES, 'rust/src/lib.rs'])).toThrow(
       'forbidden=[rust/src/lib.rs]',
     );
   });
+
+  it.each(['nanoraster.darwin-arm64.node', 'dist/nanoraster.linux-x64-gnu.node', 'dist/native/index.d.ts'])(
+    'should reject %s in the root tarball',
+    (file) => {
+      expect(() => validatePackageFiles([...PACKAGE_FILES, file])).toThrow(`forbidden=[${file}]`);
+    },
+  );
 });
 
 describe('shipped wasm surface', () => {
-  it.each(SHIPPED_GLUE)('leaves the bench surface out of %s', (file) => {
+  it.each(SHIPPED_GLUE)('should leave the bench surface out of %s', (file) => {
     const glue = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
     for (const symbol of GATED_EXPORTS) expect(glue).not.toContain(symbol);
   });

@@ -39,6 +39,11 @@ wgpu = { version = "30.0.0", default-features = false, features = [
   "dx12",
 ] }
 
+# musl only: the two `pthread_*attr_default_np` calls that size the Vulkan
+# driver's own threads. See `raise_default_thread_stack` in `render.rs`.
+[target.'cfg(all(target_os = "linux", target_env = "musl"))'.dependencies]
+libc = "0.2.186"
+
 # Browser: WebGPU backend only — surface-less, no canvas, no WebGL2 fallback.
 # "wgsl" only unlocks the ShaderSource::Wgsl variant here; with wgpu-core
 # absent it pulls no naga compiler into the wasm.

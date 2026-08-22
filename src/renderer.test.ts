@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { RenderError } from '#render-error.js';
+
 const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
-const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
-const originalArchitecture = Object.getOwnPropertyDescriptor(process, 'arch');
 
 const restoreProperty = (
   target: object,
@@ -16,30 +16,45 @@ const restoreProperty = (
   Object.defineProperty(target, key, descriptor);
 };
 
+const exposeWebGpu = (): void => {
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { gpu: {} } });
+};
+
 afterEach(() => {
   restoreProperty(globalThis, 'navigator', originalNavigator);
-  restoreProperty(process, 'platform', originalPlatform);
-  restoreProperty(process, 'arch', originalArchitecture);
-  vi.doUnmock('node:module');
   vi.doUnmock('./wasm/render_wasm.js');
   vi.resetModules();
 });
 
-describe('nativePackageName', () => {
-  it('maps every published native target and rejects the rest', async () => {
-    const { nativePackageName } = await import('#renderer.js');
+describe('native backend installation', () => {
+  it('should route to the addon only once a backend is installed and no WebGPU is exposed', async () => {
+    const { installNativeBackend, usesNativeBackend } = await import('#renderer.js');
 
-    expect(nativePackageName('darwin', 'arm64')).toBe('nanoraster-darwin-arm64');
-    expect(nativePackageName('linux', 'x64')).toBe('nanoraster-linux-x64-gnu');
-    expect(nativePackageName('win32', 'x64')).toBe('nanoraster-win32-x64-msvc');
-    expect(nativePackageName('freebsd', 'x64')).toBeUndefined();
+    expect(usesNativeBackend()).toBe(false);
+
+    installNativeBackend(async () => ({ createRenderer: vi.fn(), describeAdapter: vi.fn() }));
+    expect(usesNativeBackend()).toBe(true);
+
+    exposeWebGpu();
+    expect(usesNativeBackend()).toBe(false);
+  });
+
+  it('should reject the adapter probe with adapter-unavailable when no backend is installed', async () => {
+    const { describeAdapterRaw } = await import('#renderer.js');
+
+    try {
+      await describeAdapterRaw(undefined);
+      expect.fail('the universal entry point has no addon to probe');
+    } catch (error) {
+      expect((error as Error).name).toBe('RenderError');
+      expect((error as { code: string }).code).toBe('adapter-unavailable');
+      expect((error as Error).message).toContain('no native addon is installed');
+    }
   });
 });
 
 describe('renderer binding selection', () => {
-  it('loads and caches the native package in Node', async () => {
-    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' });
-    Object.defineProperty(process, 'arch', { configurable: true, value: 'arm64' });
+  it('should load and cache the installed addon in Node', async () => {
     const nativeRenderer = {
       renderImage: vi.fn(() => Promise.resolve(new Uint8Array([21]))),
       renderImages: vi.fn(() => Promise.resolve({ images: [new Uint8Array([22])], timings: null })),
@@ -50,9 +65,9 @@ describe('renderer binding selection', () => {
       createRenderer: vi.fn(() => Promise.resolve(nativeRenderer)),
       describeAdapter: vi.fn(async () => '{"backend":"metal","name":"Test","deviceType":"integrated-gpu"}'),
     };
-    const require = vi.fn(() => native);
-    vi.doMock('node:module', () => ({ createRequire: vi.fn(() => require) }));
-    const { createRendererRaw, describeAdapterRaw } = await import('#renderer.js');
+    const load = vi.fn(async () => native);
+    const { createRendererRaw, describeAdapterRaw, installNativeBackend } = await import('#renderer.js');
+    installNativeBackend(load);
     const glb = new Uint8Array([9]);
 
     await expect(describeAdapterRaw('{"powerPreference":"low-power"}')).resolves.toBe(
@@ -68,12 +83,12 @@ describe('renderer binding selection', () => {
     expect(nativeRenderer.trimTargets).toHaveBeenCalledOnce();
     handle.dispose();
     expect(nativeRenderer.dispose).toHaveBeenCalledOnce();
-    expect(require).toHaveBeenCalledOnce();
-    expect(require).toHaveBeenCalledWith('nanoraster-darwin-arm64');
+    // The addon is loaded once and memoized across the probe and the renderer.
+    expect(load).toHaveBeenCalledOnce();
   });
 
-  it('loads and initializes the WASM package when WebGPU is exposed', async () => {
-    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { gpu: {} } });
+  it('should load and initialize the WASM package when WebGPU is exposed', async () => {
+    exposeWebGpu();
     const initialize = vi.fn((_options: { module_or_path: URL }) => Promise.resolve(undefined));
     const wasmRenderer = {
       render_image: vi.fn(() => Promise.resolve(new Uint8Array([31]))),
@@ -88,7 +103,12 @@ describe('renderer binding selection', () => {
       default: initialize,
       Renderer: { create },
     }));
-    const { createRendererRaw, isNodeRuntime, renderManyRaw, renderRaw } = await import('#renderer.js');
+    const { createRendererRaw, installNativeBackend, renderManyRaw, renderRaw, usesNativeBackend } =
+      await import('#renderer.js');
+    // An installed addon loses to `navigator.gpu`, so a WebGPU-capable Node
+    // runtime keeps the same artifact a browser gets.
+    const load = vi.fn(async () => ({ createRenderer: vi.fn(), describeAdapter: vi.fn() }));
+    installNativeBackend(load);
     const glb = new Uint8Array([9]);
 
     // The browser artifact shares one renderer for one-shot calls too.
@@ -99,9 +119,8 @@ describe('renderer binding selection', () => {
     });
     expect(create).toHaveBeenCalledOnce();
     expect(wasmRenderer.trim_targets).toHaveBeenCalledTimes(2);
-    // The adapter probe never reaches this artifact: browsers read
-    // `navigator.gpu` in TypeScript instead.
-    expect(isNodeRuntime()).toBe(false);
+    expect(load).not.toHaveBeenCalled();
+    expect(usesNativeBackend()).toBe(false);
 
     const handle = await createRendererRaw(undefined);
     expect(create).toHaveBeenLastCalledWith(undefined);
@@ -118,9 +137,7 @@ describe('renderer binding selection', () => {
     );
   });
 
-  it('shares one lazy renderer across concurrent one-shot calls', async () => {
-    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' });
-    Object.defineProperty(process, 'arch', { configurable: true, value: 'arm64' });
+  it('should share one lazy renderer across concurrent one-shot calls', async () => {
     // Mirrors the wasm class contract: overlapping calls on one renderer are a
     // hard error, so an unserialized façade fails loudly here.
     let busy = false;
@@ -140,13 +157,11 @@ describe('renderer binding selection', () => {
       dispose: vi.fn(),
     };
     const native = {
-      renderImage: vi.fn(() => Promise.resolve(new Uint8Array([1]))),
-      renderImages: vi.fn(() => Promise.resolve({ images: [new Uint8Array([2])], timings: null })),
       createRenderer: vi.fn(() => Promise.resolve(nativeRenderer)),
       describeAdapter: vi.fn(async () => 'Metal / Test (IntegratedGpu)'),
     };
-    vi.doMock('node:module', () => ({ createRequire: vi.fn(() => vi.fn(() => native)) }));
-    const { renderManyRaw, renderRaw } = await import('#renderer.js');
+    const { installNativeBackend, renderManyRaw, renderRaw } = await import('#renderer.js');
+    installNativeBackend(async () => native);
     const glb = new Uint8Array([9]);
 
     await expect(
@@ -164,15 +179,12 @@ describe('renderer binding selection', () => {
     ]);
     expect(native.createRenderer).toHaveBeenCalledOnce();
     expect(native.createRenderer).toHaveBeenCalledWith(undefined);
-    expect(native.renderImage).not.toHaveBeenCalled();
     // The one-shot guard runs after every call, so an oversized target set
     // never outlives the render that needed it.
     expect(nativeRenderer.trimTargets).toHaveBeenCalledTimes(4);
   });
 
-  it('retries the shared renderer after a failed bring-up', async () => {
-    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' });
-    Object.defineProperty(process, 'arch', { configurable: true, value: 'arm64' });
+  it('should retry the shared renderer after a failed bring-up', async () => {
     const nativeRenderer = {
       renderImage: vi.fn(() => Promise.resolve(new Uint8Array([21]))),
       renderImages: vi.fn(),
@@ -183,10 +195,8 @@ describe('renderer binding selection', () => {
       .fn()
       .mockRejectedValueOnce(new Error('gpu: request_device failed'))
       .mockResolvedValueOnce(nativeRenderer);
-    vi.doMock('node:module', () => ({
-      createRequire: vi.fn(() => vi.fn(() => ({ createRenderer, describeAdapter: vi.fn() }))),
-    }));
-    const { renderRaw } = await import('#renderer.js');
+    const { installNativeBackend, renderRaw } = await import('#renderer.js');
+    installNativeBackend(async () => ({ createRenderer, describeAdapter: vi.fn() }));
     const glb = new Uint8Array([9]);
 
     await expect(renderRaw(glb, '{}')).rejects.toThrow('gpu: request_device failed');
@@ -194,34 +204,11 @@ describe('renderer binding selection', () => {
     expect(createRenderer).toHaveBeenCalledTimes(2);
   });
 
-  it('reports an unpublished native target without attempting require', async () => {
-    Object.defineProperty(process, 'platform', { configurable: true, value: 'freebsd' });
-    Object.defineProperty(process, 'arch', { configurable: true, value: 'x64' });
-    const require = vi.fn();
-    vi.doMock('node:module', () => ({ createRequire: vi.fn(() => require) }));
-    const { renderRaw } = await import('#renderer.js');
+  it('should surface an addon load failure to the caller', async () => {
+    const failure = new RenderError('adapter-unavailable', 'adapter-unavailable: no binding');
+    const { installNativeBackend, renderRaw } = await import('#renderer.js');
+    installNativeBackend(() => Promise.reject(failure));
 
-    await expect(renderRaw(new Uint8Array(0), '{}')).rejects.toMatchObject({
-      code: 'adapter-unavailable',
-      message: 'native render addon is not published for freebsd-x64',
-    });
-    expect(require).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    [new Error('missing'), 'missing'],
-    ['raw failure', 'raw failure'],
-  ])('contains a failed native package load: %#', async (failure, detail) => {
-    vi.doMock('node:module', () => ({
-      createRequire: vi.fn(() => () => {
-        throw failure;
-      }),
-    }));
-    const { renderRaw } = await import('#renderer.js');
-
-    await expect(renderRaw(new Uint8Array(0), '{}')).rejects.toMatchObject({
-      code: 'adapter-unavailable',
-      message: expect.stringContaining(detail),
-    });
+    await expect(renderRaw(new Uint8Array(0), '{}')).rejects.toBe(failure);
   });
 });
