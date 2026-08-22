@@ -90,6 +90,18 @@
   white-space: nowrap;
 }
 
+.badge:has(.status) {
+  display: grid;
+  grid-template-columns: 10ch minmax(0, 1fr) 10ch;
+  align-items: baseline;
+}
+
+.badge:has(.status) .evidence {
+  grid-column: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Sheet tiles are half-width; keep the badge on one line there. */
 .tile .badge {
   font-size: 0.6rem;
@@ -186,10 +198,8 @@
 }
 
 .status {
-  margin: 0;
-  color: var(--color-fd-muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.68rem;
+  grid-column: 3;
+  justify-self: end;
 }
 
 /* A panel with the whole option surface on it (the homepage) runs past the
