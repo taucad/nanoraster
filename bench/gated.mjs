@@ -1,11 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 
 // `codecConformance` lives behind the default-off `bench` cargo feature, so the
 // benchmark runs on the feature-enabled sibling addon built by
 // `pnpm run build:napi:bench` — same source, same release profile, but never
-// packed into a platform package.
-const native = createRequire(import.meta.url)('../tests/out/native-bench/nanoraster.node');
+// packed into a platform package. Its generated loader finds the suffixed
+// binary colocated beside it.
+const native = await import('../tests/out/native-bench/index.js');
 const glb = readFileSync(new URL('../tests/fixtures/gear-12.glb', import.meta.url));
 const options = JSON.stringify({ width: 512, height: 384, format: 'png' });
 const iterations = 15;

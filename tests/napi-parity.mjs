@@ -1,27 +1,19 @@
 // S2 smoke test: load the napi addon, render the gear fixture on the native
 // GPU (Metal locally; lavapipe/WARP in CI), and assert the PNG shape.
-// createRequire is the sanctioned way to load a .node addon from ESM.
+// The addon arrives through the NAPI-RS generated loader that `build:napi`
+// writes beside the host binary, which is what a consumer resolves too.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // The façade is imported for exactly one section: the concurrent visual
 // ladder, which exists to exercise its shared one-shot renderer. Everything
 // else here calls the addon directly, on purpose.
-import { renderImage } from '#index.js';
+import { renderImage } from '#index.node.js';
 
 import { withPbrFactors } from './pbr-fixture.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const requireNative = createRequire(import.meta.url);
-const nativePackage = {
-  'darwin-arm64': 'nanoraster-darwin-arm64',
-  'linux-x64': 'nanoraster-linux-x64-gnu',
-  'win32-x64': 'nanoraster-win32-x64-msvc',
-}[`${process.platform}-${process.arch}`];
-if (nativePackage === undefined)
-  throw new Error(`unsupported native target: ${process.platform}-${process.arch}`);
 const native =
   /**
    * @type {{
@@ -34,7 +26,7 @@ const native =
    *   }>,
    *   describeAdapter: (optionsJson?: string) => Promise<string | null>,
    * }}
-   */ (requireNative(nativePackage));
+   */ (await import('../src/native/index.js'));
 
 // The benchmark surface is behind the default-off `bench` cargo feature, so the
 // addon this suite loads — the one `npm pack` ships — must not carry it.
