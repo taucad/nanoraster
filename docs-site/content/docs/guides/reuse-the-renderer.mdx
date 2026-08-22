@@ -4,24 +4,23 @@ description: Keep one GPU device alive across renders with createRenderer, dispo
 ---
 
 Bringing up a GPU device — instance, adapter, device, shader, pipelines — costs
-more than most renders do. The module-level functions pay it once: the first
-one-shot call in a process creates a renderer, and every later call reuses it.
-Measured on an Apple M2 Pro at 768×576, the first call takes 27 ms and the ones
-after it 3.4 ms. Those calls also run one at a time, in call order, so
-`Promise.all` over a batch of one-shot renders is safe rather than a race for
-the GPU.
+more than most renders. The module-level functions pay it once per process: the
+first call creates a renderer and later calls reuse it. Measured on an Apple M2
+Pro at 768×576, the first call takes 27 ms and later calls 3.4 ms. Those calls
+also run one at a time, in call order, so `Promise.all` over one-shot renders
+is safe.
 
-What that shared renderer does not give you is control: it is created with the
-default `'high-performance'` power preference, and it lives until the process
-or worker exits. `createRenderer` is how you choose otherwise.
+The shared renderer gives you no control over that device: it uses the default
+`'high-performance'` power preference and lives until the process or worker
+exits. Use `createRenderer` when you need to choose.
 
 ### 1. Decide which tool fits the shape of the work
 
 Three things amortize the device, and they compose:
 
-- **The module-level functions** already share one renderer per process. A
-  script, a one-off, a service that renders whatever arrives next on default
-  settings — reach for `renderImage` and stop here.
+- **The module-level functions** already share one renderer per process. For
+  a script, a one-off, or a service that renders whatever arrives next on
+  default settings, use `renderImage` and stop here.
 - **One `renderImages` call** additionally parses and uploads the GLB once
   and pipelines the views: six warm one-shot renders take about three times as
   long as the same six views in one plan call. If you can write the full list
@@ -41,8 +40,8 @@ product — thumbnails, CI baselines, publications, agent captures.
 
 `createRenderer` resolves to a handle whose render methods mirror the
 module-level functions exactly — same options, same results, byte-identical
-pixels on the same adapter. Its device is its own: it neither joins nor waits
-on the queue the module-level functions share.
+pixels on the same adapter. Its device is separate: it does not share the
+queue the module-level functions use.
 
 ```typescript
 import { createRenderer } from 'nanoraster';
@@ -62,11 +61,11 @@ share a handle without interleaving GPU state.
 
 ### 3. Dispose deliberately
 
-The renderer holds a real GPU device until you release it, and so does the one
-the module-level functions share — that one has no release valve, by design:
-hold a renderer of your own when the lifetime matters. Tie it to the worker or
-process that owns it — dispose on shutdown, or on an idle timer if the host
-keeps workers warm.
+The renderer holds a GPU device until you release it. The shared renderer
+behind the module-level functions has no release at all, by design, so hold
+your own renderer when the lifetime matters. Tie it to the worker or process
+that owns it: dispose on shutdown, or on an idle timer if the host keeps
+workers warm.
 
 ```typescript
 using renderer = await createRenderer();

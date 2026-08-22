@@ -44,8 +44,8 @@ tone maps with the ACES filmic curve, then draws authored edge lines. Failures h
 represent, such as a transparent JPEG, fails as `encode`. Because the failure
 code names the stage that rejected the work, the
 [retry decision](guides/handle-render-failures) is mechanical rather than a
-guess. `format: 'raw'` is this stage doing nothing: the frame comes back as it
-was read, which [Work with raw pixels](guides/work-with-raw-pixels) covers.
+guess. With `format: 'raw'` this stage is skipped and the frame is returned as
+read back; see [Work with raw pixels](guides/work-with-raw-pixels).
 
 [`renderImages`](api#renderimages) parses and uploads once, then fits,
 rasterises and encodes once per view. A timed call's
@@ -75,10 +75,10 @@ What a renderer keeps between calls: the device and queue, the shader module,
 one pipeline set per stroke width it has seen, and the render targets for the
 last output size. What stays per call: parsing, camera fitting, and the
 geometry upload — each call brings its own GLB. The one-shot functions are the
-same pathway with the lifetime folded in: they share one renderer per process,
-created on the first call, serialized in call order, and never disposed. It
-drops render targets above 2048² after each call, so one enormous render
-cannot pin that memory for the life of the process.
+same pathway through one shared renderer per process. It is created on the
+first call, runs calls in order, and is never disposed. After each call it
+drops render targets larger than 2048², so one very large render does not
+hold that memory for the rest of the process.
 
 Reuse changes no pixels. Device and target reuse skip re-creation, not
 arithmetic, so a warm renderer's output is byte-identical to the one-shot
@@ -121,14 +121,13 @@ For byte-exact comparison in CI, pin the runner image as well as the options.
 Treat cross-host differences as expected and compare perceptually rather than
 by hash.
 
-Any [lossless format](guides/format-and-annotate) serves as a baseline — PNG,
-or WebP at its default `quality: 1` — because both decode to the same pixels.
-What a byte-locked baseline also locks is the encoder: nanoraster's WebP
-encoder is a maintained fork whose lossless bytes can move in a release, so a
-version bump resets the baseline whichever format you chose, exactly as a
-render fix does. [`format: 'raw'`](guides/work-with-raw-pixels) is the
-comparison with no encoder in it at all: a diff over the frames themselves
-can only report the render.
+Any [lossless format](guides/format-and-annotate) works as a baseline: PNG,
+or WebP at the default `quality: 1`, both decode to the same pixels. A
+byte-locked baseline also locks the encoder. nanoraster's WebP encoder is a
+maintained fork whose lossless bytes can change in a release, so a version
+bump resets the baseline whichever format you chose, as a render fix
+does. [`format: 'raw'`](guides/work-with-raw-pixels) removes the encoder from
+the comparison: a diff over the frames can only report the render.
 
 ## Material model
 

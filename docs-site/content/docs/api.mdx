@@ -35,18 +35,16 @@ one entry per image, in result order, where each view may override the shared
 output settings. It also accepts `timings: true` to attach stage timings to the
 result.
 
-`format: 'raw'` is the fourth output: the encoder is skipped and `bytes` is the
-frame itself. It takes every other option unchanged, may be set per view, and
-so may sit beside encoded views in one plan call —
-[Work with raw pixels](guides/work-with-raw-pixels) covers when that is what you
-want.
+`format: 'raw'` skips the encoder, and `bytes` is the frame itself. Every other
+option applies unchanged. It can be set per view, so a plan can mix raw and
+encoded views; see [Work with raw pixels](guides/work-with-raw-pixels).
 
 ## Render
 
 ### `renderImage`
 
-Render one GLB camera view to one owned output file — encoded, or the raw
-frame itself with `format: 'raw'`.
+Render one GLB camera view to one owned output: an encoded file, or the raw
+frame with `format: 'raw'`.
 
 ```typescript
 export declare const renderImage: (
@@ -108,10 +106,10 @@ const [iso, front] = await renderImages(glb, {
 
 ## Renderer reuse
 
-Every one-shot function above shares one lazily created renderer per process,
-so only the first call pays the GPU bring-up and the calls run in sequence.
+The one-shot functions above share one lazily created renderer per process,
+so only the first call pays the GPU bring-up, and the calls run in sequence.
 That renderer uses the default power preference and lives until the process
-exits; create your own for a lifetime you control —
+exits; create your own when you need to control its lifetime —
 [Reuse the renderer](guides/reuse-the-renderer) covers when and how.
 
 ### `createRenderer`
@@ -190,9 +188,9 @@ matters — [Handle render failures](guides/handle-render-failures) shows the
 pattern.
 
 Native hosts report the full device class. Browsers report `'unknown'` unless
-the adapter is a declared fallback, because WebGPU deliberately withholds it;
-a browser with only software support usually hands out no adapter at all, so
-`describeAdapter` rejects with `adapter-unavailable` instead of describing one.
+the adapter declares itself a fallback, because WebGPU withholds the device
+class. A browser with only software support usually returns no adapter at
+all, so `describeAdapter` rejects with `adapter-unavailable`.
 
 ### `AdapterInfo`
 
@@ -204,8 +202,8 @@ Passing an object literal straight to a render call keeps every literal type.
 Assigning it to a variable first does not: TypeScript widens `'webp'` to
 `string` and the view IDs with it, so the result tuple loses its names. Write
 `as const satisfies` on the variable to keep the literals and still have the
-keys checked. There is no helper to import and nothing is added to the bundle
-— the whole thing is compile-time.
+keys checked. Nothing is imported or added to the bundle; the check is
+compile-time only.
 
 ```typescript
 import { renderImages, type RenderImagesOptions } from 'nanoraster';
@@ -290,9 +288,9 @@ view tuples, and per-view settings placed at call level are compile errors.
 `NoExtraKeys`, `StrictViews`, and `StrictLighting` are the internal
 compile-time checks behind it, with no runtime form.
 
-Callers write plain `RenderImagesOptions` object literals and never name this
-type — reach for it only to forward the plan call through your own generic
-wrapper, where the parameter type has to be spelled out:
+Callers pass plain `RenderImagesOptions` literals and never need to name this
+type. Use it only when you forward the plan call through a generic wrapper of
+your own and must spell out the parameter type:
 
 ```typescript
 import { renderImages, type RenderImagesOptions, type StrictRenderImagesOptions } from 'nanoraster';
@@ -334,17 +332,16 @@ channel within `renderImageLightColorRange`.
 
 ### `RenderedImageFile`
 
-Returned directly by [`renderImage`](#renderimage), and on the `file` of every
-batch entry. `width` and `height` are the shape the request resolved to, so a
-result needs no second lookup to be read, diffed, or uploaded.
+Returned by [`renderImage`](#renderimage), and as the `file` of every batch
+entry. `width` and `height` are the dimensions the request resolved to, so a
+result can be read, diffed or uploaded without a second lookup.
 
 With `format: 'raw'`, `bytes` is the frame rather than an encoded file:
 straight-alpha, sRGB-encoded RGBA8, exactly `width * height * 4` bytes,
-row-major with the top row first, four bytes per pixel and no padding — the
-layout a canvas `ImageData` expects after a `Uint8ClampedArray` wrap, and
-`mimeType` is `application/octet-stream`. Neighbouring libraries make other
-choices, so [Work with raw pixels](guides/work-with-raw-pixels) sets this
-layout against them.
+row-major with the top row first and no padding — the layout a canvas
+`ImageData` accepts after a `Uint8ClampedArray` wrap — and `mimeType` is
+`application/octet-stream`. Other libraries choose different layouts;
+[Work with raw pixels](guides/work-with-raw-pixels) compares them.
 
 <auto-type-table path="./props.ts" name="RenderedImageFile" caption="RenderedImageFile properties" />
 
@@ -402,11 +399,11 @@ console.log(top.id, top.file.name); // 'top' 'render-top.webp'
 
 ### `RenderedImagesResult`
 
-What [`renderImages`](#renderimages) and `Renderer.renderImages` actually
-resolve to: the [`RenderedImages`](#renderedimages) tuple, and — only when the
-options literal set `timings: true` — a [`RenderTimings`](#rendertimings) on
-its `timings` property. Reading `timings` without having asked for it is a
-compile error, so the flag and the field cannot drift apart.
+What [`renderImages`](#renderimages) and `Renderer.renderImages` resolve to:
+the [`RenderedImages`](#renderedimages) tuple, plus a
+[`RenderTimings`](#rendertimings) on its `timings` property when the options
+literal set `timings: true`. Reading `timings` without having requested it is
+a compile error.
 
 ```typescript
 import { renderImages, type RenderedImagesResult, type RenderImagesOptions } from 'nanoraster';
@@ -440,8 +437,7 @@ order.
 ### `imageMimeTypes`
 
 The readonly runtime map of every accepted output format to its emitted MIME
-type. `raw` is in it because a frame is still a payload with a type, even
-though nothing encoded it.
+type. `raw` maps to `application/octet-stream`.
 
 ```typescript
 export declare const imageMimeTypes: {

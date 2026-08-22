@@ -1,31 +1,31 @@
 ---
 title: Work with raw pixels
-description: Return a raw RGBA buffer from a render instead of an encoded file, and use it for pixel diffs, turntable video frames, textures and tensors — with no image decoder in Node.
+description: Return the raw RGBA frame instead of an encoded file, and hand it to pixel diffs, video encoders, textures and tensors without an image decoder in Node.
 ---
 
-`format: 'raw'` stops the pipeline after readback and hands you the frame
-itself. Reach for it when the next step wants pixels rather than a file: a
+`format: 'raw'` stops after readback and returns the frame instead of an
+encoded file. Use it when the next step needs pixels rather than a file: a
 pixel diff, a video or GIF frame, a texture upload, a tensor, a hash.
 
 ### 1. Know why an encoded file is a dead end in Node
 
-Node ships no image decoder. There is no `ImageData`, no `ImageBitmap`, no
-`createImageBitmap` and no canvas among its
-[globals](https://nodejs.org/docs/latest-v24.x/api/globals.html), so a PNG or
-WebP arriving in a Node process is a container nothing there can open. An
-encoded file is where the pixels stop.
+Node has no image decoder. Its
+[globals](https://nodejs.org/docs/latest-v24.x/api/globals.html) include no
+`ImageData`, `ImageBitmap`, `createImageBitmap` or canvas, so a Node process
+cannot open the PNG or WebP a renderer hands it. To get pixels back you add a
+decoder, and decoders are large: sharp installs about 19.6 MB of libvips
+prebuilds, node-canvas 7 to 21 MB plus a download at install time,
+`@napi-rs/image` about 17.7 MB, and jimp 3.3 MB across 27 packages. Only the
+[@jsquash](https://github.com/jamsinclair/jSquash) WebAssembly codecs stay
+under a megabyte.
 
-Undoing the encode means adding a decoder, and decoders are large: sharp
-carries about 19.6 MB of libvips prebuilds, node-canvas 7 to 21 MB plus an
-install-time download, `@napi-rs/image` about 17.7 MB, jimp 3.3 MB across 27
-packages. Only the [@jsquash](https://github.com/jamsinclair/jSquash)
-WebAssembly codecs stay under a megabyte. A lossy round trip is not
-pixel-exact either, so a hash or a palette taken after one describes the
-encoder's output rather than the render.
+A lossy round trip also changes the pixels, so a hash or a palette computed
+after one describes the encoder's output, not the render. `format: 'raw'`
+skips the encode, so there is nothing to decode.
 
-### 2. Read the layout, which is not the obvious one
+### 2. Know the layout
 
-`bytes` is straight-alpha — un-premultiplied — sRGB RGBA8: exactly
+`bytes` holds straight-alpha (not premultiplied) sRGB RGBA8: exactly
 `width * height * 4` bytes, row-major, top row first, four bytes per pixel, no
 padding. A 640×480 render is 1,228,800 bytes.
 
@@ -39,27 +39,29 @@ const { bytes, width, height } = await renderImage(glb, {
 });
 ```
 
-Every clause there is load-bearing, because the neighbours disagree with each
-other. resvg-js returns a premultiplied `Pixmap` from `.pixels` while its own
-`asPng()` is straight ([resvg-js#123](https://github.com/yisibl/resvg-js/pull/123)).
-node-canvas `toBuffer('raw')` is native-endian BGRA with stride padding, while
-`getImageData` on the same canvas is straight RGBA. headless-gl reads
-bottom-left first. Check the contract before piping one library's buffer into
-another's.
+Each of those terms matters, because other libraries choose differently.
+resvg-js returns premultiplied pixels from `.pixels` while its `asPng()`
+output is straight
+([resvg-js#123](https://github.com/yisibl/resvg-js/pull/123)). node-canvas
+`toBuffer('raw')` returns native-endian BGRA with stride padding, while
+`getImageData` on the same canvas returns straight RGBA. headless-gl reads the
+bottom row first. Check both contracts before piping one library's buffer into
+another.
 
-Otherwise the request is [`RenderImageOptions`](../api#renderimageoptions)
-unchanged — camera, background, lighting and annotations all apply, and
-`quality` is ignored exactly as PNG ignores it. The result is a
-[`RenderedImageFile`](../api#renderedimagefile) like any other, with `name` set
-to `render.raw` and `mimeType` to `application/octet-stream`.
+Everything else about the request is unchanged. Camera, background, lighting
+and annotations apply as in
+[`RenderImageOptions`](../api#renderimageoptions), and `quality` is ignored
+as it is for PNG. The result is an ordinary
+[`RenderedImageFile`](../api#renderedimagefile) with `name` set to
+`render.raw` and `mimeType` to `application/octet-stream`.
 
 ### 3. Diff two renders without a decoder
 
-[pixelmatch](https://github.com/mapbox/pixelmatch) takes two RGBA buffers and
-their shape, and ships no decoder by design. Playwright's own
+[pixelmatch](https://github.com/mapbox/pixelmatch) compares two RGBA buffers
+of a given width and height, and ships no decoder. Playwright's own
 [comparator](https://github.com/microsoft/playwright/blob/main/packages/utils/comparators.ts)
-runs `PNG.sync.read()` before calling it — a decode that exists only to undo an
-encode.
+decodes PNG with `PNG.sync.read()` before calling it; with raw output that
+step disappears.
 
 ```typescript
 import { renderImage } from 'nanoraster';
@@ -73,18 +75,17 @@ const diff = new Uint8Array(baseline.bytes.length);
 const changed = pixelmatch(baseline.bytes, candidate.bytes, diff, baseline.width, baseline.height);
 ```
 
-[Determinism](../how-it-works#determinism) is what makes the count mean
-something: the same request on one host produces the same bytes, so a non-zero
-count is a change in the model or the request. Across hosts, expect a few
-pixels of rasterization difference and set a threshold. A raw baseline also
-answers the question an encoded one leaves open — with no encoder in the
-comparison, a difference can only be the render.
+[Determinism](../how-it-works#determinism) is what makes the count useful:
+the same request on one host produces the same bytes, so a non-zero count
+means the model or the request changed. Across hosts, expect a few pixels of
+rasterization difference and set a threshold. Because no encoder is involved,
+a difference can only come from the render.
 
-### 4. Turn a turntable into video or GIF frames
+### 4. Render a turntable as one plan
 
-A turntable is one [`renderImages`](../api#renderimages) plan of raw views
-rather than a loop: the GLB is parsed and uploaded once, and the views
-pipeline.
+A turntable is one [`renderImages`](../api#renderimages) call with a raw view
+per frame, not a loop of single renders: the GLB is parsed and uploaded once
+and the views pipeline through the GPU.
 
 ```typescript
 import { GIFEncoder, applyPalette, quantize } from 'gifenc';
@@ -106,45 +107,43 @@ gif.finish();
 ```
 
 [gifenc](https://github.com/mattdesl/gifenc) quantizes and writes flat RGBA.
-For video, the same buffers pipe into ffmpeg, where
-[rawvideo](https://ffmpeg.org/ffmpeg-formats.html) is an input format:
+For video, pipe the same buffers into ffmpeg, which accepts
+[rawvideo](https://ffmpeg.org/ffmpeg-formats.html) as an input format:
 
 ```bash
 ffmpeg -f rawvideo -pixel_format rgba -video_size 480x360 -framerate 25 -i pipe:0 turntable.mp4
 ```
 
-The familiar route to a turntable is a screen recorder, a `.mov`, `palettegen`
-and `gifsicle`. This one has no recorder, no intermediate container and no
-display. A plan may also mix formats, so
+A plan can mix formats, so
 `views: [{ id: 'thumb', format: 'webp' }, { id: 'frame', format: 'raw' }]`
-returns the poster and the frames from one call;
-[Render multiple views](render-multiple-views) covers the plan.
+returns a poster and the frames from one call;
+[Render multiple views](render-multiple-views) covers plans in general.
 
-Count the memory before scaling it up. Every view in a plan arrives at once, at
-`width * height * 4` each — 36 frames at 480×360 is 25 MB resident. For a long
-sequence, hold a renderer and write each batch out before asking for the next;
-[Reuse the renderer](reuse-the-renderer) is that loop.
+Mind the memory. Every view in a plan arrives at once, at
+`width * height * 4` bytes each: 36 frames at 480×360 is 25 MB. For a long
+sequence, hold a renderer and write each batch out before requesting the
+next; [Reuse the renderer](reuse-the-renderer) shows that loop.
 
 ### 5. Paint and upload in the browser
 
-A browser has the decoder Node lacks, so what raw saves there is time. The
-buffer is what every pixel sink already accepts:
+A browser can decode images, so in the browser raw output saves time rather
+than a dependency. The buffer goes straight into the pixel APIs:
 
 ```typescript
 const frame = new ImageData(new Uint8ClampedArray(bytes.buffer), width, height);
 canvas.getContext('2d')?.putImageData(frame, 0, 0);
 ```
 
-The 3D paths take it with no wrapper at all —
+The 3D APIs take it unchanged:
 `gl.texImage2D(…, gl.RGBA, gl.UNSIGNED_BYTE, bytes)`, WebGPU
 `queue.writeTexture(destination, bytes, { bytesPerRow: width * 4 }, size)`,
 three.js `new DataTexture(bytes, width, height)`, and WebCodecs
 `new VideoFrame(bytes, { format: 'RGBA', codedWidth: width, codedHeight: height, timestamp })`.
 
-Measured on the tile below at 960×720: 3.5 ms per frame painting the raw
-buffer, against 8.6 ms for lossless WebP through `createImageBitmap`, and
-27.8 ms to encode PNG before any decode. Worth having behind a slider, modest
-in absolute terms, and browser-only.
+Measured on the tile below at 960×720: 3.5 ms per frame to paint the raw
+buffer, 8.6 ms for lossless WebP through `createImageBitmap`, and 27.8 ms to
+encode PNG before decoding it. That is a useful saving behind a slider and a
+small one in absolute terms.
 
 <RenderDemo>
 
@@ -170,29 +169,28 @@ canvas.getContext('2d').putImageData(frame, 0, 0);
 
 </RenderDemo>
 
-That tile is the render itself, painted from the bytes with nothing decoding
-them on the way in, and the badge counts the frame the call returned. None of
-this makes nanoraster a three.js alternative: it ships roughly twice the bytes
-of three.js's WebGPU build, renders stills, and reads every frame back through
-the CPU. Live interaction belongs to a canvas renderer.
+The tile shows the render itself, painted from the bytes with no decode, and
+the badge reports the size and time of the frame the call returned. nanoraster
+is not a three.js replacement: it ships about twice the bytes of three.js's
+WebGPU build, renders stills, and reads every frame back through the CPU. Use
+a canvas renderer for live interaction.
 
 ### 6. Hand the buffer to a library
 
-| Destination                   | The call                                                                                                            | Why raw                                             |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| Composite, resize, atlas      | [`sharp(bytes, { raw: { width, height, channels: 4 } })`](https://sharp.pixelplumbing.com/api-constructor)          | `premultiplied` defaults false, so nothing converts |
-| AVIF, JPEG XL, QOI            | `@jsquash/avif` `encode(imageData)`                                                                                 | Formats nanoraster does not ship                    |
-| TensorFlow.js                 | [`tf.browser.fromPixels({ data: bytes, width, height })`](https://js.tensorflow.org/api/latest/#browser.fromPixels) | `PixelData` is this buffer, named                   |
-| Transformers.js               | `new RawImage(bytes, width, height, 4)`                                                                             | Its own input type                                  |
-| Perceptual hash               | [`bmvbhash({ data: bytes, width, height }, 8)`](https://github.com/commonsmachinery/blockhash-js)                   | 3 KB of code, and no codec to feed it               |
-| Terminal, kitty               | [`f=32` payload, `o=z` via `node:zlib`](https://sw.kovidgoyal.net/kitty/graphics-protocol/)                         | Raw RGBA is the protocol's default                  |
-| Terminal, sixel               | `image2sixel(bytes, width, height)`                                                                                 | Palette-indexed, so every path quantizes from raw   |
-| LED matrix, e-ink, `/dev/fb0` | `drawBuffer(bytes)`                                                                                                 | The device surface is a buffer                      |
+| Destination                   | The call                                                                                                            | Why raw                                                |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Composite, resize, atlas      | [`sharp(bytes, { raw: { width, height, channels: 4 } })`](https://sharp.pixelplumbing.com/api-constructor)          | `premultiplied` defaults to false, so nothing converts |
+| AVIF, JPEG XL, QOI            | `@jsquash/avif` `encode(imageData)`                                                                                 | Formats nanoraster does not ship                       |
+| TensorFlow.js                 | [`tf.browser.fromPixels({ data: bytes, width, height })`](https://js.tensorflow.org/api/latest/#browser.fromPixels) | `PixelData` is this buffer                             |
+| Transformers.js               | `new RawImage(bytes, width, height, 4)`                                                                             | Its own input type                                     |
+| Perceptual hash               | [`bmvbhash({ data: bytes, width, height }, 8)`](https://github.com/commonsmachinery/blockhash-js)                   | 3 KB of code and no codec to feed it                   |
+| Terminal, kitty               | [`f=32` payload, `o=z` via `node:zlib`](https://sw.kovidgoyal.net/kitty/graphics-protocol/)                         | Raw RGBA is the protocol's default                     |
+| Terminal, sixel               | `image2sixel(bytes, width, height)`                                                                                 | Palette-indexed, so every path quantizes from raw      |
+| LED matrix, e-ink, `/dev/fb0` | `drawBuffer(bytes)`                                                                                                 | The device surface is a buffer                         |
 
 ### 7. Encode when the destination wants a file
 
-Reach back for an encoded format whenever the consumer is a document, a wire,
-or a viewer:
+Use an encoded format when the consumer is a document, a wire or a viewer:
 
 - **PDFs.** `pdf-lib` `embedPng` and `embedJpg` take encoded bytes.
 - **Vision models.** Base64 PNG, JPEG, WebP or GIF;
@@ -201,19 +199,18 @@ or a viewer:
 - **`<img>`, HTTP, CDNs.** The browser decodes, so hand it something to decode.
 - **iTerm2 inline images.** Base64 PNG, unlike kitty.
 
-Re-encoding a raw frame with an encoder of your own also forfeits something the
-built-in ones guarantee: identical bytes for an identical request, across every
-artifact nanoraster ships. Once the encoder is yours, its version is yours to
-pin.
+Re-encoding a raw frame with your own encoder also gives up a guarantee the
+built-in encoders provide: identical bytes for an identical request, across
+every artifact nanoraster ships. The encoder's version is then yours to pin.
 
 ## Variations
 
-**Workers.** Frames transfer well: `postMessage(bytes, [bytes.buffer])` moves
-one without a copy; [Render in the browser](render-in-the-browser) shows where
-the renderer belongs.
+**Workers.** Frames transfer without a copy:
+`postMessage(bytes, [bytes.buffer])`. [Render in the browser](render-in-the-browser)
+shows where the renderer belongs.
 
 **Annotations on a raw frame.** The axis indicator, label and scale bar are
-drawn before readback, so they land in the buffer like everything else;
+drawn before readback, so they are in the buffer like everything else;
 [Format and annotate](format-and-annotate) covers them.
 
 **Scaled display.** `createImageBitmap(frame, { resizeQuality: 'high' })`

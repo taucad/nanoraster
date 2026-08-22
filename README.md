@@ -45,20 +45,20 @@ Same request, same pixels: the camera, lighting and encoder are fixed for a
 given request, so a render can serve as evidence. Continue with the
 [tutorial and guides](https://nanoraster.xyz/docs).
 
-`format: 'raw'` skips the encoder and returns the frame — straight-alpha sRGB
-RGBA8 with its `width` and `height` — for a pixel diff, a video frame, or a
-texture upload, in a Node process that has no image decoder to undo an encode
-with. See
+`format: 'raw'` skips the encoder and returns the frame itself: straight-alpha
+sRGB RGBA8 with its `width` and `height`. Use it for pixel diffs, video frames
+and texture uploads, where an encoded file would need a decoder that Node does
+not have. See
 [Work with raw pixels](https://nanoraster.xyz/docs/guides/work-with-raw-pixels).
 
 ## Reuse the renderer
 
-The one-shot calls already share one renderer per process, so only the first
-pays the GPU bring-up. Hold a renderer of your own when the device's lifetime
-or power preference matters, and declare a known set of outputs as one call —
-per-view `width`, `height`, `format` and `quality` overrides turn a resolution
-ladder into a single crossing, measured three times faster than six separate
-renders on an Apple M2 Pro:
+The one-shot calls share one renderer per process, so only the first call pays
+the GPU bring-up. Create your own renderer when you need to control the
+device's lifetime or power preference. When you know the full set of outputs,
+declare them in one call: per-view `width`, `height`, `format` and `quality`
+overrides turn a resolution ladder into a single call, measured three times
+faster than six separate renders on an Apple M2 Pro:
 
 ```typescript
 import { createRenderer } from 'nanoraster';

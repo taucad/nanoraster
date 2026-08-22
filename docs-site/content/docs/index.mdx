@@ -58,9 +58,9 @@ the bytes are identical: camera, lighting and encoder are fixed for a given
 request.
 
 The same call produces PNG, WebP or JPEG (`jpg` is an alias); see
-[Format and annotate](/docs/guides/format-and-annotate). It also produces the
-unencoded frame with `format: 'raw'`, for a pixel diff, a video frame or a
-texture upload; see
+[Format and annotate](/docs/guides/format-and-annotate). With `format: 'raw'`
+it returns the unencoded frame instead, for pixel diffs, video frames and
+texture uploads; see
 [Work with raw pixels](/docs/guides/work-with-raw-pixels). Every rejection is a
 `RenderError` with a stable machine-readable code, so you can classify failures
 without string matching; see
