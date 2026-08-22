@@ -5,8 +5,10 @@ import {
   detectPlatformPackages,
   formatCauseChain,
   requireNativeSuffix,
+  resolveExpectedRenderFault,
   resolveSmokeMode,
   selectTarballs,
+  settleRenderOutcome,
 } from '../scripts/test-package.mjs';
 
 const frozen = {
@@ -155,6 +157,45 @@ describe('installed platform packages', () => {
 
   it('should return no platform package when the release configures none', () => {
     assert.deepEqual(detectPlatformPackages(['nanoraster-first-arch'], ['nanoraster']), []);
+  });
+});
+
+describe('expected render fault', () => {
+  const reason = 'the driver faults on this host';
+
+  it('should read the reason the row named', () => {
+    assert.equal(resolveExpectedRenderFault({ NANORASTER_SMOKE_EXPECT_RENDER_FAULT: ` ${reason} ` }), reason);
+  });
+
+  it('should expect no fault when the row names none', () => {
+    assert.equal(resolveExpectedRenderFault({}), undefined);
+  });
+
+  it('should expect no fault when the row names a blank reason', () => {
+    assert.equal(resolveExpectedRenderFault({ NANORASTER_SMOKE_EXPECT_RENDER_FAULT: '  ' }), undefined);
+  });
+
+  it('should report the exit status and signal of an expected fault', () => {
+    assert.equal(
+      settleRenderOutcome(reason, { status: null, signal: 'SIGSEGV' }),
+      `expected render fault (${reason}): child exit status=null signal=SIGSEGV`,
+    );
+  });
+
+  it('should demand the expectation be lifted once the render succeeds', () => {
+    assert.throws(() => settleRenderOutcome(reason, undefined), {
+      message: new RegExp(`render succeeded .+\\(${reason}\\).+NANORASTER_SMOKE_EXPECT_RENDER_FAULT`, 'su'),
+    });
+  });
+
+  it('should rethrow a fault no row expected', () => {
+    const failure = new Error('the consumer died');
+
+    assert.throws(() => settleRenderOutcome(undefined, failure), failure);
+  });
+
+  it('should report nothing when an unexpecting row rendered', () => {
+    assert.equal(settleRenderOutcome(undefined, undefined), undefined);
   });
 });
 

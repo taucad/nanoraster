@@ -119,6 +119,41 @@ export const detectPlatformPackages = (entries, configuredNames) => {
 };
 
 /**
+ * Read the reason a smoke row expects its render to fault, when it carries one.
+ *
+ * A row names one only for a driver defect the platform cannot render around;
+ * every other stage of the smoke still has to pass on such a row.
+ *
+ * @param {Record<string, string | undefined>} environment - Process environment.
+ * @returns {string | undefined} The reason, or `undefined` when a render is required.
+ */
+export const resolveExpectedRenderFault = (environment) => {
+  const reason = environment['NANORASTER_SMOKE_EXPECT_RENDER_FAULT'];
+  return typeof reason === 'string' && reason.trim().length > 0 ? reason.trim() : undefined;
+};
+
+/**
+ * Settle what the render child did against what the row expects of it.
+ *
+ * @param {string | undefined} reason - Why this row expects a fault, when it does.
+ * @param {unknown} failure - What the render child threw, or `undefined` when it rendered.
+ * @returns {string | undefined} The evidence line for an expected fault.
+ */
+export const settleRenderOutcome = (reason, failure) => {
+  if (reason === undefined) {
+    if (failure !== undefined) throw failure;
+    return undefined;
+  }
+  if (failure === undefined) {
+    throw new Error(
+      `the render succeeded although this row expects it to fault (${reason}); the defect is fixed on this host, so lift NANORASTER_SMOKE_EXPECT_RENDER_FAULT from the row in .github/workflows/ci.yml and promote the platform in compatibility.md`,
+    );
+  }
+  const { signal, status } = /** @type {{ signal?: unknown, status?: unknown }} */ (failure ?? {});
+  return `expected render fault (${reason}): child exit status=${String(status)} signal=${String(signal)}`;
+};
+
+/**
  * Render a thrown value and every `cause` beneath it as message and stack.
  *
  * @param {unknown} error - The thrown value.
@@ -167,30 +202,35 @@ const installedPlatformPackages = (work, configuredNames) =>
     configuredNames,
   );
 
+// Two phases, run as two processes: a driver fault during the render takes the
+// process down with it, so the load and adapter evidence has to come from a
+// child that has already exited rather than from output the render may swallow.
 const consumerSource = (helperUrl) => `import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import { formatCauseChain } from ${JSON.stringify(helperUrl)};
 
-let api;
+const [phase, fixture] = process.argv.slice(2);
 try {
-  api = await import('nanoraster');
-  // The published wasm asset is packed beside the native loader; a consumer
-  // bundling for browsers resolves exactly these bytes.
-  await WebAssembly.compile(await readFile(new URL(import.meta.resolve('nanoraster/wasm'))));
-  const glb = await readFile(process.argv[2]);
-  const image = await api.renderImage(new Uint8Array(glb), { format: 'png', width: 64, height: 64 });
-  assert.equal(image.mimeType, 'image/png');
-  assert.equal(image.name, 'render.png');
-  assert.deepEqual([...image.bytes.slice(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
-} catch (error) {
-  if (api !== undefined) {
-    try {
-      console.error('adapter:', await api.describeAdapter());
-    } catch (adapterError) {
-      console.error(\`adapter unavailable:\\n\${formatCauseChain(adapterError)}\`);
-    }
+  const api = await import('nanoraster');
+  if (phase === 'adapter') {
+    // The published wasm asset is packed beside the native loader; a consumer
+    // bundling for browsers resolves exactly these bytes.
+    await WebAssembly.compile(await readFile(new URL(import.meta.resolve('nanoraster/wasm'))));
+    // \`describeAdapter\` resolves \`undefined\` rather than rejecting when no
+    // adapter is available, so an absent one is this assertion, not the catch.
+    const adapter = await api.describeAdapter();
+    assert.ok(adapter, 'no Vulkan adapter is available to render on');
+    console.log('adapter:', adapter);
+  } else {
+    const glb = await readFile(fixture);
+    const image = await api.renderImage(new Uint8Array(glb), { format: 'png', width: 64, height: 64 });
+    assert.equal(image.mimeType, 'image/png');
+    assert.equal(image.name, 'render.png');
+    assert.deepEqual([...image.bytes.slice(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
   }
+} catch (error) {
+  console.error(\`\${phase} phase failed:\`);
   console.error(formatCauseChain(error));
   process.exit(1);
 }
@@ -247,13 +287,25 @@ const main = () => {
     console.log(`installed platform package: ${installed[0]}`);
 
     writeFileSync(join(work, 'consumer.mjs'), consumerSource(import.meta.url));
-    execFileSync(process.execPath, ['consumer.mjs', fixture], {
-      cwd: work,
-      // The loader's version check is a runtime opt-in; a published release is
-      // where a drifted platform package could actually reach a consumer.
-      env: { ...process.env, ...(mode.kind === 'registry' ? { NAPI_RS_ENFORCE_VERSION_CHECK: '1' } : {}) },
-      stdio: 'inherit',
-    });
+    const runConsumer = (...phase) =>
+      execFileSync(process.execPath, ['consumer.mjs', ...phase], {
+        cwd: work,
+        // The loader's version check is a runtime opt-in; a published release
+        // is where a drifted platform package could actually reach a consumer.
+        env: { ...process.env, ...(mode.kind === 'registry' ? { NAPI_RS_ENFORCE_VERSION_CHECK: '1' } : {}) },
+        stdio: 'inherit',
+      });
+    runConsumer('adapter');
+
+    const expectedFault = resolveExpectedRenderFault(process.env);
+    let renderFailure;
+    try {
+      runConsumer('render', fixture);
+    } catch (error) {
+      renderFailure = error;
+    }
+    const faultReport = settleRenderOutcome(expectedFault, renderFailure);
+    if (faultReport !== undefined) console.log(faultReport);
 
     writeFileSync(join(work, 'consumer.cjs'), cjsProbeSource);
     execFileSync(process.execPath, ['consumer.cjs'], { cwd: work, stdio: 'inherit' });
@@ -261,8 +313,12 @@ const main = () => {
     if (installedManifest.version !== version) {
       throw new Error(`installed ${ROOT_PACKAGE}@${installedManifest.version}, expected ${version}`);
     }
+    const evidence =
+      faultReport === undefined
+        ? ''
+        : ' (render: expected driver fault — partial runtime evidence: install, load and adapter only)';
     console.log(
-      `clean-room ${mode.kind} smoke passed: ${ROOT_PACKAGE}@${version} through ${platformName} on ${process.platform}-${process.arch}`,
+      `clean-room ${mode.kind} smoke passed${evidence}: ${ROOT_PACKAGE}@${version} through ${platformName} on ${process.platform}-${process.arch}`,
     );
   } finally {
     rmSync(work, { force: true, recursive: true });

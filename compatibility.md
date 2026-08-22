@@ -3,8 +3,10 @@
 Every mark in the tables below names the job in `.github/workflows/ci.yml` that
 proves it. `✅` means a render on that host is required before a release.
 `Pending` means the package is built, inspected and published, and the named
-render job promotes it on its first green run. `Experimental` means the package
-is built and its binary inspected, with no render evidence.
+render job promotes it on its first green run. `Partial` means the named job
+proves the install, the load and the adapter, and a driver defect outside this
+package blocks the render itself. `Experimental` means the package is built and
+its binary inspected, with no render evidence.
 
 ## Runtimes
 
@@ -31,7 +33,7 @@ the binary out of it.
 | `nanoraster-linux-arm64-gnu`      | Linux arm64, glibc            | Pending      | `smoke (linux-arm64-gnu, 26)`      |
 | `nanoraster-linux-arm64-musl`     | Linux arm64, musl             | Pending      | `smoke (linux-arm64-musl, 26)`     |
 | `nanoraster-linux-arm-gnueabihf`  | Linux armv7 hard-float, glibc | Pending      | `smoke (linux-arm-gnueabihf, 22)`  |
-| `nanoraster-linux-arm-musleabihf` | Linux armv7 hard-float, musl  | Pending      | `smoke (linux-arm-musleabihf, 22)` |
+| `nanoraster-linux-arm-musleabihf` | Linux armv7 hard-float, musl  | Partial      | `smoke (linux-arm-musleabihf, 22)` |
 | `nanoraster-linux-ppc64-gnu`      | Linux ppc64le, glibc          | Pending      | `smoke (linux-ppc64-gnu, 26)`      |
 | `nanoraster-linux-s390x-gnu`      | Linux s390x, glibc            | Pending      | `smoke (linux-s390x-gnu, 26)`      |
 | `nanoraster-win32-x64-msvc`       | Windows on x64                | ✅           | `smoke (win32-x64-msvc, 26)`       |
@@ -49,6 +51,12 @@ The floor is Node.js 22.13.0. Node.js 24 and 26 publish no official
 on the Node.js 22 line and inherit its 2027-04-30 end of life. Every other host
 runs the Node.js 22.13 and Node.js 26 lanes. A later line that restores those
 downloads extends the three rows; without one they retire with Node.js 22.
+
+The official Node.js binaries link `libatomic` from Node.js 26 on, as the
+Node.js 22 armv7 build already does. Every published `node` image carries that
+library and a bare `ubuntu:24.04` does not, so a container that unpacks the
+tarball itself, as the ppc64le and s390x smoke rows do, installs `libatomic1`
+beside it.
 
 ### glibc, musl and endianness
 
@@ -75,6 +83,26 @@ request raises the process-wide default to 8 MiB, the size glibc gives the same
 thread. That default reaches every thread the process creates after it with
 default attributes; threads that carry an explicit stack size, including
 Node.js's own worker pool and every thread Rust spawns, keep theirs.
+
+### armv7 hard-float
+
+Both armv7 rows run under `qemu-user` on hosted x64 runners, and that is where
+the two part. `nanoraster-linux-arm-gnueabihf` renders the fixture on Debian
+bookworm, through its mesa 22.3.6 lavapipe. Its smoke row names that ICD in
+`VK_DRIVER_FILES` because the emulated 32-bit Vulkan loader finds no driver
+when it scans the manifest directory itself, which is an emulation artefact
+rather than something a real armv7 host asks of a consumer.
+
+`nanoraster-linux-arm-musleabihf` installs, loads and enumerates its lavapipe
+adapter, and the render itself faults inside mesa. Lavapipe from mesa 23 onwards
+crashes in `handle_vertex_buffers2`, in
+`src/gallium/frontends/lavapipe/lvp_execute.c`, on 32-bit ARM, replaying a
+vertex-buffer bind through a stride pointer it never wrote. Every Alpine tag
+carrying Node.js 22.13 or later ships a mesa past that break, so the row expects
+the fault, and the render evidence stays open until mesa fixes it.
+
+Neither package is verified on real armv7 hardware, or against a hardware
+Vulkan driver.
 
 ### FreeBSD and Android
 

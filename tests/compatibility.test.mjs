@@ -18,7 +18,7 @@ const TARGETS = JSON.parse(read('../package.json')).napi.targets;
 const SUFFIXES = TARGETS.map((triple) => parseTriple(triple).platformArchABI);
 
 /** Support markers a row may carry. Anything else is a claim nobody defined. */
-const MARKERS = ['✅', 'Pending', 'Experimental'];
+const MARKERS = ['✅', 'Pending', 'Partial', 'Experimental'];
 
 /** Every `| … |` row of every table, as trimmed cells, header and separator rows dropped. */
 const rows = COMPATIBILITY.split('\n')
@@ -62,6 +62,10 @@ const requiredJobs = new Set(
   ].flatMap((match) => [...match[1].matchAll(/'([\w-]+)'/gu)].map((name) => name[1])),
 );
 
+/** The `{ suffix: …, lane: … }` smoke matrix row a `smoke (suffix, lane)` claim names, if any. */
+const smokeRowText = (suffix, lane) =>
+  new RegExp(`\\{[^}]*suffix: '${suffix}'[^}]*lane: '${lane}'[^}]*\\}`, 'u').exec(WORKFLOW)?.[0];
+
 describe('compatibility matrix', () => {
   it('should carry a row for every configured native target', () => {
     const documented = SUFFIXES.filter((suffix) =>
@@ -100,8 +104,7 @@ describe('compatibility matrix', () => {
     // A `smoke` claim names one matrix row, so both halves have to belong to
     // the same row: a suffix on one lane and a lane on another suffix are two
     // substrings the workflow contains and one row it never runs.
-    const smokeRow = (suffix, lane) =>
-      new RegExp(`\\{[^}]*suffix: '${suffix}'[^}]*lane: '${lane}'[^}]*\\}`, 'u').test(WORKFLOW);
+    const smokeRow = (suffix, lane) => smokeRowText(suffix, lane) !== undefined;
 
     const unconfigured = hostRows.flatMap(({ evidence, name }) => {
       const { job, parameters } = parseEvidence(evidence);
@@ -120,6 +123,28 @@ describe('compatibility matrix', () => {
     // The negative control: the suffix and the lane are each present in the
     // workflow, and the pair is not a row.
     assert.equal(smokeRow('darwin-arm64', '22'), false);
+  });
+
+  it('should pair every partial row with the smoke row that expects a render fault', () => {
+    // The two halves of one claim: a row whose render the workflow excuses may
+    // not read as `Pending`, which promotes on a green run, and an excused
+    // render may not hide under a row that claims a render proves it.
+    const partial = hostRows
+      .filter(({ support }) => support === 'Partial')
+      .map(({ evidence, name }) => ({ name, ...parseEvidence(evidence) }));
+    const claimed = partial.filter(({ parameters }) =>
+      smokeRowText(...parameters)?.includes('expectRenderFault:'),
+    );
+    assert.deepEqual(claimed, partial, 'a Partial row needs a smoke row carrying expectRenderFault');
+
+    const excused = [...WORKFLOW.matchAll(/\{[^}]*expectRenderFault:[^}]*\}/gu)].map(
+      (match) => /suffix: '([^']+)'/u.exec(match[0])[1],
+    );
+    assert.deepEqual(
+      [...new Set(excused)],
+      partial.map(({ parameters }) => parameters[0]),
+      'every smoke row that expects a render fault needs a Partial row in compatibility.md',
+    );
   });
 
   it('should keep both Android rows on build evidence alone', () => {

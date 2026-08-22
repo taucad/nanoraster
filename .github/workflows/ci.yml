@@ -60,11 +60,28 @@ jobs:
           const event = process.env.EVENT_NAME;
           const slow = kind === 'main' || kind === 'release' || event === 'workflow_dispatch';
           const alpine = 'apk add --no-cache vulkan-loader mesa-vulkan-swrast';
-          const debian = 'apt-get update && apt-get install -y --no-install-recommends mesa-vulkan-drivers';
+          // The armv7 rows name the lavapipe manifest rather than let the
+          // loader scan for it: the emulated 32-bit loader's non-LFS `readdir`
+          // fails with EOVERFLOW on the host kernel's 64-bit `d_off`, so under
+          // qemu-user it finds no driver at all. An emulation artefact, not a
+          // consumer requirement; the glob spans bookworm's
+          // `lvp_icd.armv8l.json` and trixie's `lvp_icd.json`.
+          const debian =
+            'apt-get update && apt-get install -y --no-install-recommends mesa-vulkan-drivers && export VK_DRIVER_FILES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json)';
+          // Mesa's lavapipe faults in `lvp_execute.c` `handle_vertex_buffers2`
+          // on 32-bit ARM from mesa 23 onwards, replaying a vertex-buffer bind
+          // through a garbage stride pointer; bookworm's mesa 22.3 renders the
+          // same tarball, and every Alpine tag carrying Node 22.13 or later
+          // ships a mesa past the break. These rows therefore prove install,
+          // load and adapter enumeration and expect the render itself to fault.
+          const armMuslRenderFault =
+            'mesa lavapipe 23 and later faults in lvp_execute.c handle_vertex_buffers2 on 32-bit ARM under qemu-user; Debian bookworm mesa 22.3 renders; real armv7 hardware unverified';
           // Official Node tarballs: the node images publish no ppc64le or s390x
           // tag on the current line, so those lanes install Node into Ubuntu.
+          // Node 26 links `libatomic` on both (as does the Node 22 armhf
+          // build), and `ubuntu:24.04` carries no such runtime of its own.
           const ubuntu = (version, arch) =>
-            `apt-get update && apt-get install -y --no-install-recommends ca-certificates curl xz-utils mesa-vulkan-drivers && curl -fsSL https://nodejs.org/dist/v${version}/node-v${version}-linux-${arch}.tar.xz | tar -xJ -C /usr/local --strip-components=1`;
+            `apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libatomic1 xz-utils mesa-vulkan-drivers && curl -fsSL https://nodejs.org/dist/v${version}/node-v${version}-linux-${arch}.tar.xz | tar -xJ -C /usr/local --strip-components=1`;
           const rows = [
             { suffix: 'darwin-arm64', lane: '22.13.0', os: 'macos-latest', recipe: 'host', timeout: 30 },
             { suffix: 'darwin-arm64', lane: '26', os: 'macos-latest', recipe: 'host', timeout: 30 },
@@ -86,8 +103,8 @@ jobs:
             { suffix: 'darwin-x64', lane: '26', os: 'macos-15-intel', recipe: 'host', slow: true, timeout: 30 },
             { suffix: 'linux-arm-gnueabihf', lane: '22.13.0', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/arm/v7', image: 'node:22.13.0-bookworm-slim', setup: debian, slow: true, timeout: 45 },
             { suffix: 'linux-arm-gnueabihf', lane: '22', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/arm/v7', image: 'node:22-bookworm-slim', setup: debian, slow: true, timeout: 45 },
-            { suffix: 'linux-arm-musleabihf', lane: '22.13.0', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/arm/v7', image: 'node:22.13.0-alpine', setup: alpine, slow: true, timeout: 45 },
-            { suffix: 'linux-arm-musleabihf', lane: '22', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/arm/v7', image: 'node:22-alpine', setup: alpine, slow: true, timeout: 45 },
+            { suffix: 'linux-arm-musleabihf', lane: '22.13.0', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/arm/v7', image: 'node:22.13.0-alpine', setup: alpine, expectRenderFault: armMuslRenderFault, slow: true, timeout: 45 },
+            { suffix: 'linux-arm-musleabihf', lane: '22', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/arm/v7', image: 'node:22-alpine', setup: alpine, expectRenderFault: armMuslRenderFault, slow: true, timeout: 45 },
             { suffix: 'linux-ppc64-gnu', lane: '22.13.0', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/ppc64le', image: 'ubuntu:24.04', setup: ubuntu('22.13.0', 'ppc64le'), slow: true, timeout: 45 },
             { suffix: 'linux-ppc64-gnu', lane: '26', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/ppc64le', image: 'ubuntu:24.04', setup: ubuntu('26.7.0', 'ppc64le'), slow: true, timeout: 45 },
             { suffix: 'linux-s390x-gnu', lane: '22.13.0', os: 'ubuntu-24.04', recipe: 'container', qemu: true, platform: 'linux/s390x', image: 'ubuntu:24.04', setup: ubuntu('22.13.0', 's390x'), slow: true, timeout: 45 },
@@ -461,6 +478,7 @@ jobs:
       - name: Render from the frozen tarballs in a container
         if: matrix.recipe == 'container'
         env:
+          EXPECT_RENDER_FAULT: ${{ matrix.expectRenderFault }}
           IMAGE: ${{ matrix.image }}
           PLATFORM: ${{ matrix.platform }}
           SETUP: ${{ matrix.setup }}
@@ -470,6 +488,7 @@ jobs:
             --volume "$PWD:/nanoraster" --workdir /nanoraster \
             --env NANORASTER_TARBALL_DIR=tarballs \
             --env NANORASTER_NATIVE_SUFFIX="$SUFFIX" \
+            --env NANORASTER_SMOKE_EXPECT_RENDER_FAULT="$EXPECT_RENDER_FAULT" \
             "$IMAGE" sh -c "$SETUP && node scripts/test-package.mjs"
       - uses: cross-platform-actions/action@24ef01df165c76df1ed2b9f9e9212e78dc2fc963 # v1.4.0
         if: matrix.recipe == 'freebsd'
