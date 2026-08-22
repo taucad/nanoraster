@@ -60,8 +60,8 @@
   "scripts": {
     "benchmark": "node bench/gated.mjs",
     "build": "pnpm run build:wasm && tsdown && node scripts/copy-assets.mjs",
-    "build:napi": "cargo build --manifest-path rust/Cargo.toml --release -p render-napi && node scripts/copy-native.mjs",
-    "build:napi:bench": "cargo build --manifest-path rust/Cargo.toml --release -p render-napi --features bench && node scripts/copy-native.mjs tests/out/native-bench",
+    "build:napi": "pnpm exec napi build --platform --release --esm --js index.js --dts index.d.ts --manifest-path rust/render-napi/Cargo.toml --output-dir src/native -- --locked",
+    "build:napi:bench": "pnpm exec napi build --platform --release --esm --js index.js --dts index.d.ts --manifest-path rust/render-napi/Cargo.toml --features bench --output-dir tests/out/native-bench -- --locked",
     "build:wasm": "node scripts/build-wasm.mjs && node scripts/clean-wasm-output.mjs",
     "build:wasm:bench": "node scripts/build-wasm.mjs --bench && node scripts/clean-wasm-output.mjs --bench",
     "check:dead-code": "pnpm run docs:source && knip",
@@ -86,12 +86,13 @@
     "typecheck": "tsc --noEmit",
     "validate-pack": "node scripts/validate-pack.mjs",
     "workflows": "./scripts/check-workflows.sh",
-    "prepublishOnly": "pnpm nx run nanoraster:validate-pack",
+    "prepublishOnly": "node scripts/validate-pack.mjs",
     "release:prepare": "node scripts/prepare-release.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
     "@eslint/js": "9.32.0",
+    "@napi-rs/cli": "3.8.6",
     "@nx/js": "23.1.1",
     "@size-limit/file": "13.0.3",
     "@types/mdx": "2.0.14",
@@ -124,12 +125,25 @@
     "packageName": "nanoraster",
     "targets": [
       "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+      "aarch64-pc-windows-msvc",
+      "i686-pc-windows-msvc",
       "x86_64-unknown-linux-gnu",
-      "x86_64-pc-windows-msvc"
+      "aarch64-unknown-linux-gnu",
+      "armv7-unknown-linux-gnueabihf",
+      "powerpc64le-unknown-linux-gnu",
+      "s390x-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "aarch64-unknown-linux-musl",
+      "armv7-unknown-linux-musleabihf",
+      "aarch64-linux-android",
+      "armv7-linux-androideabi",
+      "x86_64-unknown-freebsd"
     ]
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=22.13.0"
   },
   "packageManager": "pnpm@11.7.0"
 }
