@@ -1242,13 +1242,17 @@ impl Renderer {
     /// the submission's poll, which also delivers the map callback).
     #[cfg(not(target_arch = "wasm32"))]
     fn finish_view_blocking(&self, mut view: InFlightView) -> Result<Rendered, RenderError> {
-        self.state
-            .device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(view.submission.clone()),
-                timeout: None,
-            })
-            .map_err(poll_error)?;
+        if let Err(error) = self.state.device.poll(wgpu::PollType::Wait {
+            submission_index: Some(view.submission.clone()),
+            timeout: None,
+        }) {
+            // A submission that failed validation never advances the device's
+            // successful-submission index, so the wait fails with a symptom
+            // ("submission index … not returned"); the uncaptured handler
+            // already holds the cause, and that is the message to surface.
+            self.take_uncaptured()?;
+            return Err(poll_error(error));
+        }
         // A callback that is missing after the awaited poll is a wgpu contract
         // violation, but not a reason to panic the host process: the wasm
         // sibling maps the same condition to `gpu:`, so this path does too.
@@ -1938,6 +1942,55 @@ mod tests {
         pollster::block_on(renderer.recover_if_lost()).expect("recreate");
         renderer.ensure_uploaded(&mut handle).expect("re-upload");
         assert_eq!(renderer.counters.scene_uploads, 2);
+        renderer.destroy();
+    }
+
+    #[test]
+    fn finish_view_reports_the_failed_submission_rather_than_the_poll_symptom() {
+        let renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let device = &renderer.state.device;
+        let source = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("destroyed source"),
+            size: 256,
+            usage: wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: 256,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_buffer_to_buffer(&source, 0, &readback, 0, 256);
+        let commands = encoder.finish();
+        // Destroying a referenced buffer makes the submission fail validation:
+        // wgpu reports it through the uncaptured handler and never advances the
+        // successful-submission index, so the wait alone would only say so.
+        source.destroy();
+        let submission = renderer.state.queue.submit(Some(commands));
+        let (_sender, receiver) = futures_channel::oneshot::channel();
+        let view = InFlightView {
+            buffer: readback,
+            receiver,
+            submission,
+            height: 1,
+            unpadded_bytes_per_row: 256,
+            padded_bytes_per_row: 256,
+        };
+
+        let error = match renderer.finish_view_blocking(view) {
+            Ok(_) => panic!("a failed submission must not read back"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(&error, RenderError::Gpu(message) if message.contains("destroyed")),
+            "expected the destroyed-resource cause, got {error}"
+        );
+        // The cause is drained; a later poll symptom is reported as itself.
+        assert!(renderer.take_uncaptured().is_ok());
         renderer.destroy();
     }
 

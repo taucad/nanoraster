@@ -57,7 +57,7 @@ jobs:
           const kind = process.env.KIND;
           const event = process.env.EVENT_NAME;
           const slow = kind === 'main' || kind === 'release' || event === 'workflow_dispatch';
-          const alpine = 'apk add --no-cache mesa-vulkan-swrast';
+          const alpine = 'apk add --no-cache vulkan-loader mesa-vulkan-swrast';
           const debian = 'apt-get update && apt-get install -y --no-install-recommends mesa-vulkan-drivers';
           // Official Node tarballs: the node images publish no ppc64le or s390x
           // tag on the current line, so those lanes install Node into Ubuntu.
