@@ -8,28 +8,31 @@ const { renderImage, renderImages } = renderModule;
 type ImageOptions = renderModule.RenderImageOptions;
 type ImagesOptions = renderModule.RenderImagesOptions;
 type RenderModule = typeof renderModule;
-expectTypeOf<
-  Extract<
-    keyof RenderModule,
-    | 'RenderDeps'
-    | 'RawRenderer'
-    | 'RawImagesResult'
-    | 'RawRendererHandle'
-    | 'assembleRenderedImages'
-    | 'createRendererRaw'
-    | 'describeAdapterRaw'
-    | 'imageFileName'
-    | 'isNodeRuntime'
-    | 'renderManyRaw'
-    | 'renderRaw'
-    | 'serializeCreateOptions'
-    | 'serializeImageOptions'
-    | 'serializeImagesOptions'
-    | 'toImageRequestJson'
-    | 'toImagesRequestJson'
-    | 'toRenderedImageFile'
-  >
->().toEqualTypeOf<never>();
+// The whole runtime surface, pinned as a set rather than as a list of names
+// that must not leak: a denylist only catches internals somebody remembered to
+// name, while an equality trips on *any* new export — leaked helper or
+// intended addition — until it is spelled out here on purpose. Type-only
+// exports are invisible to `keyof`, so this covers the value surface.
+expectTypeOf<keyof RenderModule>().toEqualTypeOf<
+  | 'RenderError'
+  | 'createRenderer'
+  | 'describeAdapter'
+  | 'imageMimeTypes'
+  | 'renderImage'
+  | 'renderImageAmbientRange'
+  | 'renderImageAnnotatedMinDimension'
+  | 'renderImageBackgroundPattern'
+  | 'renderImageDimensionRange'
+  | 'renderImageExposureRange'
+  | 'renderImageLabelMaxLength'
+  | 'renderImageLabelPattern'
+  | 'renderImageLightColorRange'
+  | 'renderImageMarginRange'
+  | 'renderImageMaxLights'
+  | 'renderImageQualityRange'
+  | 'renderImageViewIdPattern'
+  | 'renderImages'
+>();
 
 const glb = new Uint8Array([1, 2, 3]);
 
@@ -115,11 +118,6 @@ const allRaw = renderImages(glb, {
 expectTypeOf(allRaw).toEqualTypeOf<Promise<readonly [renderModule.RenderedImage<'frame', 'raw'>]>>();
 declare const sharedRawFile: Awaited<typeof allRaw>[0]['file'];
 expectTypeOf(sharedRawFile.mimeType).toEqualTypeOf<'application/octet-stream'>();
-
-// The deleted raw-pixels surface is gone from the module, not renamed.
-expectTypeOf<
-  Extract<keyof RenderModule, 'renderPixels' | 'RenderedPixels' | 'RenderPixelsOptions'>
->().toEqualTypeOf<never>();
 
 const timed = renderImages(glb, {
   format: 'png',
