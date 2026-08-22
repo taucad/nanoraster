@@ -90,6 +90,10 @@ export const RenderDemo = ({
   // also serializes access to the shared renderer handle.
   const inFlightRef = useRef(false);
   const pendingRef = useRef<Record<string, DemoValue> | null>(null);
+  // Renders are not cancellable, so one can still be in flight when the
+  // component goes away. Its URLs would outlive the document that could revoke
+  // them, and its trailing value would render for nobody.
+  const mountedRef = useRef(true);
 
   const draw = useCallback(
     async (current: Record<string, DemoValue>): Promise<void> => {
@@ -119,7 +123,10 @@ export const RenderDemo = ({
           // RGBA8, top row first, which is what `ImageData` reads — so the tile
           // shows the render itself, with nothing decoding it on the way in.
           if (raw) {
-            const bytes = await renderer.render_image(glb, json);
+            // wasm-bindgen types every returned view as `Uint8Array<ArrayBufferLike>`;
+            // the bindings only ever hand back plain `ArrayBuffer` storage,
+            // which is what `ImageData` and `Blob` accept.
+            const bytes = (await renderer.render_image(glb, json)) as Uint8Array<ArrayBuffer>;
             const ms = Math.round(performance.now() - started);
             const { width, height } = RENDER_SIZE;
             setFrame(new ImageData(new Uint8ClampedArray(bytes.buffer), width, height));
@@ -128,14 +135,22 @@ export const RenderDemo = ({
             return;
           }
 
-          const bytes = batch
-            ? (await renderer.render_images(glb, json)).images
-            : [await renderer.render_image(glb, json)];
+          const bytes = (
+            batch
+              ? (await renderer.render_images(glb, json)).images
+              : [await renderer.render_image(glb, json)]
+          ) as Uint8Array<ArrayBuffer>[];
           const ms = Math.round(performance.now() - started);
 
           for (const url of urlsRef.current) URL.revokeObjectURL(url);
           const type = mimeTypes[String(request['format'])] ?? 'image/png';
-          urlsRef.current = bytes.map((part) => URL.createObjectURL(new Blob([part], { type })));
+          const next = bytes.map((part) => URL.createObjectURL(new Blob([part], { type })));
+          if (!mountedRef.current) {
+            for (const url of next) URL.revokeObjectURL(url);
+            urlsRef.current = [];
+            return;
+          }
+          urlsRef.current = next;
           setSrcs(urlsRef.current);
           setEvidence({ mime: type, ms, sizes: bytes.map((part) => part.byteLength) });
           setState('idle');
@@ -148,7 +163,7 @@ export const RenderDemo = ({
       inFlightRef.current = true;
       try {
         let values: Record<string, DemoValue> | null = current;
-        while (values !== null) {
+        while (values !== null && mountedRef.current) {
           await render(values);
           values = pendingRef.current;
           pendingRef.current = null;
@@ -178,12 +193,15 @@ export const RenderDemo = ({
     void draw(values);
   }, [draw, values]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Reset on mount as well as unmount: StrictMode mounts, unmounts, and
+    // mounts again, and a flag left false there would discard every render.
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
       for (const url of urlsRef.current) URL.revokeObjectURL(url);
-    },
-    [],
-  );
+    };
+  }, []);
 
   const update = (key: string, value: DemoValue): void => {
     const next = { ...values, [key]: value };

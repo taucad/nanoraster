@@ -1,15 +1,12 @@
-/** The persistent renderer handle the wasm artifact exposes. */
-export type WasmRendererHandle = {
-  readonly render_image: (
-    glb: Uint8Array<ArrayBuffer>,
-    optionsJson: string,
-  ) => Promise<Uint8Array<ArrayBuffer>>;
-  /** Ordered identified views through one plan call; result order is view order. */
-  readonly render_images: (
-    glb: Uint8Array<ArrayBuffer>,
-    optionsJson: string,
-  ) => Promise<{ readonly images: Uint8Array<ArrayBuffer>[]; readonly timings?: string }>;
-};
+import type { Renderer } from '../../src/wasm/render_wasm.js';
+
+/**
+ * The part of the wasm artifact's persistent renderer the demos call, taken
+ * from the generated bindings rather than restated: a wasm-bindgen signature
+ * change then fails here at type-check instead of in a browser.
+ * `render_images` returns the ordered images in view order.
+ */
+export type WasmRendererHandle = Pick<Renderer, 'render_image' | 'render_images'>;
 
 type WasmModule = {
   readonly default: (input: { readonly module_or_path: URL }) => Promise<unknown>;

@@ -60,7 +60,7 @@ type NapiRenderer = {
 
 type NapiModule = {
   createRenderer: (optionsJson?: string) => Promise<NapiRenderer>;
-  describeAdapter: (optionsJson?: string) => string | null;
+  describeAdapter: (optionsJson?: string) => Promise<string | null>;
 };
 
 const nativePackages = {

@@ -32,7 +32,7 @@ const native =
    *     renderImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], timings?: string }>,
    *     dispose: () => void,
    *   }>,
-   *   describeAdapter: (optionsJson?: string) => string | null,
+   *   describeAdapter: (optionsJson?: string) => Promise<string | null>,
    * }}
    */ (requireNative(nativePackage));
 
@@ -44,7 +44,7 @@ for (const gated of ['benchCodecs', 'benchMultiView', 'codecConformance']) {
 
 // The FFI hands the adapter over as JSON, or null where the host has none; the
 // TS façade parses the same bytes.
-const described = native.describeAdapter();
+const described = await native.describeAdapter();
 const adapter = described === null ? null : JSON.parse(described);
 console.log('adapter:', adapter);
 if (adapter !== null) {
@@ -54,7 +54,7 @@ if (adapter !== null) {
   if (!['discrete-gpu', 'integrated-gpu', 'virtual-gpu', 'cpu', 'unknown'].includes(adapter.deviceType))
     throw new Error(`unexpected adapter device type: ${adapter.deviceType}`);
 }
-const lowPower = native.describeAdapter(JSON.stringify({ powerPreference: 'low-power' }));
+const lowPower = await native.describeAdapter(JSON.stringify({ powerPreference: 'low-power' }));
 console.log('low-power adapter:', lowPower === null ? null : JSON.parse(lowPower));
 
 const glb = readFileSync(join(here, 'fixtures', 'gear-12.glb'));
@@ -542,6 +542,39 @@ if (!disposedError.startsWith('gpu: renderer disposed')) {
   throw new Error(`expected a disposed rejection, got: ${disposedError || 'no error'}`);
 }
 console.log('warm renderer: byte parity, ladder overrides, zero-device-request timings, raw, dispose');
+
+// dispose() runs on the JS main thread while renders run on the libuv pool, so
+// it may never wait for one: a direct addon consumer that disposes mid-render
+// would otherwise stall every timer and I/O callback in the process for the
+// rest of that render. The render already in flight still settles, and the
+// device is torn down when it does.
+const midFlight = await native.createRenderer();
+const bigRender = midFlight.renderImage(glb, JSON.stringify({ width: 4096, height: 4096, format: 'png' }));
+// Let the pool thread reach the render before disposing; a render this size
+// outlives the wait by orders of magnitude on every supported adapter.
+await new Promise((resolve) => setTimeout(resolve, 25));
+const disposeStarted = Date.now();
+midFlight.dispose();
+const disposeMs = Date.now() - disposeStarted;
+const bigBytes = await bigRender;
+if (disposeMs > 50) {
+  throw new Error(`dispose() blocked the event loop for ${disposeMs}ms while a render was in flight`);
+}
+if (!(bigBytes[0] === 0x89 && bigBytes[1] === 0x50)) {
+  throw new Error('a render in flight at dispose() must still settle with its bytes');
+}
+let midFlightError = '';
+try {
+  await midFlight.renderImage(glb, JSON.stringify(shared));
+} catch (error) {
+  midFlightError = String(error instanceof Error ? error.message : error);
+}
+if (!midFlightError.startsWith('gpu: renderer disposed')) {
+  throw new Error(`expected a disposed rejection after a mid-render dispose, got: ${midFlightError}`);
+}
+// Idempotent, and still non-blocking with nothing left to destroy.
+midFlight.dispose();
+console.log(`dispose() mid-render returned in ${disposeMs}ms and the in-flight render still settled`);
 
 mkdirSync(join(here, 'out'), { recursive: true });
 writeFileSync(join(here, 'out', 'napi.png'), png);

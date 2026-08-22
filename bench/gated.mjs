@@ -41,7 +41,7 @@ const report = {
   // — changed the lossless webp fingerprints on purpose. PNG, JPEG and every
   // rendered pixel are untouched.
   name: 'gear-parse-raster-encode-512x384-v4',
-  adapter: JSON.parse(native.describeAdapter()),
+  adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,
   medianMs: Math.round(durations[Math.floor(iterations / 2)] * 1_000) / 1_000,

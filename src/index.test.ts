@@ -255,6 +255,14 @@ describe('renderImages', () => {
     expect(results[0].file.name).toBe('render-front.png');
   });
 
+  it('should keep malformed timings inside the taxonomy', async () => {
+    plural.mockResolvedValue({ images: [new Uint8Array([1])], timings: 'not json' });
+
+    await expect(
+      renderImages(glb, { format: 'png', timings: true, views: [{ id: 'front', phi: 90, theta: 0 }] }),
+    ).rejects.toMatchObject({ code: 'unknown' });
+  });
+
   it('should reject cardinality mismatches atomically', async () => {
     plural.mockResolvedValue({ images: [new Uint8Array([1])] });
 
@@ -525,11 +533,45 @@ describe('createRenderer', () => {
     const renderer = await createRenderer();
     const first = renderer.renderImage(glb, { format: 'png' });
     const second = renderer.renderImage(glb, { format: 'png' });
-    await Promise.resolve();
+    // Poll for the first call rather than counting microtasks: how many hops
+    // it takes to reach the handle is an implementation detail, and a timer
+    // tick keeps the test's own timeout able to fire if it never arrives.
+    while (!order.includes('first:start')) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
     releaseFirst();
     await Promise.all([first, second]);
 
     expect(order).toEqual(['first:start', 'first:end', 'second']);
+  });
+
+  it('should reject invalid options without waiting behind the queue', async () => {
+    const handle = makeHandle();
+    let release = (): void => {};
+    handle.renderImage.mockImplementation(async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return new Uint8Array([1]);
+    });
+    createRaw.mockResolvedValue(handle);
+
+    const renderer = await createRenderer();
+    const inFlight = renderer.renderImage(glb, { format: 'png' });
+    // The queue is blocked on that render, but a parse failure is the
+    // caller's and is decided here — as it is on the free functions.
+    await expect(renderer.renderImage(glb, { format: 'gif' } as never)).rejects.toMatchObject({
+      code: 'parse',
+    });
+    await expect(
+      renderer.renderImages(glb, {
+        format: 'gif',
+        views: [{ id: 'front', phi: 90, theta: 0 }],
+      } as never),
+    ).rejects.toMatchObject({ code: 'parse' });
+
+    release();
+    await inFlight;
   });
 
   it('should keep rendering after one call fails', async () => {

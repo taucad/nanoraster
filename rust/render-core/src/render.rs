@@ -1249,10 +1249,14 @@ impl Renderer {
                 timeout: None,
             })
             .map_err(poll_error)?;
+        // A callback that is missing after the awaited poll is a wgpu contract
+        // violation, but not a reason to panic the host process: the wasm
+        // sibling maps the same condition to `gpu:`, so this path does too.
         view.receiver
             .try_recv()
-            .expect("the map sender outlives the poll")
-            .expect("wgpu delivers the map callback during the awaited poll")
+            .ok()
+            .flatten()
+            .ok_or(RenderError::Gpu("map_async: callback dropped".into()))?
             .map_err(map_error)?;
         self.read_back(&view)
     }

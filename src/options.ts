@@ -230,7 +230,7 @@ export type RenderViewTimings = {
 /**
  * Stage timings for one timed plan call. The fields map onto the render
  * pipeline's stages: parse, setup (device acquisition and geometry upload),
- * then per-view rasterise and encode.
+ * then per-view rasterise, annotation overlay, and encode.
  *
  * @public
  */
@@ -496,8 +496,14 @@ type CameraCommonOptions = Omit<RenderImageSharedOptions, 'format' | 'quality'> 
   readonly label?: string;
 };
 
-const validateAnnotatedDimensions = (options: CameraCommonOptions): void => {
-  if (options.axes !== true && options.scaleBar !== true && options.label === undefined) {
+/**
+ * Hold an annotated request to the minimum size its overlays stay legible at.
+ * `annotated` is decided by the caller because only a singular request renders
+ * at the shared width/height: a batch renders at each view's effective size,
+ * which the per-view rule in {@link toImagesRequestJson} checks instead.
+ */
+const validateAnnotatedDimensions = (options: CameraCommonOptions, annotated: boolean): void => {
+  if (!annotated) {
     return;
   }
   if (
@@ -527,17 +533,17 @@ const validateBackground = (background: unknown): void => {
   }
 };
 
-const validateCommon = (options: Omit<RenderImageOptions, 'phi' | 'theta'>): void => {
+const validateCommon = (options: Omit<RenderImageOptions, 'phi' | 'theta'>, annotated: boolean): void => {
   if (!['png', 'webp', 'jpeg', 'jpg', 'raw'].includes(options.format)) {
     throw new TypeError('format must be png, webp, jpeg, jpg, or raw');
   }
   if (options.quality !== undefined) {
     assertRange(options.quality, 'quality', renderImageQualityRange);
   }
-  validateCameraCommon(options);
+  validateCameraCommon(options, annotated);
 };
 
-const validateCameraCommon = (options: CameraCommonOptions): void => {
+const validateCameraCommon = (options: CameraCommonOptions, annotated: boolean): void => {
   if (options.width !== undefined) {
     assertRange(options.width, 'width', renderImageDimensionRange);
   }
@@ -555,7 +561,7 @@ const validateCameraCommon = (options: CameraCommonOptions): void => {
   }
   assertOptionalBoolean(options.axes, 'axes');
   assertOptionalBoolean(options.scaleBar, 'scaleBar');
-  validateAnnotatedDimensions(options);
+  validateAnnotatedDimensions(options, annotated);
   validateBackground(options.background);
   validateLighting(options.lighting);
 };
@@ -578,7 +584,7 @@ export const toImageRequestJson = (options: RenderImageOptions): string => {
     throw new TypeError('options must be an object');
   }
   assertKnownKeys(input, singularKeys, 'options');
-  validateCommon(options);
+  validateCommon(options, options.axes === true || options.scaleBar === true || options.label !== undefined);
   if (options.label !== undefined) {
     assertLabel(options.label, 'label');
   }
@@ -615,7 +621,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     throw new TypeError('options must be an object');
   }
   assertKnownKeys(input, pluralKeys, 'options');
-  validateCommon(options);
+  validateCommon(options, false);
   assertOptionalBoolean(options.timings, 'timings');
   const sharedAnnotated = options.axes === true || options.scaleBar === true;
   const { views } = input;

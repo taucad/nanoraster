@@ -2,7 +2,9 @@
 //! runs inside a plain dedicated worker with no canvas or OffscreenCanvas.
 //! The `Renderer` class keeps one GPU device alive across calls (create it
 //! inside the worker that uses it — handles cannot cross `postMessage`);
-//! the free functions are one-shot sugar that destroy their device on exit.
+//! the free functions are addon-level one-shot sugar that destroy their device
+//! on exit. The `nanoraster` package does not call them: its own one-shot
+//! functions route through one shared `Renderer`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

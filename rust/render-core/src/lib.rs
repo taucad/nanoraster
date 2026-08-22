@@ -394,7 +394,10 @@ async fn run_plan(
     Ok((images, timings))
 }
 
-/// One-shot sugar: create a renderer, run the plan, destroy the device.
+/// One-shot sugar: create a renderer, run the plan, destroy the device. This
+/// is the core's own one-shot contract, which the bindings' free functions
+/// inherit — not the `nanoraster` package's, whose one-shot functions route
+/// through one shared [`Renderer`] instead.
 async fn render_once(
     glb: &[u8],
     options: &RenderOptions,
@@ -488,23 +491,8 @@ impl Renderer {
     ) -> Result<(Vec<Vec<u8>>, Option<RenderBatchTimings>), RenderError> {
         let (options, format, views, want_timings) =
             RenderImagesRequest::from_json(options_json)?.resolve()?;
-        #[cfg(not(target_arch = "wasm32"))]
-        let fallback = instant_clock();
-        let stage_clock: Option<&TimingsClock> = if want_timings {
-            match now {
-                Some(clock) => Some(clock),
-                #[cfg(not(target_arch = "wasm32"))]
-                None => Some(&fallback),
-                #[cfg(target_arch = "wasm32")]
-                None => {
-                    return Err(RenderError::Parse(
-                        "timings require a host clock on wasm".into(),
-                    ));
-                }
-            }
-        } else {
-            None
-        };
+        let fallback = fallback_clock();
+        let stage_clock = stage_clock(want_timings, now, fallback.as_deref())?;
         self.render_images(glb, &options, format, &views, stage_clock)
             .await
     }
@@ -522,10 +510,39 @@ fn singular_view(options: &RenderOptions) -> RenderView {
     }
 }
 
+/// The clock a `timings: true` request measures with when the host supplies
+/// none: native self-clocks via `Instant`.
 #[cfg(not(target_arch = "wasm32"))]
-fn instant_clock() -> impl Fn() -> f64 + Sync {
+fn fallback_clock() -> Option<Box<TimingsClock>> {
     let epoch = std::time::Instant::now();
-    move || epoch.elapsed().as_secs_f64() * 1000.0
+    Some(Box::new(move || epoch.elapsed().as_secs_f64() * 1000.0))
+}
+
+/// Wasm has no ambient clock, so there is nothing to fall back to: a timed
+/// request there must carry the host's own.
+#[cfg(target_arch = "wasm32")]
+fn fallback_clock() -> Option<Box<TimingsClock>> {
+    None
+}
+
+/// Resolve the clock the stage timings are measured with, or `None` when the
+/// request did not ask for timings.
+fn stage_clock<'a>(
+    want_timings: bool,
+    now: Option<&'a TimingsClock>,
+    fallback: Option<&'a TimingsClock>,
+) -> Result<Option<&'a TimingsClock>, RenderError> {
+    if !want_timings {
+        return Ok(None);
+    }
+    let clock = now.or(fallback);
+    #[cfg(target_arch = "wasm32")]
+    if clock.is_none() {
+        return Err(RenderError::Parse(
+            "timings require a host clock on wasm".into(),
+        ));
+    }
+    Ok(clock)
 }
 
 /// Render a kernel GLB to straight-alpha RGBA8 (sRGB-encoded) pixels — the
@@ -605,23 +622,8 @@ pub async fn render_images_request(
 ) -> Result<(Vec<Vec<u8>>, Option<RenderBatchTimings>), RenderError> {
     let (options, format, views, want_timings) =
         RenderImagesRequest::from_json(options_json)?.resolve()?;
-    #[cfg(not(target_arch = "wasm32"))]
-    let fallback = instant_clock();
-    let stage_clock: Option<&TimingsClock> = if want_timings {
-        match now {
-            Some(clock) => Some(clock),
-            #[cfg(not(target_arch = "wasm32"))]
-            None => Some(&fallback),
-            #[cfg(target_arch = "wasm32")]
-            None => {
-                return Err(RenderError::Parse(
-                    "timings require a host clock on wasm".into(),
-                ));
-            }
-        }
-    } else {
-        None
-    };
+    let fallback = fallback_clock();
+    let stage_clock = stage_clock(want_timings, now, fallback.as_deref())?;
     render_once(glb, &options, format, &views, stage_clock).await
 }
 

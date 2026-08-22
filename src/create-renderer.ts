@@ -133,9 +133,12 @@ export const createRenderer = async (options?: CreateRendererOptions): Promise<R
   };
 
   return {
-    renderImage: (glb, renderOptions) =>
-      enqueue(async () => {
-        const request = serializeImageOptions(renderOptions);
+    // Validation happens before the enqueue, not inside it: a parse failure is
+    // the caller's own and is answered immediately, exactly as the one-shot
+    // functions answer it, rather than waiting behind a render in flight.
+    renderImage: async (glb, renderOptions) => {
+      const request = serializeImageOptions(renderOptions);
+      return enqueue(async () => {
         let bytes: Uint8Array<ArrayBuffer>;
         try {
           bytes = await handle.renderImage(glb, request);
@@ -143,16 +146,18 @@ export const createRenderer = async (options?: CreateRendererOptions): Promise<R
           throw RenderError.from(error);
         }
         return toRenderedImageFile(renderOptions, bytes);
-      }),
-    renderImages: (glb, renderOptions) =>
-      enqueue(async () => {
-        const request = serializeImagesOptions(renderOptions);
+      });
+    },
+    renderImages: async (glb, renderOptions) => {
+      const request = serializeImagesOptions(renderOptions);
+      return enqueue(async () => {
         try {
           return assembleRenderedImages(renderOptions, await handle.renderImages(glb, request));
         } catch (error) {
           throw RenderError.from(error);
         }
-      }),
+      });
+    },
     dispose,
     [Symbol.dispose]: dispose,
   };

@@ -48,7 +48,7 @@ describe('renderer binding selection', () => {
     };
     const native = {
       createRenderer: vi.fn(() => Promise.resolve(nativeRenderer)),
-      describeAdapter: vi.fn(() => '{"backend":"metal","name":"Test","deviceType":"integrated-gpu"}'),
+      describeAdapter: vi.fn(async () => '{"backend":"metal","name":"Test","deviceType":"integrated-gpu"}'),
     };
     const require = vi.fn(() => native);
     vi.doMock('node:module', () => ({ createRequire: vi.fn(() => require) }));
@@ -143,7 +143,7 @@ describe('renderer binding selection', () => {
       renderImage: vi.fn(() => Promise.resolve(new Uint8Array([1]))),
       renderImages: vi.fn(() => Promise.resolve({ images: [new Uint8Array([2])], timings: null })),
       createRenderer: vi.fn(() => Promise.resolve(nativeRenderer)),
-      describeAdapter: vi.fn(() => 'Metal / Test (IntegratedGpu)'),
+      describeAdapter: vi.fn(async () => 'Metal / Test (IntegratedGpu)'),
     };
     vi.doMock('node:module', () => ({ createRequire: vi.fn(() => vi.fn(() => native)) }));
     const { renderManyRaw, renderRaw } = await import('#renderer.js');

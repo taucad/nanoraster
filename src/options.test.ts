@@ -301,6 +301,32 @@ describe('image request serialization', () => {
     ).toThrow('options contains unknown property "profile"');
   });
 
+  it('should judge annotated dimensions per view, not against the shared pair', () => {
+    // The shared pair is a default for views that inherit it; a view that
+    // overrides both is the size that gets rendered and annotated.
+    expect(
+      parse(
+        toImagesRequestJson({
+          format: 'png',
+          axes: true,
+          width: 128,
+          height: 128,
+          views: [{ id: 'front', phi: 90, theta: 0, width: 512, height: 512 }],
+        }),
+      )['width'],
+    ).toBe(128);
+    // A view that inherits the small shared pair still fails on its own size.
+    expect(() =>
+      toImagesRequestJson({
+        format: 'png',
+        axes: true,
+        width: 128,
+        height: 128,
+        views: [{ id: 'front', phi: 90, theta: 0 }],
+      }),
+    ).toThrow('views[0]: annotated images must be at least 192x192');
+  });
+
   it('should serialize a raw request and a raw per-view override', () => {
     expect(parse(toImageRequestJson({ format: 'raw', width: 640, height: 480 }))).toEqual({
       format: 'raw',

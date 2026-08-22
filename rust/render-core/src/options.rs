@@ -163,9 +163,10 @@ struct CommonRequest<'a> {
     projection: Option<&'a str>,
     background: Option<[f32; 4]>,
     axes: Option<bool>,
-    /// Whether a label will be drawn, so the annotated-minimum rule sees it.
-    /// Singular requests carry their own; a batch labels each view instead.
-    labeled: bool,
+    /// Whether the shared width/height must clear the annotated minimum. Only
+    /// a singular request renders at them; a batch renders at each view's
+    /// effective size, which the per-view rule checks instead.
+    annotated: bool,
     scale_bar: Option<bool>,
     lighting: Option<&'a LightingRequest>,
 }
@@ -200,7 +201,9 @@ impl RenderRequest {
             projection: self.projection.as_deref(),
             background: self.background,
             axes: self.axes,
-            labeled: self.label.is_some(),
+            annotated: self.axes.unwrap_or(false)
+                || self.scale_bar.unwrap_or(false)
+                || self.label.is_some(),
             scale_bar: self.scale_bar,
             lighting: self.lighting.as_ref(),
         }
@@ -306,7 +309,7 @@ impl RenderImagesRequest {
             projection: self.projection.as_deref(),
             background: self.background,
             axes: self.axes,
-            labeled: false,
+            annotated: false,
             scale_bar: self.scale_bar,
             lighting: self.lighting.as_ref(),
         }
@@ -326,9 +329,7 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<RenderOptions, RenderErr
     }
     let axes = request.axes.unwrap_or(false);
     let scale_bar = request.scale_bar.unwrap_or(false);
-    if (axes || scale_bar || request.labeled)
-        && (width < ANNOTATED_MIN_DIMENSION || height < ANNOTATED_MIN_DIMENSION)
-    {
+    if request.annotated && (width < ANNOTATED_MIN_DIMENSION || height < ANNOTATED_MIN_DIMENSION) {
         return Err(RenderError::Parse(format!(
             "annotated images must be at least {ANNOTATED_MIN_DIMENSION}x{ANNOTATED_MIN_DIMENSION}"
         )));
@@ -586,6 +587,31 @@ mod tests {
         assert_eq!(
             RenderImagesRequest::from_json(
                 r#"{"format":"png","views":[{"id":"front","label":"Front","phi":90,"theta":0,"width":191}]}"#
+            )
+            .expect("parse")
+            .resolve()
+            .unwrap_err()
+            .to_string(),
+            "parse: views[0]: annotated images must be at least 192x192"
+        );
+    }
+
+    #[test]
+    fn a_batch_judges_annotated_dimensions_per_view() {
+        // The shared pair is only a default: a view that overrides both is the
+        // size that gets rendered and annotated.
+        let (options, _, views, _) = RenderImagesRequest::from_json(
+            r#"{"format":"png","axes":true,"width":128,"height":128,"views":[{"id":"front","phi":90,"theta":0,"width":512,"height":512}]}"#
+        )
+        .expect("parse")
+        .resolve()
+        .expect("resolve");
+        assert_eq!((options.width, options.height), (128, 128));
+        assert_eq!(views[0].width, Some(512));
+        // A view that inherits the small shared pair still fails on its own size.
+        assert_eq!(
+            RenderImagesRequest::from_json(
+                r#"{"format":"png","axes":true,"width":128,"height":128,"views":[{"id":"front","phi":90,"theta":0}]}"#
             )
             .expect("parse")
             .resolve()

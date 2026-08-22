@@ -100,11 +100,13 @@ export const renderImages = async <const Options extends RenderImagesOptions>(
   glb: Uint8Array<ArrayBuffer>,
   options: StrictRenderImagesOptions<Options>,
 ): Promise<RenderedImagesResult<Options>> => {
-  let raw: RawImagesResult;
   try {
-    raw = await renderManyRaw(glb, serializeImagesOptions(options));
+    const raw = await renderManyRaw(glb, serializeImagesOptions(options));
+    // Assembly is inside the funnel, as it is on the renderer façade: a
+    // malformed timings payload is a renderer contract violation, not a
+    // stray SyntaxError escaping the public taxonomy.
+    return assembleRenderedImages(options, raw);
   } catch (error) {
     throw RenderError.from(error);
   }
-  return assembleRenderedImages(options, raw);
 };
