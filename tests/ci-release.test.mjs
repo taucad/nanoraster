@@ -98,6 +98,31 @@ describe('CI release policy', () => {
 
   it('should reject a release from anything but protected main', () => {
     assert.throws(() => deriveRelease({ ...stable, ref: 'refs/heads/release' }), /protected main/u);
+    assert.throws(
+      () => deriveRelease({ ...stable, ref: 'refs/heads/topic', subject: 'fix: ordinary change' }),
+      /protected main/u,
+    );
+  });
+
+  it('should run a manual dispatch from any ref as evidence only', () => {
+    assert.deepEqual(
+      deriveRelease({
+        ...stable,
+        event: 'workflow_dispatch',
+        ref: 'refs/heads/codex/native-architecture-packages',
+        subject: 'fix: ordinary change',
+        changedFiles: ['src/index.ts'],
+      }),
+      { kind: 'dispatch', npmPublish: false, version: '0.1.0' },
+    );
+  });
+
+  it('should never publish a manual dispatch of a release commit on main', () => {
+    assert.deepEqual(deriveRelease({ ...stable, event: 'workflow_dispatch' }), {
+      kind: 'dispatch',
+      npmPublish: false,
+      version: '0.1.0',
+    });
   });
 
   it('should reject a malformed release subject on main', () => {

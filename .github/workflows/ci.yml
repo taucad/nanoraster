@@ -47,7 +47,9 @@ jobs:
             --changed-files-file /tmp/changed-files
       # The runtime evidence matrix is data, not a static matrix: pull requests
       # run the fast rows only, while main, release, and manual runs add the
-      # emulated and virtualized lanes that gate a release.
+      # emulated and virtualized lanes that gate a release. A manual run is
+      # evidence only — it derives `dispatch` from any ref and never publishes —
+      # so a pull request can prove those lanes on its own branch before merge.
       - id: smoke
         env:
           EVENT_NAME: ${{ github.event_name }}

@@ -42,6 +42,15 @@ const validateRelease = ({ changedFiles, changelog, packageVersion, subject }) =
   );
 };
 
+/**
+ * Classify one CI run: what evidence it owes, and whether it may publish.
+ *
+ * Publication has exactly one source — a `push` of an exact release commit to
+ * `refs/heads/main`. A `workflow_dispatch` is evidence only, from any ref: it
+ * exists so a pull request can prove the slow emulated and virtualized smoke
+ * lanes before merge, so it never publishes and never derives `release`, not
+ * even from main and not even when the head commit is a release commit.
+ */
 export const deriveRelease = ({
   event,
   ref,
@@ -64,7 +73,9 @@ export const deriveRelease = ({
     };
   }
 
-  assert(event === 'push' || event === 'workflow_dispatch', `unsupported event: ${event}`);
+  if (event === 'workflow_dispatch') return { kind: 'dispatch', npmPublish: false, version: packageVersion };
+
+  assert(event === 'push', `unsupported event: ${event}`);
   assert(ref === 'refs/heads/main', `publication source must be protected main: ${ref}`);
   if (!release) {
     assert(!subject.startsWith('chore(release): nanoraster v'), `malformed release subject: ${subject}`);
