@@ -21,9 +21,12 @@ test('the façade describes the adapter without loading the wasm', async () => {
   // Pure TypeScript over `navigator.gpu`: no browser tells us the device
   // class, so only a fallback adapter (Chromium under --enable-unsafe-webgpu)
   // may report `cpu`.
+  // Having no adapter is a value rather than a throw, so a browser that hands
+  // one out must still describe it in the published shape.
   for (const options of [undefined, { powerPreference: 'low-power' }]) {
     const adapter = await describeAdapter(options);
     console.log('adapter:', JSON.stringify(adapter));
+    if (adapter === undefined) continue;
     expect(adapter.backend).toBe('webgpu');
     expect(typeof adapter.name).toBe('string');
     expect(['cpu', 'unknown']).toContain(adapter.deviceType);

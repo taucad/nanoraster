@@ -626,19 +626,30 @@ pub async fn render_images_request(
 }
 
 /// Describe the adapter a [`Renderer`] built from `options_json` would bind,
-/// as JSON: `{"backend","name","deviceType"}`. Lets consumers distinguish
-/// absent WebGPU from a software (`"cpu"`) adapter before committing, and lets
-/// CI assert the expected backend (Metal/lavapipe/WARP).
-pub async fn describe_adapter(options_json: Option<&str>) -> Result<String, RenderError> {
+/// as JSON: `{"backend","name","deviceType"}`, or `None` when the host has no
+/// adapter. Lets consumers distinguish absent WebGPU from a software (`"cpu"`)
+/// adapter before committing, and lets CI assert the expected backend
+/// (Metal/lavapipe/WARP). Only invalid options are an error: having no adapter
+/// is an answer.
+pub async fn describe_adapter(options_json: Option<&str>) -> Result<Option<String>, RenderError> {
     let power = CreateRendererRequest::from_json(options_json)?.resolve()?;
-    let adapter = render::request_adapter(power).await?;
-    let info = adapter.get_info();
-    Ok(serde_json::json!({
-        "backend": info.backend.to_str(),
-        "name": info.name,
-        "deviceType": device_type_name(info.device_type),
-    })
-    .to_string())
+    Ok(adapter_description(
+        render::request_adapter(power).await.ok(),
+    ))
+}
+
+/// wgpu reports "no adapter" as a request error; the probe reports it as
+/// `None`, which is what every caller of the probe wants back.
+fn adapter_description(adapter: Option<wgpu::Adapter>) -> Option<String> {
+    let info = adapter?.get_info();
+    Some(
+        serde_json::json!({
+            "backend": info.backend.to_str(),
+            "name": info.name,
+            "deviceType": device_type_name(info.device_type),
+        })
+        .to_string(),
+    )
 }
 
 /// wgpu's device classes under the names the published `AdapterInfo` uses.
@@ -1011,7 +1022,8 @@ mod tests {
         assert_eq!(raw.len(), 192 * 192 * 4);
         let adapter: serde_json::Value = serde_json::from_str(
             &pollster::block_on(describe_adapter(Some(r#"{"powerPreference":"low-power"}"#)))
-                .expect("adapter description"),
+                .expect("adapter description")
+                .expect("an adapter on a test host"),
         )
         .expect("adapter JSON");
         assert!(
@@ -1060,6 +1072,11 @@ mod tests {
                 "unknown"
             ]
         );
+    }
+
+    #[test]
+    fn a_host_with_no_adapter_describes_nothing() {
+        assert_eq!(adapter_description(None), None);
     }
 
     #[test]

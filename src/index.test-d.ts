@@ -139,6 +139,10 @@ expectTypeOf(renderer.renderImages(glb, options)).toEqualTypeOf<typeof rendered>
 expectTypeOf(renderer.dispose).toEqualTypeOf<() => void>();
 expectTypeOf(renderer[Symbol.dispose]).toEqualTypeOf<() => void>();
 expectTypeOf(renderModule.createRenderer()).toEqualTypeOf<Promise<renderModule.Renderer>>();
+// The probe answers "none" with a value, and takes an optional cause as its
+// third and last constructor argument.
+expectTypeOf(renderModule.describeAdapter()).toEqualTypeOf<Promise<renderModule.AdapterInfo | undefined>>();
+expectTypeOf(renderModule.RenderError).toBeConstructibleWith('parse', 'parse: bad', new Error('x'));
 expectTypeOf(renderModule.createRenderer({ powerPreference: 'low-power' })).toEqualTypeOf<
   Promise<renderModule.Renderer>
 >();

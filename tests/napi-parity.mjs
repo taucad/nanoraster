@@ -32,7 +32,7 @@ const native =
    *     renderImages: (glb: Buffer, optionsJson: string) => Promise<{ images: Buffer[], timings?: string }>,
    *     dispose: () => void,
    *   }>,
-   *   describeAdapter: (optionsJson?: string) => string,
+   *   describeAdapter: (optionsJson?: string) => string | null,
    * }}
    */ (requireNative(nativePackage));
 
@@ -42,16 +42,20 @@ for (const gated of ['benchCodecs', 'benchMultiView', 'codecConformance']) {
   if (gated in native) throw new Error(`published addon exports the gated ${gated}`);
 }
 
-// The FFI hands the adapter over as JSON; the TS façade parses the same bytes.
-const adapter = JSON.parse(native.describeAdapter());
+// The FFI hands the adapter over as JSON, or null where the host has none; the
+// TS façade parses the same bytes.
+const described = native.describeAdapter();
+const adapter = described === null ? null : JSON.parse(described);
 console.log('adapter:', adapter);
-if (!['metal', 'vulkan', 'dx12', 'webgpu'].includes(adapter.backend))
-  throw new Error(`unexpected adapter backend: ${adapter.backend}`);
-if (typeof adapter.name !== 'string') throw new Error('adapter name is not a string');
-if (!['discrete-gpu', 'integrated-gpu', 'virtual-gpu', 'cpu', 'unknown'].includes(adapter.deviceType))
-  throw new Error(`unexpected adapter device type: ${adapter.deviceType}`);
-const lowPower = JSON.parse(native.describeAdapter(JSON.stringify({ powerPreference: 'low-power' })));
-console.log('low-power adapter:', lowPower);
+if (adapter !== null) {
+  if (!['metal', 'vulkan', 'dx12', 'webgpu'].includes(adapter.backend))
+    throw new Error(`unexpected adapter backend: ${adapter.backend}`);
+  if (typeof adapter.name !== 'string') throw new Error('adapter name is not a string');
+  if (!['discrete-gpu', 'integrated-gpu', 'virtual-gpu', 'cpu', 'unknown'].includes(adapter.deviceType))
+    throw new Error(`unexpected adapter device type: ${adapter.deviceType}`);
+}
+const lowPower = native.describeAdapter(JSON.stringify({ powerPreference: 'low-power' }));
+console.log('low-power adapter:', lowPower === null ? null : JSON.parse(lowPower));
 
 const glb = readFileSync(join(here, 'fixtures', 'gear-12.glb'));
 const interleavedGlb = readFileSync(join(here, 'fixtures', 'interleaved-instanced-lines.glb'));

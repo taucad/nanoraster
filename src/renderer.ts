@@ -60,7 +60,7 @@ type NapiRenderer = {
 
 type NapiModule = {
   createRenderer: (optionsJson?: string) => Promise<NapiRenderer>;
-  describeAdapter: (optionsJson?: string) => string;
+  describeAdapter: (optionsJson?: string) => string | null;
 };
 
 const nativePackages = {
@@ -212,8 +212,9 @@ export const createRendererRaw = async (optionsJson: string | undefined): Promis
 };
 
 /**
- * The native addon's adapter description, as JSON. Browsers never reach this:
- * they read `navigator.gpu` in TypeScript instead. @internal
+ * The native addon's adapter description, as JSON, or `null` when the host has
+ * no adapter. Browsers never reach this: they read `navigator.gpu` in
+ * TypeScript instead. @internal
  */
-export const describeAdapterRaw = async (optionsJson: string | undefined): Promise<string> =>
+export const describeAdapterRaw = async (optionsJson: string | undefined): Promise<string | null> =>
   (await nativeModule()).describeAdapter(optionsJson);

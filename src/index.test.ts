@@ -411,24 +411,27 @@ describe('describeAdapter', () => {
     expect(requestAdapter).toHaveBeenCalledWith({ powerPreference: 'high-performance' });
   });
 
-  it('should report a browser without WebGPU as adapter-unavailable', async () => {
+  it('should describe a browser without WebGPU as no adapter', async () => {
     node.mockReturnValue(false);
     Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {} });
 
-    await expect(describeAdapter()).rejects.toMatchObject({
-      code: 'adapter-unavailable',
-      message: 'adapter-unavailable: this environment exposes no navigator.gpu',
-    });
+    await expect(describeAdapter()).resolves.toBeUndefined();
   });
 
-  it('should report a browser that hands out no adapter as adapter-unavailable', async () => {
+  it('should describe a browser that hands out no adapter as no adapter', async () => {
     node.mockReturnValue(false);
-    stubGpu(null);
+    const requestAdapter = stubGpu(null);
 
-    await expect(describeAdapter()).rejects.toMatchObject({
-      code: 'adapter-unavailable',
-      message: 'adapter-unavailable: navigator.gpu returned no adapter',
-    });
+    await expect(describeAdapter()).resolves.toBeUndefined();
+    expect(requestAdapter).toHaveBeenCalledWith(undefined);
+  });
+
+  it('should describe a native host with no adapter as no adapter', async () => {
+    node.mockReturnValue(true);
+    adapter.mockResolvedValue(null);
+
+    await expect(describeAdapter()).resolves.toBeUndefined();
+    expect(adapter).toHaveBeenCalledWith(undefined);
   });
 });
 

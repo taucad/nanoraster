@@ -58,17 +58,12 @@ const parseAdapterInfo = (json: string): AdapterInfo => {
 
 const browserAdapterInfo = async (
   powerPreference: CreateRendererOptions['powerPreference'],
-): Promise<AdapterInfo> => {
+): Promise<AdapterInfo | undefined> => {
   const gpu = (globalThis.navigator as { gpu?: BrowserGpu } | undefined)?.gpu;
-  if (gpu === undefined) {
-    throw new RenderError(
-      'adapter-unavailable',
-      'adapter-unavailable: this environment exposes no navigator.gpu',
-    );
-  }
-  const adapter = await gpu.requestAdapter(powerPreference === undefined ? undefined : { powerPreference });
-  if (adapter === null) {
-    throw new RenderError('adapter-unavailable', 'adapter-unavailable: navigator.gpu returned no adapter');
+  // No `navigator.gpu` and no adapter behind it are the same answer: none.
+  const adapter = await gpu?.requestAdapter(powerPreference === undefined ? undefined : { powerPreference });
+  if (adapter === undefined || adapter === null) {
+    return undefined;
   }
   const { vendor, architecture, description, isFallbackAdapter } = adapter.info;
   return {
@@ -84,21 +79,32 @@ const browserAdapterInfo = async (
   };
 };
 
+const nativeAdapterInfo = async (optionsJson: string | undefined): Promise<AdapterInfo | undefined> => {
+  const json = await describeAdapterRaw(optionsJson);
+  return json === null ? undefined : parseAdapterInfo(json);
+};
+
 /**
  * Describe the adapter a renderer created with these options would bind — the
  * preflight for telling absent WebGPU from a software rasterizer, which
  * renders correctly but an order of magnitude slower. A browser exposing
  * `navigator.gpu` rules out neither.
  *
+ * Having no adapter is an answer, not a fault: the probe resolves `undefined`
+ * for it. It rejects only when the options are invalid ({@link RenderError}
+ * code `parse`) or the host describes an adapter this package cannot read
+ * (`unknown`).
+ *
  * @public
  * @param options - The same GPU selection hints {@link createRenderer} takes
- * @returns The adapter's backend, device name, and device class
+ * @returns The adapter's backend, device name, and device class, or
+ *   `undefined` when the host has no adapter
  */
-export const describeAdapter = async (options?: CreateRendererOptions): Promise<AdapterInfo> => {
+export const describeAdapter = async (options?: CreateRendererOptions): Promise<AdapterInfo | undefined> => {
   try {
     const optionsJson = serializeCreateOptions(options);
     return isNodeRuntime()
-      ? parseAdapterInfo(await describeAdapterRaw(optionsJson))
+      ? await nativeAdapterInfo(optionsJson)
       : await browserAdapterInfo(options?.powerPreference);
   } catch (error) {
     throw RenderError.from(error);

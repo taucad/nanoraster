@@ -58,7 +58,7 @@ export class RenderError extends Error {
     }
 
     const message = error instanceof Error ? error.message : String(error);
-    return new RenderError(classify(message), message);
+    return new RenderError(classify(message), message, error);
   }
 
   /** Stable machine-readable failure classification. */
@@ -69,9 +69,10 @@ export class RenderError extends Error {
    *
    * @param code - Failure taxonomy code.
    * @param message - Human-readable message (typically the core's tagged text).
+   * @param cause - The value this error wraps, kept for its stack.
    */
-  public constructor(code: RenderFailureCode, message: string) {
-    super(message);
+  public constructor(code: RenderFailureCode, message: string, cause?: unknown) {
+    super(message, { cause });
     this.name = 'RenderError';
     this.code = code;
   }

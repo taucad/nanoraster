@@ -267,9 +267,9 @@ pub fn codec_conformance() -> Result<String> {
 }
 
 /// The adapter a renderer created with `options_json` would bind, as JSON:
-/// `{"backend","name","deviceType"}`. `"deviceType":"cpu"` means software
-/// rasterization.
+/// `{"backend","name","deviceType"}`, or `null` when the host has no adapter.
+/// `"deviceType":"cpu"` means software rasterization.
 #[napi]
-pub fn describe_adapter(options_json: Option<String>) -> Result<String> {
+pub fn describe_adapter(options_json: Option<String>) -> Result<Option<String>> {
     pollster::block_on(render_core::describe_adapter(options_json.as_deref())).map_err(map_error)
 }

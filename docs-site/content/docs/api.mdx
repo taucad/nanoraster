@@ -159,14 +159,14 @@ Describe the adapter a renderer created with these options would bind; pass
 the same `powerPreference` you would pass `createRenderer`.
 
 ```typescript
-export declare const describeAdapter: (options?: CreateRendererOptions) => Promise<AdapterInfo>;
+export declare const describeAdapter: (options?: CreateRendererOptions) => Promise<AdapterInfo | undefined>;
 ```
 
 `deviceType === 'cpu'` means software rasterisation, an order of magnitude
 slower; use this as the preflight when performance matters. Native hosts
 report the full device class; browsers report `'unknown'` unless the adapter
-declares itself a fallback, and reject with `adapter-unavailable` when none is
-usable.
+declares itself a fallback. No adapter resolves `undefined`; only invalid
+options reject.
 
 ### `AdapterInfo`
 

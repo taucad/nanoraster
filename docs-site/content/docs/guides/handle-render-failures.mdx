@@ -81,15 +81,16 @@ try {
 `adapter-unavailable` means no adapter at all. A host can also succeed with a
 _software_ adapter — SwiftShader, lavapipe, WARP — that renders correctly but
 an order of magnitude slower. `describeAdapter` is the preflight that
-separates the two before you commit to a workload:
+separates the two before you commit to a workload. It resolves `undefined`
+when there is no adapter, rather than rejecting:
 
 ```typescript
 import { describeAdapter } from 'nanoraster';
 
-const adapter = await describeAdapter().catch(() => undefined);
+const adapter = await describeAdapter();
 
-if (adapter === undefined) {
-  // adapter-unavailable: fall back now, nothing will render.
+if (!adapter) {
+  // Nothing will render here: fall back now.
 } else if (adapter.deviceType === 'cpu') {
   // Renders work; budget ~10x the usual latency or reduce sizes.
 }

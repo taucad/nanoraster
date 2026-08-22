@@ -10,28 +10,20 @@ asset; Vite, webpack 5 and Rspack all do without configuration, and
 
 ### 1. Check for a WebGPU adapter first
 
-Rendering fails with a typed error when no adapter exists; check first and
-choose a fallback before any work.
-
-```typescript
-const supported = typeof navigator !== 'undefined' && 'gpu' in navigator;
-
-if (!supported) {
-  throw new Error('This browser has no WebGPU support.');
-}
-```
-
 `navigator.gpu` is necessary but not sufficient: a browser can expose the API
 and still produce no adapter, or a software one. `describeAdapter()` names what
-you got without downloading the wasm; `'cpu'` means software rasterisation, an
-order of magnitude slower. Handle
-[`adapter-unavailable`](handle-render-failures) too.
+you got without downloading the wasm, and resolves `undefined` where there is
+nothing to bind. Check it before any work; `'cpu'` means software
+rasterisation, an order of magnitude slower.
 
 ```typescript
 import { describeAdapter } from 'nanoraster';
 
 const adapter = await describeAdapter();
-if (adapter.deviceType === 'cpu') {
+
+if (!adapter) {
+  // No WebGPU here: show a still image, or render on a server instead.
+} else if (adapter.deviceType === 'cpu') {
   console.warn(`software rasterizer: ${adapter.name}`);
 }
 ```
