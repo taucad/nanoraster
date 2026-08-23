@@ -89,9 +89,10 @@ Node.js's own worker pool and every thread Rust spawns, keep theirs.
 Both armv7 packages behave the same way, and the host's Vulkan driver decides
 what happens. Lavapipe from mesa 23 onwards crashes in `handle_vertex_buffers2`,
 in `src/gallium/frontends/lavapipe/lvp_execute.c`, on 32-bit ARM, replaying a
-vertex-buffer bind through a stride pointer it never wrote. On a 32-bit ARM host
-nanoraster reads the adapter's driver version before it creates a device, and
-refuses such a driver with a `RenderError` carrying code `driver-unsupported`.
+vertex-buffer bind through a stride pointer it never wrote. On a 32-bit ARM
+Linux host nanoraster reads the adapter's driver version before it creates a
+device, and refuses such a driver with a `RenderError` carrying code
+`driver-unsupported`.
 The refusal names the defect, and it holds until mesa ships a fix.
 
 Below the break both packages render. `smoke (linux-arm-gnueabihf, 22.13.0)`
@@ -101,9 +102,10 @@ the Alpine 3.17 repository, whose mesa 22.2.5 is the last release before the
 break. Above it, `smoke (linux-arm-gnueabihf, 22)` on Debian trixie and
 `smoke (linux-arm-musleabihf, 22)` on current Alpine assert the refusal instead.
 
-`NANORASTER_ALLOW_UNSUPPORTED_DRIVER=1` renders on a refused driver anyway, and
-the process then dies inside mesa as it did before the guard existed. Set it on
-a mesa build that carries a fix, or on a host that proves the guard wrong.
+`NANORASTER_ALLOW_UNSUPPORTED_DRIVER=1` skips the refusal and creates the device
+anyway, which is what 0.4.0 did: on every host measured so far the render then
+dies inside mesa. Set it on a mesa build that carries a fix, or on a host that
+proves the guard wrong.
 
 Every armv7 row runs under `qemu-user` on hosted x64 runners. Those rows name
 the lavapipe ICD in `VK_DRIVER_FILES` because the emulated 32-bit Vulkan loader

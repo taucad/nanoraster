@@ -16,8 +16,8 @@
  * - `device-lost` — the GPU device dropped mid-render (Safari 26 bug, driver
  *   reset). Keep-last-image case; retries on the next geometry settle.
  * - `driver-unsupported` — the host's driver faults mid-render on this
- *   architecture, so the render is refused first (32-bit ARM, lavapipe from
- *   mesa 23 on). Deterministic: no retry, no keep-last-image.
+ *   platform, so the render is refused first (32-bit ARM Linux, lavapipe from
+ *   mesa 23 on). Deterministic: no retry or keep-last-image.
  * - `gpu` — any other GPU/driver fault during the render pass.
  * - `parse` — malformed GLB or out-of-range options.
  * - `encode` — encoder failure (e.g. JPEG requested for a translucent render).
