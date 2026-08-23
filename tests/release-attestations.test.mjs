@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { cpSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { readNapiTargets } from '../scripts/lib/napi-targets.mjs';
 import { verifyReleaseAttestations } from '../scripts/verify-release-attestations.mjs';
@@ -234,6 +239,39 @@ describe('release attestation verification', () => {
         { message, name: 'Error' },
         message,
       );
+    }
+  });
+
+  it('should verify from a checkout that installed no dependencies', () => {
+    // `registry-verify` checks the repository out, downloads the frozen
+    // tarballs and runs this script against the registry: it builds nothing, so
+    // it installs nothing. Copying the scripts and the manifest somewhere with
+    // no `node_modules` above them reproduces that resolution exactly, and any
+    // dependency anywhere in the module graph fails with ERR_MODULE_NOT_FOUND.
+    const root = fileURLToPath(new URL('..', import.meta.url));
+    // The script runs its command line only when `process.argv[1]` matches its
+    // own resolved URL, and macOS hands out temporary paths behind a symlink.
+    const work = realpathSync(mkdtempSync(join(tmpdir(), 'nanoraster-verifier-')));
+    try {
+      cpSync(join(root, 'scripts'), join(work, 'scripts'), { recursive: true });
+      cpSync(join(root, 'package.json'), join(work, 'package.json'));
+      writeFileSync(join(work, 'audit.json'), JSON.stringify(options.audit));
+      writeFileSync(join(work, 'tarballs.json'), JSON.stringify(options.tarballs));
+
+      const output = execFileSync(
+        process.execPath,
+        [
+          join(work, 'scripts', 'verify-release-attestations.mjs'),
+          join(work, 'audit.json'),
+          join(work, 'tarballs.json'),
+          commit,
+          runId,
+        ],
+        { cwd: work, encoding: 'utf8' },
+      );
+      assert.equal(output.trim(), 'release provenance matches taucad/nanoraster ci.yml');
+    } finally {
+      rmSync(work, { force: true, recursive: true });
     }
   });
 

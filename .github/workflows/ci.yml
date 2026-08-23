@@ -137,6 +137,7 @@ jobs:
           tests/test-package.test.mjs
           tests/inspect-native.test.mjs
           tests/check-prepared-release.test.mjs
+          tests/napi-targets.test.mjs
           tests/pack-test-tarballs.test.mjs
           tests/registry-wait.test.mjs
       - name: Require a Version Plan for release-affecting changes
