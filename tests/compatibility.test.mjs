@@ -148,6 +148,18 @@ describe('compatibility matrix', () => {
     assert.match(armv7.slice(0, armv7.indexOf('\n### ')), /`driver-unsupported`/u);
   });
 
+  it('should hold no pending row whose evidence job a release requires', () => {
+    // `Pending` promotes on the named job's first green run, and a release cannot ship until
+    // every job `ci-gate` requires is green. A `Pending` row citing one of those jobs is a
+    // promotion nobody performed, so the table lags the release it already shipped.
+    const unpromoted = hostRows
+      .filter(({ support }) => support === 'Pending')
+      .map(({ evidence, name }) => ({ evidence: parseEvidence(evidence), name }))
+      .filter(({ evidence }) => requiredJobs.has(evidence.job))
+      .map(({ evidence, name }) => `${name} stays Pending although a release requires ${evidence.job}`);
+    assert.deepEqual(unpromoted, []);
+  });
+
   it('should keep both Android rows on build evidence alone', () => {
     const android = hostRows.filter(({ name }) => name.includes('nanoraster-android-'));
     assert.equal(android.length, 2);

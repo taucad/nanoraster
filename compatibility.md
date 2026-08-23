@@ -27,19 +27,19 @@ the binary out of it.
 | Platform package                  | Host                          | Support      | CI evidence                             |
 | --------------------------------- | ----------------------------- | ------------ | --------------------------------------- |
 | `nanoraster-darwin-arm64`         | macOS on Apple Silicon        | ✅           | `smoke (darwin-arm64, 26)`              |
-| `nanoraster-darwin-x64`           | macOS on Intel                | Pending      | `smoke (darwin-x64, 26)`                |
+| `nanoraster-darwin-x64`           | macOS on Intel                | ✅           | `smoke (darwin-x64, 26)`                |
 | `nanoraster-linux-x64-gnu`        | Linux x64, glibc              | ✅           | `smoke (linux-x64-gnu, 26)`             |
-| `nanoraster-linux-x64-musl`       | Linux x64, musl               | Pending      | `smoke (linux-x64-musl, 26)`            |
-| `nanoraster-linux-arm64-gnu`      | Linux arm64, glibc            | Pending      | `smoke (linux-arm64-gnu, 26)`           |
-| `nanoraster-linux-arm64-musl`     | Linux arm64, musl             | Pending      | `smoke (linux-arm64-musl, 26)`          |
+| `nanoraster-linux-x64-musl`       | Linux x64, musl               | ✅           | `smoke (linux-x64-musl, 26)`            |
+| `nanoraster-linux-arm64-gnu`      | Linux arm64, glibc            | ✅           | `smoke (linux-arm64-gnu, 26)`           |
+| `nanoraster-linux-arm64-musl`     | Linux arm64, musl             | ✅           | `smoke (linux-arm64-musl, 26)`          |
 | `nanoraster-linux-arm-gnueabihf`  | Linux armv7 hard-float, glibc | ✅           | `smoke (linux-arm-gnueabihf, 22.13.0)`  |
 | `nanoraster-linux-arm-musleabihf` | Linux armv7 hard-float, musl  | ✅           | `smoke (linux-arm-musleabihf, 22.13.0)` |
-| `nanoraster-linux-ppc64-gnu`      | Linux ppc64le, glibc          | Pending      | `smoke (linux-ppc64-gnu, 26)`           |
-| `nanoraster-linux-s390x-gnu`      | Linux s390x, glibc            | Pending      | `smoke (linux-s390x-gnu, 26)`           |
+| `nanoraster-linux-ppc64-gnu`      | Linux ppc64le, glibc          | ✅           | `smoke (linux-ppc64-gnu, 26)`           |
+| `nanoraster-linux-s390x-gnu`      | Linux s390x, glibc            | ✅           | `smoke (linux-s390x-gnu, 26)`           |
 | `nanoraster-win32-x64-msvc`       | Windows on x64                | ✅           | `smoke (win32-x64-msvc, 26)`            |
-| `nanoraster-win32-arm64-msvc`     | Windows on arm64              | Pending      | `smoke (win32-arm64-msvc, 26)`          |
-| `nanoraster-win32-ia32-msvc`      | Windows on x86                | Pending      | `smoke (win32-ia32-msvc, 22)`           |
-| `nanoraster-freebsd-x64`          | FreeBSD on x64                | Pending      | `smoke (freebsd-x64, 22)`               |
+| `nanoraster-win32-arm64-msvc`     | Windows on arm64              | ✅           | `smoke (win32-arm64-msvc, 26)`          |
+| `nanoraster-win32-ia32-msvc`      | Windows on x86                | ✅           | `smoke (win32-ia32-msvc, 22)`           |
+| `nanoraster-freebsd-x64`          | FreeBSD on x64                | ✅           | `smoke (freebsd-x64, 22)`               |
 | `nanoraster-android-arm64`        | Android on arm64              | Experimental | `build (aarch64-linux-android)`         |
 | `nanoraster-android-arm-eabi`     | Android on armv7              | Experimental | `build (armv7-linux-androideabi)`       |
 
