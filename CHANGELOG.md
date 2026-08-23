@@ -1,3 +1,17 @@
+## 0.4.1 (2026-08-23)
+
+### 🩹 Fixes
+
+- The release smoke now accepts both 32-bit ARM platform packages. The hard-float ABI carries no libc selector, so npm installs the pair on an armv7 host and the loader picks one; the smoke reads the loaded shared objects to prove it picked the one under test. A rule derived from the configured targets still rejects any other pairing, and an emulated armv7 row joins the registry smoke so a release exercises it. ([#53](https://github.com/taucad/nanoraster/pull/53))
+- Refuse to render on a 32-bit ARM Linux host whose Vulkan driver is mesa's lavapipe from mesa 23 onwards, where the driver faults mid-render and takes the process down. `renderImage` and `createRenderer` now reject with a `RenderError` carrying the new code `driver-unsupported`, whose message names the upstream defect. Older lavapipe releases and every other platform render as before. Set `NANORASTER_ALLOW_UNSUPPORTED_DRIVER=1` to render on a refused driver anyway. ([#54](https://github.com/taucad/nanoraster/pull/54))
+- The compatibility table no longer holds a row waiting for a promotion its render job already earned. Nine rows read `Pending` although the 0.4.0 release run rendered on each of them, because the legend's promotion rule had no enforcement behind it. A row that stays `Pending` while a release requires the job it cites now fails the compatibility test, so the table cannot lag the release it shipped. ([#51](https://github.com/taucad/nanoraster/pull/51))
+- Derive the platform-package contract from `package.json.napi` without importing the NAPI-RS CLI. The job that verifies published provenance checks the repository out and reads the registry, so it installs nothing, and the development dependency behind the target parser left it unable to load the verifier at all. The derivation is held to the CLI's own parser by a unit test, and to the generated `npm/` tree by the assembly check that compares them. ([#48](https://github.com/taucad/nanoraster/pull/48))
+- Verify every continuous integration artifact download landed before its consumer runs, and retry the download once when it did not, so a silently empty download fails at the boundary that caused it rather than as an unrelated missing-file error minutes later. ([#47](https://github.com/taucad/nanoraster/pull/47))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.4.0 (2026-08-22)
 
 ### 🚀 Features
