@@ -730,19 +730,38 @@ jobs:
             '${{ github.sha }}' \
             '${{ github.run_id }}'
 
+  # The armv7 row is the only host where npm keeps two platform packages: the
+  # `eabihf` ABI carries no `libc` selector, so both armv7 packages install and
+  # the loader picks one at runtime. It runs emulated, like its `smoke`
+  # counterpart, and names the lavapipe manifest for the same qemu-user
+  # `readdir` artefact. `label` rather than `os` names the job because two rows
+  # now run on `ubuntu-24.04`.
   registry-smoke:
-    name: registry-smoke (${{ matrix.os }})
+    name: registry-smoke (${{ matrix.label }})
     needs: [preflight, registry-verify]
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
+          - label: linux-x64-gnu
+            os: ubuntu-24.04
+            recipe: host
             suffix: linux-x64-gnu
-          - os: macos-latest
+          - label: darwin-arm64
+            os: macos-latest
+            recipe: host
             suffix: darwin-arm64
-          - os: windows-2022
+          - label: win32-x64-msvc
+            os: windows-2022
+            recipe: host
             suffix: win32-x64-msvc
+          - label: linux-arm-gnueabihf-qemu
+            os: ubuntu-24.04
+            recipe: container
+            suffix: linux-arm-gnueabihf
+            platform: linux/arm/v7
+            image: node:22-bookworm-slim
     runs-on: ${{ matrix.os }}
     env:
       NANORASTER_NATIVE_SUFFIX: ${{ matrix.suffix }}
@@ -753,13 +772,29 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: matrix.recipe == 'host'
         with:
           node-version: '26'
       - name: Install lavapipe software Vulkan
-        if: runner.os == 'Linux'
+        if: matrix.recipe == 'host' && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
       - name: Install the published package the way a consumer does
+        if: matrix.recipe == 'host'
         run: node scripts/test-package.mjs
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        if: matrix.recipe == 'container'
+      - name: Install the published package the way a consumer does in a container
+        if: matrix.recipe == 'container'
+        env:
+          IMAGE: ${{ matrix.image }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          docker run --rm --platform "$PLATFORM" \
+            --volume "$PWD:/nanoraster" --workdir /nanoraster \
+            --env NANORASTER_NATIVE_SUFFIX \
+            --env NANORASTER_REGISTRY_VERSION \
+            --env NAPI_RS_ENFORCE_VERSION_CHECK \
+            "$IMAGE" sh -c 'apt-get update && apt-get install -y --no-install-recommends mesa-vulkan-drivers && export VK_DRIVER_FILES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json) && node scripts/test-package.mjs'
 
   registry-release:
     if: always() && needs.registry-smoke.result == 'success'

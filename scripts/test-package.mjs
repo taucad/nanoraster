@@ -6,9 +6,10 @@
  * Tarball mode (`NANORASTER_TARBALL_DIR`) installs the frozen root tarball plus
  * the frozen `nanoraster-<suffix>` tarball; registry mode
  * (`NANORASTER_REGISTRY_VERSION`) installs the published root the way a
- * consumer does and proves npm selected that one platform package. The caller
- * always names the suffix in `NANORASTER_NATIVE_SUFFIX`: this script holds no
- * host-to-target map, because the generated loader owns selection.
+ * consumer does, proves npm's selectors kept only the packages they can keep,
+ * and proves the loader opened the named one. The caller always names the
+ * suffix in `NANORASTER_NATIVE_SUFFIX`: this script holds no host-to-target
+ * map, because the generated loader owns selection.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -17,6 +18,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspect } from 'node:util';
+
+import { readNapiTargets } from './lib/napi-targets.mjs';
 
 const ROOT_PACKAGE = 'nanoraster';
 const SUFFIX_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
@@ -142,6 +145,113 @@ export const detectPlatformPackages = (entries, configuredNames) => {
 };
 
 /**
+ * Name the platform package this run expects, and the ones npm legitimately
+ * installs beside it.
+ *
+ * NAPI-RS writes a `libc` selector for the `gnu` and `musl` ABIs only, so the
+ * two armv7 `eabihf` packages carry none: npm keeps both on an armv7 host and
+ * the generated loader probes the runtime to pick one. Every other `os`/`cpu`
+ * pair is split by `libc`, so npm resolves it to a single package. The rule
+ * reads that property off the configured targets rather than naming any
+ * package, so a change to `napi.targets` moves it without an edit here.
+ *
+ * @param {string} suffix - Platform suffix the caller named.
+ * @param {Array<{ cpu: string, libc?: string | undefined, name: string, os: string, suffix: string }>} targets - Configured platform packages.
+ * @returns {{ expected: string, siblings: string[] }} Expected package and the siblings no selector excludes.
+ */
+export const expectedPlatformPackageSet = (suffix, targets) => {
+  const expected = targets.find((target) => target.suffix === suffix);
+  if (expected === undefined) {
+    throw new Error(`${ROOT_PACKAGE}.napi.targets configures no ${ROOT_PACKAGE}-${suffix}`);
+  }
+  return {
+    expected: expected.name,
+    siblings: targets
+      .filter(
+        (target) =>
+          target.name !== expected.name &&
+          target.libc === undefined &&
+          target.os === expected.os &&
+          target.cpu === expected.cpu,
+      )
+      .map((target) => target.name)
+      .sort(),
+  };
+};
+
+/**
+ * Settle an installed platform package listing against that rule.
+ *
+ * @param {string[]} installed - Configured platform packages the install holds.
+ * @param {{ expected: string, siblings: string[] }} rule - Expected package and its siblings.
+ * @returns {string} The evidence line naming what npm installed.
+ */
+export const checkInstalledPlatformPackages = (installed, { expected, siblings }) => {
+  const allowed = new Set([expected, ...siblings]);
+  if (!installed.includes(expected) || installed.some((name) => !allowed.has(name))) {
+    const beside = siblings.length === 0 ? '' : `, optionally beside ${siblings.join(', ')}`;
+    throw new Error(
+      `expected the platform package ${expected}${beside}, but installed: ${installed.join(', ') || 'none'}`,
+    );
+  }
+  const beside = installed.filter((name) => name !== expected);
+  return beside.length === 0 ? expected : `${expected} beside ${beside.join(', ')}`;
+};
+
+/**
+ * Name every platform package whose native binding the process has open.
+ *
+ * `process.report` lists the shared objects the process loaded, the addon among
+ * them, which is the only builtin-only way to prove which of two installed
+ * packages the generated loader actually selected. Module paths are matched by
+ * directory name so a Windows path reads the same as a POSIX one.
+ *
+ * @param {readonly string[]} sharedObjects - `process.report.getReport().sharedObjects`.
+ * @param {Iterable<string>} platformNames - Platform package names to look for.
+ * @returns {string[]} Sorted names whose binding is loaded.
+ */
+export const selectedPlatformPackages = (sharedObjects, platformNames) => {
+  const wanted = new Set(platformNames);
+  /** @type {Set<string>} */
+  const loaded = new Set();
+  for (const object of sharedObjects) {
+    const path = String(object).replaceAll('\\', '/');
+    if (!path.endsWith('.node')) continue;
+    for (const segment of path.split('/')) if (wanted.has(segment)) loaded.add(segment);
+  }
+  return [...loaded].sort();
+};
+
+/**
+ * Settle which platform binding the generated loader opened.
+ *
+ * A binding from any other installed package is always wrong. An absent
+ * listing is another matter: Windows reports no addon among its shared objects
+ * before Node 22.14, and 22.13.0 is the supported floor. That only costs
+ * evidence where npm resolved a single package, because the install listing
+ * already proves which package the loader had to open; where npm kept more
+ * than one, nothing else proves the choice, so an absent listing fails.
+ *
+ * @param {string[]} loaded - Platform packages whose binding is open.
+ * @param {string} expected - Platform package this run smokes.
+ * @param {string[]} installed - Configured platform packages the install holds.
+ * @returns {string} The evidence line.
+ */
+export const settleLoaderSelection = (loaded, expected, installed) => {
+  const strays = loaded.filter((name) => name !== expected);
+  if (strays.length > 0) {
+    throw new Error(`the loader opened ${strays.join(', ')}, expected ${expected}`);
+  }
+  if (loaded.includes(expected)) return `loader selected: ${expected}`;
+  if (installed.length > 1) {
+    throw new Error(
+      `the loader opened no platform binding out of ${installed.join(', ')}, so nothing proves it selected ${expected}`,
+    );
+  }
+  return `loader selection unproven: this runtime lists no addon among its shared objects, and ${expected} is the only platform package installed`;
+};
+
+/**
  * Read the reason a smoke row expects its render to fault, when it carries one.
  *
  * A row names one only for a driver defect the platform cannot render around;
@@ -231,7 +341,7 @@ const installedPlatformPackages = (work, configuredNames) =>
 const consumerSource = (helperUrl) => `import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { formatCauseChain } from ${JSON.stringify(helperUrl)};
+import { formatCauseChain, selectedPlatformPackages, settleLoaderSelection } from ${JSON.stringify(helperUrl)};
 
 const [phase, fixture] = process.argv.slice(2);
 try {
@@ -245,6 +355,13 @@ try {
     const adapter = await api.describeAdapter();
     assert.ok(adapter, 'no Vulkan adapter is available to render on');
     console.log('adapter:', adapter);
+    // The addon is open by now, so the loaded shared objects say which of the
+    // installed platform packages the generated loader chose. On a host where
+    // npm installs more than one, this is the only proof it chose right.
+    const installed = JSON.parse(process.env['NANORASTER_SMOKE_INSTALLED']);
+    const expected = process.env['NANORASTER_SMOKE_EXPECTED'];
+    const loaded = selectedPlatformPackages(process.report.getReport().sharedObjects, installed);
+    console.log(settleLoaderSelection(loaded, expected, installed));
   } else {
     const glb = await readFile(fixture);
     const image = await api.renderImage(new Uint8Array(glb), { format: 'png', width: 64, height: 64 });
@@ -267,7 +384,14 @@ assert.throws(() => require('nanoraster'), /nanoraster is ESM-only; use import\\
 const main = () => {
   const suffix = requireNativeSuffix(process.env);
   const mode = resolveSmokeMode(process.env);
-  const platformName = `${ROOT_PACKAGE}-${suffix}`;
+  // The rule comes off this checkout's `napi.targets`, which is what the
+  // release under test was configured from; `readNapiTargets` resolves no
+  // package, so the clean room stays dependency-free.
+  const rule = expectedPlatformPackageSet(
+    suffix,
+    readNapiTargets(new URL('../package.json', import.meta.url)).packages,
+  );
+  const platformName = rule.expected;
   const fixture = fileURLToPath(new URL('../tests/fixtures/gear-12.glb', import.meta.url));
   const work = mkdtempSync(join(tmpdir(), 'nanoraster-package-'));
 
@@ -302,20 +426,20 @@ const main = () => {
     configuredNames ??= Object.keys(installedManifest.optionalDependencies ?? {});
 
     const installed = installedPlatformPackages(work, configuredNames);
-    if (installed.length !== 1 || installed[0] !== platformName) {
-      throw new Error(
-        `expected exactly one platform package, ${platformName}, but installed: ${installed.join(', ') || 'none'}`,
-      );
-    }
-    console.log(`installed platform package: ${installed[0]}`);
+    console.log(`installed platform packages: ${checkInstalledPlatformPackages(installed, rule)}`);
 
     writeFileSync(join(work, 'consumer.mjs'), consumerSource(import.meta.url));
     const runConsumer = (...phase) =>
       execFileSync(process.execPath, ['consumer.mjs', ...phase], {
         cwd: work,
-        // The loader's version check is a runtime opt-in; a published release
-        // is where a drifted platform package could actually reach a consumer.
-        env: { ...process.env, ...(mode.kind === 'registry' ? { NAPI_RS_ENFORCE_VERSION_CHECK: '1' } : {}) },
+        env: {
+          ...process.env,
+          NANORASTER_SMOKE_EXPECTED: platformName,
+          NANORASTER_SMOKE_INSTALLED: JSON.stringify(installed),
+          // The loader's version check is a runtime opt-in; a published release
+          // is where a drifted platform package could actually reach a consumer.
+          ...(mode.kind === 'registry' ? { NAPI_RS_ENFORCE_VERSION_CHECK: '1' } : {}),
+        },
         stdio: 'inherit',
       });
     runConsumer('adapter');

@@ -4,14 +4,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
+import { readNapiTargets } from '../scripts/lib/napi-targets.mjs';
 import {
+  checkInstalledPlatformPackages,
   detectPlatformPackages,
+  expectedPlatformPackageSet,
   formatCauseChain,
   readFrozenManifest,
   requireNativeSuffix,
   resolveExpectedRenderFault,
   resolveSmokeMode,
+  selectedPlatformPackages,
   selectTarballs,
+  settleLoaderSelection,
   settleRenderOutcome,
 } from '../scripts/test-package.mjs';
 
@@ -161,6 +166,174 @@ describe('installed platform packages', () => {
 
   it('should return no platform package when the release configures none', () => {
     assert.deepEqual(detectPlatformPackages(['nanoraster-first-arch'], ['nanoraster']), []);
+  });
+});
+
+describe('platform package rule', () => {
+  // NAPI-RS emits `libc` for the `gnu` and `musl` ABIs only, so the two
+  // `eabihf` rows carry none and npm installs both on any armv7 host.
+  const targets = [
+    { cpu: 'arm64', name: 'nanoraster-darwin-arm64', os: 'darwin', suffix: 'darwin-arm64' },
+    { cpu: 'arm', name: 'nanoraster-linux-arm-gnueabihf', os: 'linux', suffix: 'linux-arm-gnueabihf' },
+    { cpu: 'arm', name: 'nanoraster-linux-arm-musleabihf', os: 'linux', suffix: 'linux-arm-musleabihf' },
+    { cpu: 'x64', libc: 'glibc', name: 'nanoraster-linux-x64-gnu', os: 'linux', suffix: 'linux-x64-gnu' },
+    { cpu: 'x64', libc: 'musl', name: 'nanoraster-linux-x64-musl', os: 'linux', suffix: 'linux-x64-musl' },
+  ];
+  const ruleFor = (suffix) => expectedPlatformPackageSet(suffix, targets);
+
+  it('should name the libc-less sibling npm installs beside an armv7 package', () => {
+    assert.deepEqual(ruleFor('linux-arm-gnueabihf'), {
+      expected: 'nanoraster-linux-arm-gnueabihf',
+      siblings: ['nanoraster-linux-arm-musleabihf'],
+    });
+    assert.deepEqual(ruleFor('linux-arm-musleabihf'), {
+      expected: 'nanoraster-linux-arm-musleabihf',
+      siblings: ['nanoraster-linux-arm-gnueabihf'],
+    });
+  });
+
+  it('should name no sibling for a package a libc selector splits', () => {
+    assert.deepEqual(ruleFor('linux-x64-gnu'), { expected: 'nanoraster-linux-x64-gnu', siblings: [] });
+    assert.deepEqual(ruleFor('darwin-arm64'), { expected: 'nanoraster-darwin-arm64', siblings: [] });
+  });
+
+  it('should reject a suffix the release configures no package for', () => {
+    assert.throws(() => ruleFor('linux-mips-gnu'), {
+      message: /configures no nanoraster-linux-mips-gnu/u,
+    });
+  });
+
+  it('should derive exactly the armv7 twins from the configured targets', () => {
+    // The rule stands on the generated selectors rather than on two hard-coded
+    // names; this is where a change to `napi.targets` has to be noticed.
+    const { packages } = readNapiTargets(new URL('../package.json', import.meta.url));
+    const withSiblings = packages
+      .map((target) => expectedPlatformPackageSet(target.suffix, packages))
+      .filter((rule) => rule.siblings.length > 0)
+      .map((rule) => rule.expected);
+
+    assert.deepEqual(withSiblings, ['nanoraster-linux-arm-gnueabihf', 'nanoraster-linux-arm-musleabihf']);
+  });
+
+  it('should accept both armv7 packages for either expected suffix', () => {
+    const installed = ['nanoraster-linux-arm-gnueabihf', 'nanoraster-linux-arm-musleabihf'];
+
+    assert.equal(
+      checkInstalledPlatformPackages(installed, ruleFor('linux-arm-gnueabihf')),
+      'nanoraster-linux-arm-gnueabihf beside nanoraster-linux-arm-musleabihf',
+    );
+    assert.equal(
+      checkInstalledPlatformPackages(installed, ruleFor('linux-arm-musleabihf')),
+      'nanoraster-linux-arm-musleabihf beside nanoraster-linux-arm-gnueabihf',
+    );
+  });
+
+  it('should accept the expected package on its own', () => {
+    assert.equal(
+      checkInstalledPlatformPackages(['nanoraster-linux-x64-gnu'], ruleFor('linux-x64-gnu')),
+      'nanoraster-linux-x64-gnu',
+    );
+  });
+
+  it('should reject a second package a libc selector should have excluded', () => {
+    assert.throws(
+      () =>
+        checkInstalledPlatformPackages(
+          ['nanoraster-linux-x64-gnu', 'nanoraster-linux-x64-musl'],
+          ruleFor('linux-x64-gnu'),
+        ),
+      { message: /installed: nanoraster-linux-x64-gnu, nanoraster-linux-x64-musl/u },
+    );
+  });
+
+  it('should reject an install the expected package is missing from', () => {
+    assert.throws(
+      () =>
+        checkInstalledPlatformPackages(['nanoraster-linux-arm-musleabihf'], ruleFor('linux-arm-gnueabihf')),
+      { message: /expected the platform package nanoraster-linux-arm-gnueabihf/u },
+    );
+    assert.throws(() => checkInstalledPlatformPackages([], ruleFor('linux-x64-gnu')), {
+      message: /installed: none/u,
+    });
+  });
+});
+
+describe('loaded platform package', () => {
+  const installed = ['nanoraster-linux-arm-gnueabihf', 'nanoraster-linux-arm-musleabihf'];
+
+  it('should name the package whose binding the loader opened', () => {
+    assert.deepEqual(
+      selectedPlatformPackages(
+        [
+          '/usr/bin/node',
+          '/usr/lib/arm-linux-gnueabihf/libvulkan.so.1',
+          '/work/node_modules/nanoraster-linux-arm-gnueabihf/nanoraster.linux-arm-gnueabihf.node',
+        ],
+        installed,
+      ),
+      ['nanoraster-linux-arm-gnueabihf'],
+    );
+  });
+
+  it('should read a Windows module path', () => {
+    assert.deepEqual(
+      selectedPlatformPackages(
+        ['C:\\work\\node_modules\\nanoraster-win32-x64-msvc\\nanoraster.win32-x64-msvc.node'],
+        ['nanoraster-win32-x64-msvc'],
+      ),
+      ['nanoraster-win32-x64-msvc'],
+    );
+  });
+
+  it('should report every platform package the loader opened', () => {
+    assert.deepEqual(
+      selectedPlatformPackages(
+        installed.map((name) => `/work/node_modules/${name}/nanoraster.node`),
+        installed,
+      ),
+      installed,
+    );
+  });
+
+  it('should ignore a shared object that is not a platform binding', () => {
+    assert.deepEqual(
+      selectedPlatformPackages(
+        [
+          '/work/node_modules/nanoraster-linux-arm-gnueabihf/package.json',
+          '/work/node_modules/other-addon/other.node',
+        ],
+        installed,
+      ),
+      [],
+    );
+  });
+});
+
+describe('loader selection', () => {
+  const twins = ['nanoraster-linux-arm-gnueabihf', 'nanoraster-linux-arm-musleabihf'];
+  const [expected, sibling] = twins;
+
+  it('should report the package whose binding is open', () => {
+    assert.equal(settleLoaderSelection([expected], expected, twins), `loader selected: ${expected}`);
+  });
+
+  it('should reject a binding from any other installed package', () => {
+    assert.throws(() => settleLoaderSelection([sibling], expected, twins), {
+      message: new RegExp(`opened ${sibling}, expected ${expected}`, 'u'),
+    });
+  });
+
+  it('should demand a binding where npm installed more than one package', () => {
+    assert.throws(() => settleLoaderSelection([], expected, twins), {
+      message: /no platform binding.+nothing proves it selected/su,
+    });
+  });
+
+  it('should tolerate a runtime that lists no addon when one package is installed', () => {
+    // Windows lists no addon among its shared objects before Node 22.14, and
+    // 22.13.0 is the supported floor. Where npm resolved a single package there
+    // is nothing to choose between, so the install listing is proof enough.
+    assert.match(settleLoaderSelection([], expected, [expected]), /lists no addon/u);
   });
 });
 
