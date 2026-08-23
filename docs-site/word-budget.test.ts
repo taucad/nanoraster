@@ -17,8 +17,11 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // matrix: sixteen platform-package rows in place of three, the `node` export
 // condition and server-bundler externalization, and cross-platform installs
 // through `supportedArchitectures`.
+//
+// `api.mdx` was raised for the `driver-unsupported` failure code: one member of
+// the `RenderFailureCode` union and one row of the table that documents it.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 2_320,
+  'api.mdx': 2_345,
   'guides/format-and-annotate.mdx': 750,
   'guides/frame-the-model.mdx': 620,
   'guides/handle-render-failures.mdx': 560,

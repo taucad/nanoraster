@@ -24,24 +24,24 @@ Each release publishes sixteen platform packages; a package manager installs
 the one whose `os`, `cpu` and `libc` match the host, and the native loader picks
 the binary out of it.
 
-| Platform package                  | Host                          | Support      | CI evidence                        |
-| --------------------------------- | ----------------------------- | ------------ | ---------------------------------- |
-| `nanoraster-darwin-arm64`         | macOS on Apple Silicon        | ✅           | `smoke (darwin-arm64, 26)`         |
-| `nanoraster-darwin-x64`           | macOS on Intel                | Pending      | `smoke (darwin-x64, 26)`           |
-| `nanoraster-linux-x64-gnu`        | Linux x64, glibc              | ✅           | `smoke (linux-x64-gnu, 26)`        |
-| `nanoraster-linux-x64-musl`       | Linux x64, musl               | Pending      | `smoke (linux-x64-musl, 26)`       |
-| `nanoraster-linux-arm64-gnu`      | Linux arm64, glibc            | Pending      | `smoke (linux-arm64-gnu, 26)`      |
-| `nanoraster-linux-arm64-musl`     | Linux arm64, musl             | Pending      | `smoke (linux-arm64-musl, 26)`     |
-| `nanoraster-linux-arm-gnueabihf`  | Linux armv7 hard-float, glibc | Pending      | `smoke (linux-arm-gnueabihf, 22)`  |
-| `nanoraster-linux-arm-musleabihf` | Linux armv7 hard-float, musl  | Partial      | `smoke (linux-arm-musleabihf, 22)` |
-| `nanoraster-linux-ppc64-gnu`      | Linux ppc64le, glibc          | Pending      | `smoke (linux-ppc64-gnu, 26)`      |
-| `nanoraster-linux-s390x-gnu`      | Linux s390x, glibc            | Pending      | `smoke (linux-s390x-gnu, 26)`      |
-| `nanoraster-win32-x64-msvc`       | Windows on x64                | ✅           | `smoke (win32-x64-msvc, 26)`       |
-| `nanoraster-win32-arm64-msvc`     | Windows on arm64              | Pending      | `smoke (win32-arm64-msvc, 26)`     |
-| `nanoraster-win32-ia32-msvc`      | Windows on x86                | Pending      | `smoke (win32-ia32-msvc, 22)`      |
-| `nanoraster-freebsd-x64`          | FreeBSD on x64                | Pending      | `smoke (freebsd-x64, 22)`          |
-| `nanoraster-android-arm64`        | Android on arm64              | Experimental | `build (aarch64-linux-android)`    |
-| `nanoraster-android-arm-eabi`     | Android on armv7              | Experimental | `build (armv7-linux-androideabi)`  |
+| Platform package                  | Host                          | Support      | CI evidence                             |
+| --------------------------------- | ----------------------------- | ------------ | --------------------------------------- |
+| `nanoraster-darwin-arm64`         | macOS on Apple Silicon        | ✅           | `smoke (darwin-arm64, 26)`              |
+| `nanoraster-darwin-x64`           | macOS on Intel                | Pending      | `smoke (darwin-x64, 26)`                |
+| `nanoraster-linux-x64-gnu`        | Linux x64, glibc              | ✅           | `smoke (linux-x64-gnu, 26)`             |
+| `nanoraster-linux-x64-musl`       | Linux x64, musl               | Pending      | `smoke (linux-x64-musl, 26)`            |
+| `nanoraster-linux-arm64-gnu`      | Linux arm64, glibc            | Pending      | `smoke (linux-arm64-gnu, 26)`           |
+| `nanoraster-linux-arm64-musl`     | Linux arm64, musl             | Pending      | `smoke (linux-arm64-musl, 26)`          |
+| `nanoraster-linux-arm-gnueabihf`  | Linux armv7 hard-float, glibc | ✅           | `smoke (linux-arm-gnueabihf, 22.13.0)`  |
+| `nanoraster-linux-arm-musleabihf` | Linux armv7 hard-float, musl  | ✅           | `smoke (linux-arm-musleabihf, 22.13.0)` |
+| `nanoraster-linux-ppc64-gnu`      | Linux ppc64le, glibc          | Pending      | `smoke (linux-ppc64-gnu, 26)`           |
+| `nanoraster-linux-s390x-gnu`      | Linux s390x, glibc            | Pending      | `smoke (linux-s390x-gnu, 26)`           |
+| `nanoraster-win32-x64-msvc`       | Windows on x64                | ✅           | `smoke (win32-x64-msvc, 26)`            |
+| `nanoraster-win32-arm64-msvc`     | Windows on arm64              | Pending      | `smoke (win32-arm64-msvc, 26)`          |
+| `nanoraster-win32-ia32-msvc`      | Windows on x86                | Pending      | `smoke (win32-ia32-msvc, 22)`           |
+| `nanoraster-freebsd-x64`          | FreeBSD on x64                | Pending      | `smoke (freebsd-x64, 22)`               |
+| `nanoraster-android-arm64`        | Android on arm64              | Experimental | `build (aarch64-linux-android)`         |
+| `nanoraster-android-arm-eabi`     | Android on armv7              | Experimental | `build (armv7-linux-androideabi)`       |
 
 ### Node.js line per host
 
@@ -86,23 +86,31 @@ Node.js's own worker pool and every thread Rust spawns, keep theirs.
 
 ### armv7 hard-float
 
-Both armv7 rows run under `qemu-user` on hosted x64 runners, and that is where
-the two part. `nanoraster-linux-arm-gnueabihf` renders the fixture on Debian
-bookworm, through its mesa 22.3.6 lavapipe. Its smoke row names that ICD in
-`VK_DRIVER_FILES` because the emulated 32-bit Vulkan loader finds no driver
-when it scans the manifest directory itself, which is an emulation artefact
-rather than something a real armv7 host asks of a consumer.
+Both armv7 packages behave the same way, and the host's Vulkan driver decides
+what happens. Lavapipe from mesa 23 onwards crashes in `handle_vertex_buffers2`,
+in `src/gallium/frontends/lavapipe/lvp_execute.c`, on 32-bit ARM, replaying a
+vertex-buffer bind through a stride pointer it never wrote. On a 32-bit ARM host
+nanoraster reads the adapter's driver version before it creates a device, and
+refuses such a driver with a `RenderError` carrying code `driver-unsupported`.
+The refusal names the defect, and it holds until mesa ships a fix.
 
-`nanoraster-linux-arm-musleabihf` installs, loads and enumerates its lavapipe
-adapter, and the render itself faults inside mesa. Lavapipe from mesa 23 onwards
-crashes in `handle_vertex_buffers2`, in
-`src/gallium/frontends/lavapipe/lvp_execute.c`, on 32-bit ARM, replaying a
-vertex-buffer bind through a stride pointer it never wrote. Every Alpine tag
-carrying Node.js 22.13 or later ships a mesa past that break, so the row expects
-the fault, and the render evidence stays open until mesa fixes it.
+Below the break both packages render. `smoke (linux-arm-gnueabihf, 22.13.0)`
+renders on Debian bookworm and its mesa 22.3.6, and
+`smoke (linux-arm-musleabihf, 22.13.0)` renders on Alpine with lavapipe pinned to
+the Alpine 3.17 repository, whose mesa 22.2.5 is the last release before the
+break. Above it, `smoke (linux-arm-gnueabihf, 22)` on Debian trixie and
+`smoke (linux-arm-musleabihf, 22)` on current Alpine assert the refusal instead.
 
-Neither package is verified on real armv7 hardware, or against a hardware
-Vulkan driver.
+`NANORASTER_ALLOW_UNSUPPORTED_DRIVER=1` renders on a refused driver anyway, and
+the process then dies inside mesa as it did before the guard existed. Set it on
+a mesa build that carries a fix, or on a host that proves the guard wrong.
+
+Every armv7 row runs under `qemu-user` on hosted x64 runners. Those rows name
+the lavapipe ICD in `VK_DRIVER_FILES` because the emulated 32-bit Vulkan loader
+finds no driver when it scans the manifest directory itself, which is an
+emulation artefact rather than something a real armv7 host asks of a consumer.
+Neither package is verified on real armv7 hardware, or against a hardware Vulkan
+driver, so the guard may refuse a driver that would have worked.
 
 ### FreeBSD and Android
 

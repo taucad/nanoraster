@@ -33,7 +33,7 @@ try {
   const failure = RenderError.from(error);
 
   if (!failure.isGpuFault) {
-    throw failure; // parse, encode, unknown — the request must change
+    throw failure; // driver-unsupported, parse, encode, unknown — retrying changes nothing
   }
 
   // adapter-unavailable, device-lost, gpu — worth another attempt

@@ -7,6 +7,7 @@ describe('RenderError', () => {
     it('should classify each taxonomy tag to its code', () => {
       const cases: Array<[string, RenderFailureCode]> = [
         ['adapter-unavailable: no gpu adapter', 'adapter-unavailable'],
+        ['driver-unsupported: 32-bit ARM with lavapipe from mesa 25.0.7', 'driver-unsupported'],
         ['gpu: poll failed', 'gpu'],
         ['parse: unexpected glb magic', 'parse'],
         ['encode: jpeg has no alpha channel', 'encode'],
@@ -53,7 +54,7 @@ describe('RenderError', () => {
   describe('isGpuFault', () => {
     it('should be true for transient GPU faults and false for deterministic faults', () => {
       const gpuFaults: RenderFailureCode[] = ['adapter-unavailable', 'device-lost', 'gpu'];
-      const deterministic: RenderFailureCode[] = ['parse', 'encode', 'unknown'];
+      const deterministic: RenderFailureCode[] = ['driver-unsupported', 'parse', 'encode', 'unknown'];
       for (const code of gpuFaults) {
         expect(new RenderError(code, 'x').isGpuFault).toBe(true);
       }
