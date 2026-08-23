@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { builtinModules } from 'node:module';
+import { dirname, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
+
+import ts from 'typescript';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), 'utf8');
@@ -66,6 +70,75 @@ const needsOf = (name) => {
 };
 
 const occurrences = (haystack, needle) => haystack.split(needle).length - 1;
+
+const builtins = new Set(builtinModules);
+
+const byText = (left, right) => Number(left > right) - Number(left < right);
+
+/**
+ * A job installs dependencies through the shared setup action or pnpm itself.
+ * The setup action is matched to the end of its line: the composite actions sit
+ * beside it in the same directory, and `download-verified-artifact` installs
+ * nothing.
+ */
+const installsDependencies = (body) =>
+  /^\s*- uses: \.\/\.github\/actions\/setup\s*$/mu.test(body) || body.includes('pnpm install');
+
+/** Every `node scripts/<file>.mjs` a job body runs, deduplicated. */
+const scriptsRunBy = (body) => [
+  ...new Set([...body.matchAll(/\bnode (scripts\/[\w./-]+\.mjs)\b/gu)].map((match) => String(match[1]))),
+];
+
+/**
+ * Module specifiers one file imports, read from its syntax tree. A regular
+ * expression would also match the consumer program `test-package.mjs` writes
+ * into a template literal, which resolves inside the temporary install rather
+ * than in this repository.
+ */
+const specifiersOf = (file) => {
+  const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.ESNext, true);
+  const found = [];
+  const visit = (node) => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteralLike(node.moduleSpecifier)
+    ) {
+      found.push(node.moduleSpecifier.text);
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments[0] !== undefined &&
+      ts.isStringLiteralLike(node.arguments[0])
+    ) {
+      found.push(node.arguments[0].text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+};
+
+/** Package specifiers reachable from one script through its repository-relative imports. */
+const packagesReachedBy = (script) => {
+  const seen = new Set();
+  const packages = new Set();
+  const pending = [resolve(root, script)];
+
+  while (pending.length > 0) {
+    const file = pending.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    for (const specifier of specifiersOf(file)) {
+      if (specifier.startsWith('node:') || builtins.has(specifier)) continue;
+      if (specifier.startsWith('.')) pending.push(resolve(dirname(file), specifier));
+      else packages.add(specifier);
+    }
+  }
+
+  return [...packages].sort(byText);
+};
 
 const smokeMatrix = () => {
   const rows = [...job('preflight').matchAll(/\{\s*suffix:[^}]*\}/gu)].map((match) => match[0]);
@@ -529,6 +602,36 @@ describe('CI workflow policy', () => {
         .filter((file) => file !== 'tests/workflow-policy.test.mjs')
         .filter((file) => retired.test(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')));
       assert.deepEqual(offenders, []);
+    });
+
+    it('should run only dependency-free scripts in the jobs that install nothing', () => {
+      // A job that verifies registry state or renders from a published package
+      // deliberately installs no dependencies: it proves what a consumer gets
+      // rather than what this checkout builds. Every script such a job runs has
+      // to resolve from Node builtins and repository files alone, so a
+      // development dependency reached through any import fails here instead of
+      // after the release published.
+      const dependencyFree = [...jobs]
+        .filter(([, body]) => !installsDependencies(body))
+        .map(([name, body]) => ({ name, scripts: scriptsRunBy(body) }))
+        .filter(({ scripts }) => scripts.length > 0);
+
+      assert.deepEqual(Object.fromEntries(dependencyFree.map(({ name, scripts }) => [name, scripts])), {
+        preflight: ['scripts/ci-release.mjs'],
+        'registry-smoke': ['scripts/test-package.mjs'],
+        'registry-verify': ['scripts/registry-wait.mjs', 'scripts/verify-release-attestations.mjs'],
+        smoke: ['scripts/test-package.mjs'],
+      });
+
+      for (const { name, scripts } of dependencyFree) {
+        for (const script of scripts) {
+          assert.deepEqual(
+            packagesReachedBy(script),
+            [],
+            `${name} installs nothing, so ${script} must import no package`,
+          );
+        }
+      }
     });
 
     it('should require every gate before declaring the run green', () => {
