@@ -753,6 +753,30 @@ impl DeviceState {
         uncaptured: &Arc<Mutex<Option<String>>>,
     ) -> Result<Self, RenderError> {
         let adapter = request_adapter(power).await?;
+        // 32-bit ARM Linux only: lavapipe from mesa 23 onwards dies inside the
+        // driver during command replay, which no `Result` can carry. Refuse
+        // before a device exists, unless the consumer opted out.
+        #[cfg(all(target_arch = "arm", target_os = "linux"))]
+        {
+            let info = adapter.get_info();
+            if let Some(message) =
+                crate::driver::unsupported_lavapipe(&info.name, &info.driver, &info.driver_info)
+            {
+                if crate::driver::opt_out_active(
+                    std::env::var_os(crate::driver::OPT_OUT_VARIABLE).as_deref(),
+                ) {
+                    static BYPASSED: std::sync::Once = std::sync::Once::new();
+                    BYPASSED.call_once(|| {
+                        eprintln!(
+                            "nanoraster: {} bypasses the driver guard; this render may take the process down. {message}",
+                            crate::driver::OPT_OUT_VARIABLE
+                        );
+                    });
+                } else {
+                    return Err(RenderError::DriverUnsupported(message));
+                }
+            }
+        }
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("render-core"),

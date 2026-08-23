@@ -1,8 +1,8 @@
 /**
  * Failure taxonomy for the image transcoder. The Rust core prefixes every
- * error message with a stable tag (`adapter-unavailable:`, `gpu:`, `parse:`,
- * `encode:`); both the wasm and napi bindings surface it verbatim as a JS
- * error. {@link RenderError.from} parses that tag back into a typed `code` so
+ * error message with a stable tag (`adapter-unavailable:`,
+ * `driver-unsupported:`, `gpu:`, `parse:`, `encode:`); both the wasm and napi
+ * bindings surface it verbatim as a JS error. {@link RenderError.from} parses that tag back into a typed `code` so
  * the transcoder can turn it into a structured issue and the browser worker /
  * CLI can decide whether to keep the last image (GPU faults) or report a
  * hard failure (bad GLB, encode error).
@@ -15,6 +15,9 @@
  *   without Mesa, multi-GPU laptop returning null). Keep-last-image case.
  * - `device-lost` — the GPU device dropped mid-render (Safari 26 bug, driver
  *   reset). Keep-last-image case; retries on the next geometry settle.
+ * - `driver-unsupported` — the host's driver faults mid-render on this
+ *   platform, so the render is refused first (32-bit ARM Linux, lavapipe from
+ *   mesa 23 on). Deterministic: no retry or keep-last-image.
  * - `gpu` — any other GPU/driver fault during the render pass.
  * - `parse` — malformed GLB or out-of-range options.
  * - `encode` — encoder failure (e.g. JPEG requested for a translucent render).
@@ -25,6 +28,7 @@
 export type RenderFailureCode =
   | 'adapter-unavailable'
   | 'device-lost'
+  | 'driver-unsupported'
   | 'gpu'
   | 'parse'
   | 'encode'
@@ -105,6 +109,9 @@ function classify(message: string): RenderFailureCode {
   }
   if (normalized.startsWith('adapter-unavailable:')) {
     return 'adapter-unavailable';
+  }
+  if (normalized.startsWith('driver-unsupported:')) {
+    return 'driver-unsupported';
   }
   if (normalized.startsWith('gpu:')) {
     return 'gpu';

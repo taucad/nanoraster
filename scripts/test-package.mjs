@@ -252,38 +252,48 @@ export const settleLoaderSelection = (loaded, expected, installed) => {
 };
 
 /**
- * Read the reason a smoke row expects its render to fault, when it carries one.
+ * Read the `RenderFailureCode` a smoke row expects its render to reject with.
  *
- * A row names one only for a driver defect the platform cannot render around;
- * every other stage of the smoke still has to pass on such a row.
+ * A row names one only where the package itself refuses to render — a host
+ * driver defect it guards against — and the refusal is then the evidence.
+ * Every other stage of the smoke still has to pass on such a row, and a crash
+ * never satisfies it.
  *
  * @param {Record<string, string | undefined>} environment - Process environment.
- * @returns {string | undefined} The reason, or `undefined` when a render is required.
+ * @returns {string | undefined} The expected code, or `undefined` when a render is required.
  */
-export const resolveExpectedRenderFault = (environment) => {
-  const reason = environment['NANORASTER_SMOKE_EXPECT_RENDER_FAULT'];
-  return typeof reason === 'string' && reason.trim().length > 0 ? reason.trim() : undefined;
+export const resolveExpectedRenderError = (environment) => {
+  const code = environment['NANORASTER_SMOKE_EXPECT_RENDER_ERROR'];
+  return typeof code === 'string' && code.trim().length > 0 ? code.trim() : undefined;
 };
 
 /**
- * Settle what the render child did against what the row expects of it.
+ * Settle what the render produced against what the row expects of it.
  *
- * @param {string | undefined} reason - Why this row expects a fault, when it does.
- * @param {unknown} failure - What the render child threw, or `undefined` when it rendered.
- * @returns {string | undefined} The evidence line for an expected fault.
+ * The render phase classifies its own rejection with the package's exported
+ * `RenderError.from`, so this reads a code and a message rather than a child
+ * process's exit status: a row is satisfied by a typed refusal, never by a
+ * process that died.
+ *
+ * @param {string | undefined} expected - The code this row expects, when it expects one.
+ * @param {{ code: string, message: string } | undefined} refusal - The classified rejection, or `undefined` when the render succeeded.
+ * @returns {string | undefined} The evidence line for an expected refusal.
  */
-export const settleRenderOutcome = (reason, failure) => {
-  if (reason === undefined) {
-    if (failure !== undefined) throw failure;
-    return undefined;
-  }
-  if (failure === undefined) {
+export const settleRenderError = (expected, refusal) => {
+  if (refusal === undefined) {
+    if (expected === undefined) return undefined;
     throw new Error(
-      `the render succeeded although this row expects it to fault (${reason}); the defect is fixed on this host, so lift NANORASTER_SMOKE_EXPECT_RENDER_FAULT from the row in .github/workflows/ci.yml and promote the platform in compatibility.md`,
+      `the render succeeded although this row expects \`${expected}\`; the host condition is gone, so lift expectRenderError from the row in .github/workflows/ci.yml and update compatibility.md`,
     );
   }
-  const { signal, status } = /** @type {{ signal?: unknown, status?: unknown }} */ (failure ?? {});
-  return `expected render fault (${reason}): child exit status=${String(status)} signal=${String(signal)}`;
+  if (refusal.code !== expected) {
+    throw new Error(
+      `the render failed with \`${refusal.code}\` where this row expects \`${String(expected)}\`: ${refusal.message}`,
+      { cause: refusal },
+    );
+  }
+  // The core tags its own message, so the code is already the leading word.
+  return `render refused: ${refusal.message}`;
 };
 
 /**
@@ -338,10 +348,18 @@ const installedPlatformPackages = (work, configuredNames) =>
 // Two phases, run as two processes: a driver fault during the render takes the
 // process down with it, so the load and adapter evidence has to come from a
 // child that has already exited rather than from output the render may swallow.
+// The render phase settles its own outcome, because only it holds both the
+// package's classifier and the rejection to classify.
 const consumerSource = (helperUrl) => `import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { formatCauseChain, selectedPlatformPackages, settleLoaderSelection } from ${JSON.stringify(helperUrl)};
+import {
+  formatCauseChain,
+  resolveExpectedRenderError,
+  selectedPlatformPackages,
+  settleLoaderSelection,
+  settleRenderError,
+} from ${JSON.stringify(helperUrl)};
 
 const [phase, fixture] = process.argv.slice(2);
 try {
@@ -363,11 +381,26 @@ try {
     const loaded = selectedPlatformPackages(process.report.getReport().sharedObjects, installed);
     console.log(settleLoaderSelection(loaded, expected, installed));
   } else {
+    const expected = resolveExpectedRenderError(process.env);
     const glb = await readFile(fixture);
-    const image = await api.renderImage(new Uint8Array(glb), { format: 'png', width: 64, height: 64 });
-    assert.equal(image.mimeType, 'image/png');
-    assert.equal(image.name, 'render.png');
-    assert.deepEqual([...image.bytes.slice(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+    let image;
+    let refusal;
+    try {
+      image = await api.renderImage(new Uint8Array(glb), { format: 'png', width: 64, height: 64 });
+    } catch (error) {
+      // Only a row that expects a refusal classifies one; anywhere else the
+      // thrown value goes on with its whole cause chain intact.
+      if (expected === undefined) throw error;
+      refusal = api.RenderError.from(error);
+    }
+    const evidence = settleRenderError(expected, refusal);
+    if (evidence === undefined) {
+      assert.equal(image.mimeType, 'image/png');
+      assert.equal(image.name, 'render.png');
+      assert.deepEqual([...image.bytes.slice(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+    } else {
+      console.log(evidence);
+    }
   }
 } catch (error) {
   console.error(\`\${phase} phase failed:\`);
@@ -443,16 +476,9 @@ const main = () => {
         stdio: 'inherit',
       });
     runConsumer('adapter');
-
-    const expectedFault = resolveExpectedRenderFault(process.env);
-    let renderFailure;
-    try {
-      runConsumer('render', fixture);
-    } catch (error) {
-      renderFailure = error;
-    }
-    const faultReport = settleRenderOutcome(expectedFault, renderFailure);
-    if (faultReport !== undefined) console.log(faultReport);
+    // The render child settles the row's expectation itself and exits non-zero
+    // when it is not met, so a crash reaches here as the failure it is.
+    runConsumer('render', fixture);
 
     writeFileSync(join(work, 'consumer.cjs'), cjsProbeSource);
     execFileSync(process.execPath, ['consumer.cjs'], { cwd: work, stdio: 'inherit' });
@@ -460,10 +486,9 @@ const main = () => {
     if (installedManifest.version !== version) {
       throw new Error(`installed ${ROOT_PACKAGE}@${installedManifest.version}, expected ${version}`);
     }
+    const expected = resolveExpectedRenderError(process.env);
     const evidence =
-      faultReport === undefined
-        ? ''
-        : ' (render: expected driver fault — partial runtime evidence: install, load and adapter only)';
+      expected === undefined ? '' : ` (render refused: ${expected} — documented host condition)`;
     console.log(
       `clean-room ${mode.kind} smoke passed${evidence}: ${ROOT_PACKAGE}@${version} through ${platformName} on ${process.platform}-${process.arch}`,
     );

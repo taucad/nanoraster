@@ -408,20 +408,22 @@ them.
 export type RenderFailureCode =
   | 'adapter-unavailable'
   | 'device-lost'
+  | 'driver-unsupported'
   | 'gpu'
   | 'parse'
   | 'encode'
   | 'unknown';
 ```
 
-| Value                 | Meaning                                                     | Retry guidance                                              |
-| --------------------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
-| `adapter-unavailable` | No compatible GPU adapter was available.                    | Keep the last image and retry after host recovery.          |
-| `device-lost`         | The GPU device was lost during rendering.                   | Keep the last image and retry with a new device.            |
-| `gpu`                 | Another adapter, driver, or render-pass failure occurred.   | Treat as transient unless host diagnostics prove otherwise. |
-| `parse`               | GLB bytes or request options violated the input contract.   | Fix the input before retrying.                              |
-| `encode`              | The selected encoder could not produce the requested image. | Fix the format or background before retrying.               |
-| `unknown`             | The thrown value had no recognised failure tag.             | Inspect `message` and preserve the original context.        |
+| Value                 | Meaning                                                      | Retry guidance                                              |
+| --------------------- | ------------------------------------------------------------ | ----------------------------------------------------------- |
+| `adapter-unavailable` | No compatible GPU adapter was available.                     | Keep the last image and retry after host recovery.          |
+| `device-lost`         | The GPU device was lost during rendering.                    | Keep the last image and retry with a new device.            |
+| `driver-unsupported`  | The host's GPU driver faults mid-render on 32-bit ARM Linux. | Render on another driver, or set the documented opt-out.    |
+| `gpu`                 | Another adapter, driver, or render-pass failure occurred.    | Treat as transient unless host diagnostics prove otherwise. |
+| `parse`               | GLB bytes or request options violated the input contract.    | Fix the input before retrying.                              |
+| `encode`              | The selected encoder could not produce the requested image.  | Fix the format or background before retrying.               |
+| `unknown`             | The thrown value had no recognised failure tag.              | Inspect `message` and preserve the original context.        |
 
 ### `RenderError`
 

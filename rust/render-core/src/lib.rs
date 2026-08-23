@@ -11,6 +11,7 @@
 #[cfg(feature = "bench")]
 mod bench;
 mod capture_overlay;
+mod driver;
 mod encode;
 mod glb;
 mod options;
@@ -177,11 +178,15 @@ impl Default for RenderOptions {
 }
 
 /// Failure taxonomy — the string prefixes are the stable contract surfaced to
-/// the TS façade (`adapter-unavailable`, `gpu`, `parse`, `encode`).
+/// the TS façade (`adapter-unavailable`, `device-lost`, `driver-unsupported`,
+/// `gpu`, `parse`, `encode`).
 #[derive(Debug)]
 pub enum RenderError {
     Parse(String),
     AdapterUnavailable(String),
+    /// The host's Vulkan driver is known to fault mid-render on this
+    /// architecture. Deterministic on that host, so never a retry case.
+    DriverUnsupported(String),
     Gpu(String),
     Encode(String),
 }
@@ -191,6 +196,7 @@ impl std::fmt::Display for RenderError {
         match self {
             Self::Parse(m) => write!(f, "parse: {m}"),
             Self::AdapterUnavailable(m) => write!(f, "adapter-unavailable: {m}"),
+            Self::DriverUnsupported(m) => write!(f, "driver-unsupported: {m}"),
             Self::Gpu(m) => write!(f, "gpu: {m}"),
             Self::Encode(m) => write!(f, "encode: {m}"),
         }
@@ -289,6 +295,7 @@ pub(crate) fn with_view(error: RenderError, id: &str) -> RenderError {
         RenderError::AdapterUnavailable(message) => {
             RenderError::AdapterUnavailable(context(message))
         }
+        RenderError::DriverUnsupported(message) => RenderError::DriverUnsupported(context(message)),
         RenderError::Gpu(message) => RenderError::Gpu(context(message)),
         RenderError::Encode(message) => RenderError::Encode(context(message)),
     }
@@ -745,6 +752,10 @@ mod tests {
             ),
             (RenderError::Gpu("device lost".into()), "gpu: device lost"),
             (
+                RenderError::DriverUnsupported("lavapipe".into()),
+                "driver-unsupported: lavapipe",
+            ),
+            (
                 RenderError::Encode("transparent jpeg".into()),
                 "encode: transparent jpeg",
             ),
@@ -802,6 +813,7 @@ mod tests {
             RenderError::AdapterUnavailable("x".into()),
             RenderError::Gpu("x".into()),
             RenderError::Encode("x".into()),
+            RenderError::DriverUnsupported("x".into()),
         ];
         for error in cases {
             assert!(

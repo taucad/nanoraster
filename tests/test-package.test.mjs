@@ -12,12 +12,12 @@ import {
   formatCauseChain,
   readFrozenManifest,
   requireNativeSuffix,
-  resolveExpectedRenderFault,
+  resolveExpectedRenderError,
   resolveSmokeMode,
   selectedPlatformPackages,
   selectTarballs,
   settleLoaderSelection,
-  settleRenderOutcome,
+  settleRenderError,
 } from '../scripts/test-package.mjs';
 
 const frozen = {
@@ -369,42 +369,46 @@ describe('frozen tarball directory', () => {
   });
 });
 
-describe('expected render fault', () => {
-  const reason = 'the driver faults on this host';
+describe('expected render refusal', () => {
+  const expected = 'driver-unsupported';
+  const refusal = {
+    code: 'driver-unsupported',
+    message: 'driver-unsupported: 32-bit ARM with lavapipe from mesa 24.2.8',
+  };
 
-  it('should read the reason the row named', () => {
-    assert.equal(resolveExpectedRenderFault({ NANORASTER_SMOKE_EXPECT_RENDER_FAULT: ` ${reason} ` }), reason);
-  });
-
-  it('should expect no fault when the row names none', () => {
-    assert.equal(resolveExpectedRenderFault({}), undefined);
-  });
-
-  it('should expect no fault when the row names a blank reason', () => {
-    assert.equal(resolveExpectedRenderFault({ NANORASTER_SMOKE_EXPECT_RENDER_FAULT: '  ' }), undefined);
-  });
-
-  it('should report the exit status and signal of an expected fault', () => {
+  it('should read the failure code the row expects', () => {
     assert.equal(
-      settleRenderOutcome(reason, { status: null, signal: 'SIGSEGV' }),
-      `expected render fault (${reason}): child exit status=null signal=SIGSEGV`,
+      resolveExpectedRenderError({ NANORASTER_SMOKE_EXPECT_RENDER_ERROR: ` ${expected} ` }),
+      expected,
     );
   });
 
+  it('should expect a render when the row names no code', () => {
+    assert.equal(resolveExpectedRenderError({}), undefined);
+    assert.equal(resolveExpectedRenderError({ NANORASTER_SMOKE_EXPECT_RENDER_ERROR: '  ' }), undefined);
+  });
+
+  it('should report the refusal the row expects as its evidence', () => {
+    // The core message already leads with the code, so the line names it once.
+    assert.equal(settleRenderError(expected, refusal), `render refused: ${refusal.message}`);
+  });
+
   it('should demand the expectation be lifted once the render succeeds', () => {
-    assert.throws(() => settleRenderOutcome(reason, undefined), {
-      message: new RegExp(`render succeeded .+\\(${reason}\\).+NANORASTER_SMOKE_EXPECT_RENDER_FAULT`, 'su'),
+    assert.throws(() => settleRenderError(expected, undefined), {
+      message: /render succeeded .+driver-unsupported.+expectRenderError.+compatibility\.md/su,
     });
   });
 
-  it('should rethrow a fault no row expected', () => {
-    const failure = new Error('the consumer died');
-
-    assert.throws(() => settleRenderOutcome(undefined, failure), failure);
+  it('should reject a refusal that carries another code', () => {
+    // A row expecting one documented refusal must not pass on any other
+    // failure: that would excuse the very regressions it is there to catch.
+    assert.throws(() => settleRenderError(expected, { code: 'gpu', message: 'gpu: poll failed' }), {
+      message: /failed with `gpu` where this row expects `driver-unsupported`/u,
+    });
   });
 
-  it('should report nothing when an unexpecting row rendered', () => {
-    assert.equal(settleRenderOutcome(undefined, undefined), undefined);
+  it('should report nothing when a row expecting no refusal rendered', () => {
+    assert.equal(settleRenderError(undefined, undefined), undefined);
   });
 });
 

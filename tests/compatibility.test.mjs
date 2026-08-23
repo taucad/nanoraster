@@ -125,26 +125,27 @@ describe('compatibility matrix', () => {
     assert.equal(smokeRow('darwin-arm64', '22'), false);
   });
 
-  it('should pair every partial row with the smoke row that expects a render fault', () => {
-    // The two halves of one claim: a row whose render the workflow excuses may
-    // not read as `Pending`, which promotes on a green run, and an excused
-    // render may not hide under a row that claims a render proves it.
-    const partial = hostRows
-      .filter(({ support }) => support === 'Partial')
-      .map(({ evidence, name }) => ({ name, ...parseEvidence(evidence) }));
-    const claimed = partial.filter(({ parameters }) =>
-      smokeRowText(...parameters)?.includes('expectRenderFault:'),
-    );
-    assert.deepEqual(claimed, partial, 'a Partial row needs a smoke row carrying expectRenderFault');
-
-    const excused = [...WORKFLOW.matchAll(/\{[^}]*expectRenderFault:[^}]*\}/gu)].map(
+  it('should back every refusal row with a render row for the same package', () => {
+    // A row that asserts a typed refusal proves the guard, never the platform.
+    // Each package therefore needs a second row on a host below the driver
+    // break, and that is the row a support claim may cite.
+    const refusing = [...WORKFLOW.matchAll(/\{[^}]*expectRenderError:[^}]*\}/gu)].map(
       (match) => /suffix: '([^']+)'/u.exec(match[0])[1],
     );
+    assert.notDeepEqual(refusing, [], 'the workflow declares no expectRenderError row');
+    const rendering = [...WORKFLOW.matchAll(/\{[^}]*suffix: '([^']+)'[^}]*\}/gu)]
+      .filter((match) => !match[0].includes('expectRenderError:'))
+      .map((match) => match[1]);
     assert.deepEqual(
-      [...new Set(excused)],
-      partial.map(({ parameters }) => parameters[0]),
-      'every smoke row that expects a render fault needs a Partial row in compatibility.md',
+      refusing.filter((suffix) => !rendering.includes(suffix)),
+      [],
+      'every suffix with a refusal row needs a smoke row that renders',
     );
+  });
+
+  it('should document the refusal the armv7 rows assert', () => {
+    const armv7 = COMPATIBILITY.slice(COMPATIBILITY.indexOf('### armv7 hard-float'));
+    assert.match(armv7.slice(0, armv7.indexOf('\n### ')), /`driver-unsupported`/u);
   });
 
   it('should keep both Android rows on build evidence alone', () => {
