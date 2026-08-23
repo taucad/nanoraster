@@ -223,6 +223,35 @@ export const selectedPlatformPackages = (sharedObjects, platformNames) => {
 };
 
 /**
+ * Settle which platform binding the generated loader opened.
+ *
+ * A binding from any other installed package is always wrong. An absent
+ * listing is another matter: Windows reports no addon among its shared objects
+ * before Node 22.14, and 22.13.0 is the supported floor. That only costs
+ * evidence where npm resolved a single package, because the install listing
+ * already proves which package the loader had to open; where npm kept more
+ * than one, nothing else proves the choice, so an absent listing fails.
+ *
+ * @param {string[]} loaded - Platform packages whose binding is open.
+ * @param {string} expected - Platform package this run smokes.
+ * @param {string[]} installed - Configured platform packages the install holds.
+ * @returns {string} The evidence line.
+ */
+export const settleLoaderSelection = (loaded, expected, installed) => {
+  const strays = loaded.filter((name) => name !== expected);
+  if (strays.length > 0) {
+    throw new Error(`the loader opened ${strays.join(', ')}, expected ${expected}`);
+  }
+  if (loaded.includes(expected)) return `loader selected: ${expected}`;
+  if (installed.length > 1) {
+    throw new Error(
+      `the loader opened no platform binding out of ${installed.join(', ')}, so nothing proves it selected ${expected}`,
+    );
+  }
+  return `loader selection unproven: this runtime lists no addon among its shared objects, and ${expected} is the only platform package installed`;
+};
+
+/**
  * Read the reason a smoke row expects its render to fault, when it carries one.
  *
  * A row names one only for a driver defect the platform cannot render around;
@@ -312,7 +341,7 @@ const installedPlatformPackages = (work, configuredNames) =>
 const consumerSource = (helperUrl) => `import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { formatCauseChain, selectedPlatformPackages } from ${JSON.stringify(helperUrl)};
+import { formatCauseChain, selectedPlatformPackages, settleLoaderSelection } from ${JSON.stringify(helperUrl)};
 
 const [phase, fixture] = process.argv.slice(2);
 try {
@@ -332,12 +361,7 @@ try {
     const installed = JSON.parse(process.env['NANORASTER_SMOKE_INSTALLED']);
     const expected = process.env['NANORASTER_SMOKE_EXPECTED'];
     const loaded = selectedPlatformPackages(process.report.getReport().sharedObjects, installed);
-    assert.deepEqual(
-      loaded,
-      [expected],
-      \`the loader opened \${loaded.join(', ') || 'no platform binding'}, expected \${expected} out of \${installed.join(', ')}\`,
-    );
-    console.log('loader selected:', expected);
+    console.log(settleLoaderSelection(loaded, expected, installed));
   } else {
     const glb = await readFile(fixture);
     const image = await api.renderImage(new Uint8Array(glb), { format: 'png', width: 64, height: 64 });

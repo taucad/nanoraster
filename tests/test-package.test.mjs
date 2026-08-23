@@ -16,6 +16,7 @@ import {
   resolveSmokeMode,
   selectedPlatformPackages,
   selectTarballs,
+  settleLoaderSelection,
   settleRenderOutcome,
 } from '../scripts/test-package.mjs';
 
@@ -305,6 +306,34 @@ describe('loaded platform package', () => {
       ),
       [],
     );
+  });
+});
+
+describe('loader selection', () => {
+  const twins = ['nanoraster-linux-arm-gnueabihf', 'nanoraster-linux-arm-musleabihf'];
+  const [expected, sibling] = twins;
+
+  it('should report the package whose binding is open', () => {
+    assert.equal(settleLoaderSelection([expected], expected, twins), `loader selected: ${expected}`);
+  });
+
+  it('should reject a binding from any other installed package', () => {
+    assert.throws(() => settleLoaderSelection([sibling], expected, twins), {
+      message: new RegExp(`opened ${sibling}, expected ${expected}`, 'u'),
+    });
+  });
+
+  it('should demand a binding where npm installed more than one package', () => {
+    assert.throws(() => settleLoaderSelection([], expected, twins), {
+      message: /no platform binding.+nothing proves it selected/su,
+    });
+  });
+
+  it('should tolerate a runtime that lists no addon when one package is installed', () => {
+    // Windows lists no addon among its shared objects before Node 22.14, and
+    // 22.13.0 is the supported floor. Where npm resolved a single package there
+    // is nothing to choose between, so the install listing is proof enough.
+    assert.match(settleLoaderSelection([], expected, [expected]), /lists no addon/u);
   });
 });
 
