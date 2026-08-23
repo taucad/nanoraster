@@ -389,7 +389,8 @@ describe('expected render refusal', () => {
   });
 
   it('should report the refusal the row expects as its evidence', () => {
-    assert.equal(settleRenderError(expected, refusal), `render refused: ${refusal.code}: ${refusal.message}`);
+    // The core message already leads with the code, so the line names it once.
+    assert.equal(settleRenderError(expected, refusal), `render refused: ${refusal.message}`);
   });
 
   it('should demand the expectation be lifted once the render succeeds', () => {

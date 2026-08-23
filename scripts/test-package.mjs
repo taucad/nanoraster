@@ -292,7 +292,8 @@ export const settleRenderError = (expected, refusal) => {
       { cause: refusal },
     );
   }
-  return `render refused: ${refusal.code}: ${refusal.message}`;
+  // The core tags its own message, so the code is already the leading word.
+  return `render refused: ${refusal.message}`;
 };
 
 /**
