@@ -449,11 +449,28 @@ describe('CI workflow policy', () => {
       const body = job('registry-smoke');
       assert(body.includes("NAPI_RS_ENFORCE_VERSION_CHECK: '1'"));
       assert(body.includes('NANORASTER_REGISTRY_VERSION'));
-      assert(body.includes('name: registry-smoke (${{ matrix.os }})'));
-      for (const os of ['ubuntu-24.04', 'macos-latest', 'windows-2022']) {
-        assert(body.includes(`os: ${os}`), `registry-smoke must cover ${os}`);
+      // Two rows now share `ubuntu-24.04`, so the label names the job.
+      assert(body.includes('name: registry-smoke (${{ matrix.label }})'));
+      for (const label of ['linux-x64-gnu', 'darwin-arm64', 'win32-x64-msvc', 'linux-arm-gnueabihf-qemu']) {
+        assert(body.includes(`label: ${label}`), `registry-smoke must cover ${label}`);
       }
       assert(needsOf('registry-smoke').includes('registry-verify'));
+    });
+
+    it('should install the armv7 package under emulation the way a consumer does', () => {
+      // The `eabihf` ABI carries no `libc` selector, so npm keeps both armv7
+      // packages: this is the only registry row that proves the loader picks
+      // one of two. It needs the same qemu action and lavapipe manifest the
+      // emulated `smoke` rows use.
+      const body = job('registry-smoke');
+      assert(body.includes('suffix: linux-arm-gnueabihf'));
+      assert(body.includes('platform: linux/arm/v7'));
+      assert(body.includes('image: node:22-bookworm-slim'));
+      assert(body.includes('VK_DRIVER_FILES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json)'));
+      assert(body.includes('node scripts/test-package.mjs'));
+      const [qemu] = [...workflow.matchAll(/docker\/setup-qemu-action@(\w+)/gu)].map((match) => match[1]);
+      assert.equal(occurrences(body, `docker/setup-qemu-action@${qemu}`), 1);
+      assert(body.includes('timeout-minutes: 60'), 'the emulated row needs a ceiling');
     });
 
     it('should record the GitHub release only after every registry check passed', () => {
