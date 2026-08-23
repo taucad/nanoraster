@@ -61,6 +61,29 @@ export const resolveSmokeMode = (environment) => {
 };
 
 /**
+ * Read `test-tarballs.json` out of the directory `NANORASTER_TARBALL_DIR` named.
+ *
+ * A silently empty artifact download leaves the directory absent or bare, and
+ * reading straight through it reports an ENOENT against a path the operator
+ * still has to trace back to the download. Name the directory instead, and say
+ * what it actually holds.
+ *
+ * @param {string} directory - Directory the caller named.
+ * @returns {Record<string, unknown>} Parsed manifest.
+ */
+export const readFrozenManifest = (directory) => {
+  const resolved = resolve(directory);
+  if (!existsSync(resolved)) throw new Error(`no tarball directory: ${resolved}`);
+  const landed = readdirSync(resolved);
+  if (landed.length === 0) throw new Error(`the tarball directory ${resolved} is empty`);
+  const manifest = join(resolved, 'test-tarballs.json');
+  if (!existsSync(manifest)) {
+    throw new Error(`no test-tarballs.json in ${resolved}, which holds: ${landed.join(', ')}`);
+  }
+  return JSON.parse(readFileSync(manifest, 'utf8'));
+};
+
+/**
  * Look up the frozen root and platform tarballs recorded for one suffix.
  *
  * @param {{ version?: unknown, packages?: unknown }} manifest - Parsed `test-tarballs.json`.
@@ -253,7 +276,7 @@ const main = () => {
     let version;
     let configuredNames;
     if (mode.kind === 'tarball') {
-      const frozen = JSON.parse(readFileSync(resolve(mode.directory, 'test-tarballs.json'), 'utf8'));
+      const frozen = readFrozenManifest(mode.directory);
       const selection = selectTarballs(frozen, suffix);
       version = selection.version;
       configuredNames = Object.keys(frozen.packages);
