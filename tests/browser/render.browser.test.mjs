@@ -77,8 +77,8 @@ test('a warm renderer produces byte-identical output and disposes cleanly', asyn
       format: 'png',
       timings: true,
       views: [
-        { id: 'front', phi: 90, theta: 0 },
-        { id: 'big', phi: 90, theta: 0, width: 256, height: 256 },
+        { id: 'front', camera: { framing: 'fit', direction: [1, 0, 0] } },
+        { id: 'big', camera: { framing: 'fit', direction: [1, 0, 0] }, width: 256, height: 256 },
       ],
     }),
   );
@@ -106,10 +106,7 @@ test('a warm renderer produces byte-identical output and disposes cleanly', asyn
       height: 48,
       format: 'webp',
       quality: 1,
-      views: [
-        { id: 'thumb', phi: 60, theta: -45 },
-        { id: 'frame', phi: 60, theta: -45, format: 'raw' },
-      ],
+      views: [{ id: 'thumb' }, { id: 'frame', format: 'raw' }],
     }),
   );
   expect(mixed.images).toHaveLength(2);

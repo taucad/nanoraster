@@ -12,7 +12,7 @@
 use crate::encode::{ImageFormat, encode};
 use crate::glb::{self, MODE_TRIANGLES, Material};
 use crate::{
-    DEFAULT_HEIGHT, LightingSpace, MAX_LIGHTS, Projection, RenderError, RenderOptions, UpAxis,
+    CameraProjection, LightingSpace, MAX_LIGHTS, RenderCamera, RenderError, RenderOptions,
     with_view_result,
 };
 use glam::{Mat4, Vec3};
@@ -318,9 +318,7 @@ fn mapped_range_error(error: wgpu::MapRangeError) -> RenderError {
     gpu_error("mapped range", error)
 }
 
-/// Canonical camera framing: fov 45, spherical placement at
-/// distance = radius * 2 * tan(30 deg) / tan(22.5 deg), then per-corner fit
-/// zoom (computeViewFittingZoom) with the padding factor.
+/// Resolve fitted or fixed camera framing into WebGPU view/projection matrices.
 pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> CameraState {
     let (min, max) = scene.bounds.unwrap_or(([-1.0; 3], [1.0; 3]));
     let min = Vec3::from(min);
@@ -332,73 +330,142 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
         radius = 1000.0;
     }
 
-    let fov = 45f32.to_radians();
-    let standard_fov = 60f32.to_radians();
-    let offset_ratio = 2.0 * ((standard_fov / 2.0).tan() / (fov / 2.0).tan());
-    let distance = radius * offset_ratio;
-
-    let phi = options.phi_deg.to_radians();
-    let theta = options.theta_deg.to_radians();
-    let (offset, world_up) = spherical_eye(distance, phi, theta, options.up);
-    let eye = center + offset;
-    let up = stable_camera_up(offset, world_up);
-
-    let view = glam::camera::rh::view::look_at_mat4(eye, center, up);
     let aspect = options.width as f32 / options.height as f32;
-    let near = (distance - 2.0 * radius).max(distance * 0.001);
-    let far = distance + 2.0 * radius;
-    if options.projection == Projection::Orthographic {
-        let (half_width, half_height) =
-            orthographic_half_extents(view, min, max, aspect, options.padding_factor);
-        let projection = glam::camera::rh::proj::directx::orthographic(
-            -half_width,
-            half_width,
-            -half_height,
-            half_height,
-            near,
-            far,
-        );
-        return CameraState {
+    match &options.camera {
+        RenderCamera::Fit {
+            direction,
+            up,
+            padding_factor,
             projection,
-            view,
-            forward: (center - eye).normalize_or_zero(),
-            target_depth: -view.transform_point3(center).z,
-        };
-    }
-
-    // DirectX/WebGPU NDC convention: Z in [0, 1], Y-up.
-    let mut projection = glam::camera::rh::proj::directx::perspective(fov, aspect, near, far);
-    let zoom = fit_zoom(FitZoomInput {
-        eye,
-        target: center,
-        min,
-        max,
-        fov,
-        aspect,
-        padding: options.padding_factor,
-        world_up: up,
-    });
-    // three.js PerspectiveCamera.zoom divides the frustum extents.
-    projection.x_axis.x *= zoom;
-    projection.y_axis.y *= zoom;
-    CameraState {
-        projection,
-        view,
-        forward: (center - eye).normalize_or_zero(),
-        target_depth: -view.transform_point3(center).z,
+        } => {
+            let fov = match projection {
+                CameraProjection::Perspective {
+                    vertical_field_of_view_deg,
+                    ..
+                } => vertical_field_of_view_deg.to_radians(),
+                CameraProjection::Orthographic { .. } => 45f32.to_radians(),
+            };
+            // Preserve the existing fitted-camera distance model while
+            // allowing the caller to choose its vertical field of view.
+            let standard_fov = 60f32.to_radians();
+            let offset_ratio = 2.0 * ((standard_fov / 2.0).tan() / (fov / 2.0).tan());
+            // Keep every bounds corner in front of the eye even when a wide
+            // field of view would otherwise move a fitted camera inside the
+            // subject. `fit_zoom` then solves the requested framing exactly.
+            let distance = (radius * offset_ratio).max(radius * 2.0);
+            let offset = Vec3::from(*direction) * distance;
+            let eye = center + offset;
+            let up = Vec3::from(*up);
+            let view = glam::camera::rh::view::look_at_mat4(eye, center, up);
+            let near = (distance - 2.0 * radius).max(distance * 0.001);
+            let far = distance + 2.0 * radius;
+            let projection = match projection {
+                CameraProjection::Orthographic { .. } => {
+                    let (half_width, half_height) =
+                        orthographic_half_extents(view, min, max, aspect, *padding_factor);
+                    glam::camera::rh::proj::directx::orthographic(
+                        -half_width,
+                        half_width,
+                        -half_height,
+                        half_height,
+                        near,
+                        far,
+                    )
+                }
+                CameraProjection::Perspective { .. } => {
+                    let mut projection =
+                        glam::camera::rh::proj::directx::perspective(fov, aspect, near, far);
+                    let zoom = fit_zoom(FitZoomInput {
+                        eye,
+                        target: center,
+                        min,
+                        max,
+                        fov,
+                        aspect,
+                        padding: *padding_factor,
+                        world_up: up,
+                    });
+                    projection.x_axis.x *= zoom;
+                    projection.y_axis.y *= zoom;
+                    projection
+                }
+            };
+            CameraState {
+                projection,
+                view,
+                forward: (center - eye).normalize_or_zero(),
+                target_depth: -view.transform_point3(center).z,
+            }
+        }
+        RenderCamera::Fixed {
+            position,
+            target,
+            up,
+            projection,
+            clipping,
+        } => {
+            let eye = Vec3::from(*position);
+            let target = Vec3::from(*target);
+            let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::from(*up));
+            let (near, far) = clipping.map_or_else(
+                || bounds_clip_planes(view, min, max, (eye - target).length()),
+                |planes| (planes.near, planes.far),
+            );
+            let projection = match projection {
+                CameraProjection::Perspective {
+                    vertical_field_of_view_deg,
+                    zoom,
+                } => {
+                    let base = vertical_field_of_view_deg.to_radians();
+                    let effective = 2.0 * ((base * 0.5).tan() / zoom).atan();
+                    glam::camera::rh::proj::directx::perspective(effective, aspect, near, far)
+                }
+                CameraProjection::Orthographic {
+                    vertical_span: Some(vertical_span),
+                    zoom,
+                } => {
+                    let half_height = vertical_span / (2.0 * zoom);
+                    let half_width = half_height * aspect;
+                    glam::camera::rh::proj::directx::orthographic(
+                        -half_width,
+                        half_width,
+                        -half_height,
+                        half_height,
+                        near,
+                        far,
+                    )
+                }
+                CameraProjection::Orthographic {
+                    vertical_span: None,
+                    ..
+                } => unreachable!("fixed orthographic cameras resolve a vertical span"),
+            };
+            CameraState {
+                projection,
+                view,
+                forward: (target - eye).normalize_or_zero(),
+                target_depth: -view.transform_point3(target).z,
+            }
+        }
     }
 }
 
-fn stable_camera_up(offset: Vec3, world_up: Vec3) -> Vec3 {
-    let view_axis = offset.normalize_or_zero();
-    if view_axis.dot(world_up).abs() < 0.999 {
-        return world_up;
+fn bounds_clip_planes(view: Mat4, min: Vec3, max: Vec3, fallback_depth: f32) -> (f32, f32) {
+    let mut nearest = f32::INFINITY;
+    let mut farthest = 0.0_f32;
+    for corner in aabb_corners(min, max) {
+        let depth = -view.transform_point3(corner).z;
+        if depth > 0.0 {
+            nearest = nearest.min(depth);
+            farthest = farthest.max(depth);
+        }
     }
-    if world_up == Vec3::Y {
-        Vec3::Z
-    } else {
-        Vec3::Y
+    if farthest <= 0.0 {
+        let depth = fallback_depth.max(1.0);
+        return (depth * 0.001, depth * 2.0);
     }
+    let near = (nearest * 0.5).max(farthest * 1e-6).max(f32::MIN_POSITIVE);
+    (near, (farthest * 2.0).max(near * 2.0))
 }
 
 fn orthographic_half_extents(
@@ -434,26 +501,6 @@ pub(crate) fn aabb_corners(min: Vec3, max: Vec3) -> [Vec3; 8] {
             if index & 4 != 0 { max.z } else { min.z },
         )
     })
-}
-
-/// Spherical eye offset + world-up vector for the given up axis.
-fn spherical_eye(distance: f32, phi: f32, theta: f32, up: UpAxis) -> (Vec3, Vec3) {
-    let planar = distance * phi.sin();
-    let axial = distance * phi.cos();
-    match up {
-        UpAxis::X => (
-            Vec3::new(axial, planar * theta.cos(), planar * theta.sin()),
-            Vec3::X,
-        ),
-        UpAxis::Y => (
-            Vec3::new(planar * theta.cos(), axial, -planar * theta.sin()),
-            Vec3::Y,
-        ),
-        UpAxis::Z => (
-            Vec3::new(planar * theta.cos(), planar * theta.sin(), axial),
-            Vec3::Z,
-        ),
-    }
 }
 
 /// Equivalent to `computeViewFittingZoom` (`camera.utils.ts`): perspective-correct
@@ -595,10 +642,8 @@ fn frame_uniform(
     data
 }
 
-/// line_width is specified at the default height and scales with output height
-/// so edge weight is resolution-independent (2x render = 2x pixels).
 fn line_width_px(options: &RenderOptions) -> f32 {
-    options.line_width * options.height as f32 / DEFAULT_HEIGHT as f32
+    options.line_width
 }
 
 /// sRGB EOTF: `RenderOptions::background` is authored in sRGB, but wgpu clear
@@ -1605,6 +1650,113 @@ mod tests {
         assert!((actual - expected).length() < 1e-5);
     }
 
+    fn assert_matrix_close(actual: Mat4, expected: Mat4) {
+        for (actual, expected) in actual
+            .to_cols_array()
+            .into_iter()
+            .zip(expected.to_cols_array())
+        {
+            assert!((actual - expected).abs() < 1e-5, "{actual} != {expected}");
+        }
+    }
+
+    fn fixed_camera(projection: CameraProjection) -> RenderCamera {
+        RenderCamera::Fixed {
+            position: [0.0, 0.0, 10.0],
+            target: [0.0, 0.0, 0.0],
+            up: [0.0, 1.0, 0.0],
+            projection,
+            clipping: Some(crate::ClipPlanes {
+                near: 0.1,
+                far: 100.0,
+            }),
+        }
+    }
+
+    fn line_scene(segments: &[[[f32; 3]; 2]]) -> glb::Scene {
+        let positions = segments
+            .iter()
+            .flat_map(|segment| segment.iter().flat_map(|point| point.iter().copied()))
+            .collect::<Vec<_>>();
+        let indices = (0..segments.len() as u32 * 2).collect();
+        glb::Scene {
+            meshes: vec![glb::MeshAsset {
+                primitives: vec![glb::Primitive {
+                    mode: glb::MODE_LINES,
+                    positions,
+                    normals: Vec::new(),
+                    indices,
+                    material: glb::Material {
+                        base_color: [0.0, 0.0, 0.0, 1.0],
+                        metallic: 0.0,
+                        roughness: 1.0,
+                    },
+                }],
+            }],
+            instances: vec![glb::MeshInstance {
+                mesh_index: 0,
+                model: Mat4::IDENTITY,
+                normal_matrix: Mat4::IDENTITY,
+            }],
+            bounds: Some(([-1.0, -1.0, -1.0], [1.0, 1.0, 2.0])),
+        }
+    }
+
+    fn occluded_line_scene(include_line: bool) -> glb::Scene {
+        let mut primitives = vec![glb::Primitive {
+            mode: glb::MODE_TRIANGLES,
+            positions: vec![
+                -1.0, -1.0, 0.0, 1.0, -1.0, 0.0, 1.0, 1.0, 0.0, -1.0, 1.0, 0.0,
+            ],
+            normals: [0.0, 0.0, 1.0].repeat(4),
+            indices: vec![0, 1, 2, 0, 2, 3],
+            material: glb::Material {
+                base_color: [0.8, 0.8, 0.8, 1.0],
+                metallic: 0.0,
+                roughness: 1.0,
+            },
+        }];
+        if include_line {
+            primitives.push(glb::Primitive {
+                mode: glb::MODE_LINES,
+                positions: vec![-0.8, 0.0, -0.5, 0.8, 0.0, -0.5],
+                normals: Vec::new(),
+                indices: vec![0, 1],
+                material: glb::Material {
+                    base_color: [0.0, 0.0, 0.0, 1.0],
+                    metallic: 0.0,
+                    roughness: 1.0,
+                },
+            });
+        }
+        glb::Scene {
+            meshes: vec![glb::MeshAsset { primitives }],
+            instances: vec![glb::MeshInstance {
+                mesh_index: 0,
+                model: Mat4::IDENTITY,
+                normal_matrix: Mat4::IDENTITY,
+            }],
+            bounds: Some(([-1.0, -1.0, -0.5], [1.0, 1.0, 0.0])),
+        }
+    }
+
+    fn render_test_scene(
+        renderer: &mut Renderer,
+        parsed: glb::Scene,
+        options: RenderOptions,
+    ) -> Rendered {
+        let prepared = crate::capture_overlay::prepare_view(&parsed, &options).expect("camera");
+        let entry = PlanEntry {
+            id: "line".into(),
+            options,
+            format: ImageFormat::Raw,
+            prepared,
+        };
+        let mut scene = Scene::new(parsed);
+        let buffers = renderer.ensure_uploaded(&mut scene).expect("line upload");
+        pollster::block_on(renderer.render_entry_to_rgba(buffers, &entry)).expect("line render")
+    }
+
     #[test]
     fn frame_uniform_packs_the_rig_at_the_offsets_wgsl_declares() {
         use crate::{LightingSpace, ResolvedLight, ResolvedLighting};
@@ -1648,131 +1800,272 @@ mod tests {
     }
 
     #[test]
-    fn spherical_eye_is_right_handed_for_each_up_axis() {
-        let phi = 90f32.to_radians();
-        let theta = 90f32.to_radians();
-        let (offset, up) = spherical_eye(10.0, phi, theta, UpAxis::Y);
-        assert_close(offset, Vec3::new(0.0, 0.0, -10.0));
-        assert_eq!(up, Vec3::Y);
-        let (offset, up) = spherical_eye(10.0, phi, theta, UpAxis::Z);
-        assert_close(offset, Vec3::new(0.0, 10.0, 0.0));
-        assert_eq!(up, Vec3::Z);
-        let (offset, up) = spherical_eye(10.0, phi, theta, UpAxis::X);
-        assert_close(offset, Vec3::new(0.0, 0.0, 10.0));
-        assert_eq!(up, Vec3::X);
+    fn default_camera_keeps_the_previous_isometric_direction() {
+        let camera = camera_state(&scene(), &RenderOptions::default());
+        assert_close(camera.forward, -Vec3::new(0.612_372_46, 0.5, 0.612_372_46));
+        assert!(camera.target_depth.is_finite());
     }
 
     #[test]
-    fn spherical_eye_commutes_with_basis_conversion() {
-        for (phi, theta) in [
-            (60f32.to_radians(), -45f32.to_radians()),
-            (37f32.to_radians(), 23f32.to_radians()),
+    fn fitted_camera_honours_cartesian_direction_and_up() {
+        for (direction, up) in [
+            ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+            ([0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
+            ([0.0, 0.0, 1.0], [0.0, 1.0, 0.0]),
         ] {
-            let canonical = spherical_eye(8.0, phi, theta, UpAxis::Z).0;
-            for (axis, expected) in [
-                (UpAxis::X, Vec3::new(canonical.z, canonical.x, canonical.y)),
-                (UpAxis::Y, Vec3::new(canonical.x, canonical.z, -canonical.y)),
-                (UpAxis::Z, canonical),
+            for projection in [
+                CameraProjection::Perspective {
+                    vertical_field_of_view_deg: 45.0,
+                    zoom: 1.0,
+                },
+                CameraProjection::Orthographic {
+                    vertical_span: None,
+                    zoom: 1.0,
+                },
             ] {
-                assert_close(spherical_eye(8.0, phi, theta, axis).0, expected);
-            }
-        }
-    }
-
-    #[test]
-    fn polar_camera_uses_a_positive_screen_up_axis() {
-        for (up, world_up, expected_screen_up) in [
-            (UpAxis::X, Vec3::X, Vec3::Y),
-            (UpAxis::Y, Vec3::Y, Vec3::Z),
-            (UpAxis::Z, Vec3::Z, Vec3::Y),
-        ] {
-            for (phi_deg, expected_forward_sign) in [(0.0, -1.0), (180.0, 1.0)] {
-                for projection in [Projection::Perspective, Projection::Orthographic] {
-                    let camera = camera_state(
-                        &scene(),
-                        &RenderOptions {
-                            phi_deg,
-                            theta_deg: 0.0,
-                            up,
-                            projection,
-                            ..RenderOptions::default()
-                        },
-                    );
-                    let camera_up = camera.view.transform_vector3(expected_screen_up);
-                    assert!((camera_up - Vec3::Y).length() < 1e-5);
-                    assert!((camera.forward.dot(world_up) - expected_forward_sign).abs() < 1e-5);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn non_polar_camera_keeps_the_requested_up_axis() {
-        for up in [UpAxis::X, UpAxis::Y, UpAxis::Z] {
-            for projection in [Projection::Perspective, Projection::Orthographic] {
                 let camera = camera_state(
                     &scene(),
                     &RenderOptions {
-                        phi_deg: 60.0,
-                        theta_deg: -45.0,
-                        up,
-                        projection,
+                        camera: RenderCamera::Fit {
+                            direction,
+                            up,
+                            padding_factor: 0.9,
+                            projection,
+                        },
                         ..RenderOptions::default()
                     },
                 );
-                let requested_up = match up {
-                    UpAxis::X => Vec3::X,
-                    UpAxis::Y => Vec3::Y,
-                    UpAxis::Z => Vec3::Z,
-                };
-                let projected_up = camera.view.transform_vector3(requested_up);
-                assert!(projected_up.y > 0.0);
+                assert_close(camera.forward, -Vec3::from(direction));
+                assert_close(camera.view.transform_vector3(Vec3::from(up)), Vec3::Y);
             }
         }
     }
 
     #[test]
-    fn fit_zoom_is_up_axis_invariant_for_a_cube() {
-        // A cube is symmetric under axis relabeling, so the same (phi, theta)
-        // must produce the same fit regardless of which axis is up.
-        let (min, max) = (Vec3::splat(-1.0), Vec3::splat(1.0));
-        let fov = 45f32.to_radians();
-        let (phi, theta) = (60f32.to_radians(), -45f32.to_radians());
-        let zooms: Vec<f32> = [UpAxis::X, UpAxis::Y, UpAxis::Z]
-            .into_iter()
-            .map(|axis| {
-                let (offset, up) = spherical_eye(8.0, phi, theta, axis);
-                fit_zoom(FitZoomInput {
-                    eye: offset,
-                    target: Vec3::ZERO,
-                    min,
-                    max,
-                    fov,
-                    aspect: 16.0 / 9.0,
-                    padding: 0.9,
-                    world_up: up,
-                })
-            })
-            .collect();
-        assert!(zooms[0] > 0.0);
-        assert!((zooms[0] - zooms[1]).abs() < 1e-4);
-        assert!((zooms[1] - zooms[2]).abs() < 1e-4);
+    fn fitted_perspective_keeps_every_corner_in_front_and_inside_the_margin() {
+        let scene = scene();
+        let (min, max) = scene.bounds.expect("fixture bounds");
+        for field_of_view in [1.0, 45.0, 120.0, 179.0] {
+            let camera = camera_state(
+                &scene,
+                &RenderOptions {
+                    width: 640,
+                    height: 480,
+                    camera: RenderCamera::Fit {
+                        direction: [0.612_372_46, 0.5, 0.612_372_46],
+                        up: [0.0, 1.0, 0.0],
+                        padding_factor: 0.9,
+                        projection: CameraProjection::Perspective {
+                            vertical_field_of_view_deg: field_of_view,
+                            zoom: 1.0,
+                        },
+                    },
+                    ..RenderOptions::default()
+                },
+            );
+            let view_projection = camera.projection * camera.view;
+            for corner in aabb_corners(Vec3::from(min), Vec3::from(max)) {
+                let view = camera.view.transform_point3(corner);
+                assert!(view.z < 0.0, "{field_of_view}° put a corner behind the eye");
+                let clip = view_projection * corner.extend(1.0);
+                assert!(clip.w > 0.0);
+                let ndc = clip.truncate() / clip.w;
+                assert!(ndc.x.abs() <= 0.9001);
+                assert!(ndc.y.abs() <= 0.9001);
+                assert!((0.0..=1.0).contains(&ndc.z));
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_camera_honours_position_target_and_roll() {
+        let base = RenderOptions {
+            camera: RenderCamera::Fixed {
+                position: [4.0, 5.0, 6.0],
+                target: [1.0, 2.0, 3.0],
+                up: [0.0, 1.0, 0.0],
+                projection: CameraProjection::Perspective {
+                    vertical_field_of_view_deg: 45.0,
+                    zoom: 1.0,
+                },
+                clipping: None,
+            },
+            ..RenderOptions::default()
+        };
+        let camera = camera_state(&scene(), &base);
+        assert_close(camera.forward, Vec3::new(-3.0, -3.0, -3.0).normalize());
+        assert_close(
+            camera.view.transform_point3(Vec3::new(4.0, 5.0, 6.0)),
+            Vec3::ZERO,
+        );
+
+        let rolled = camera_state(
+            &scene(),
+            &RenderOptions {
+                camera: RenderCamera::Fixed {
+                    position: [4.0, 5.0, 6.0],
+                    target: [1.0, 2.0, 3.0],
+                    up: [1.0, -1.0, 0.0],
+                    projection: CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 45.0,
+                        zoom: 1.0,
+                    },
+                    clipping: None,
+                },
+                ..RenderOptions::default()
+            },
+        );
+        assert_ne!(camera.view, rolled.view);
+        assert_close(camera.forward, rolled.forward);
+    }
+
+    #[test]
+    fn perspective_field_of_view_and_zoom_share_one_effective_frustum() {
+        let field_of_view = 60.0_f32;
+        let zoom = 2.0_f32;
+        let effective =
+            (2.0 * ((field_of_view.to_radians() * 0.5).tan() / zoom).atan()).to_degrees();
+        let zoomed = camera_state(
+            &scene(),
+            &RenderOptions {
+                camera: fixed_camera(CameraProjection::Perspective {
+                    vertical_field_of_view_deg: field_of_view,
+                    zoom,
+                }),
+                ..RenderOptions::default()
+            },
+        );
+        let equivalent = camera_state(
+            &scene(),
+            &RenderOptions {
+                camera: fixed_camera(CameraProjection::Perspective {
+                    vertical_field_of_view_deg: effective,
+                    zoom: 1.0,
+                }),
+                ..RenderOptions::default()
+            },
+        );
+        assert_matrix_close(zoomed.projection, equivalent.projection);
+    }
+
+    #[test]
+    fn orthographic_vertical_span_and_zoom_share_one_effective_frustum() {
+        let zoomed = camera_state(
+            &scene(),
+            &RenderOptions {
+                camera: fixed_camera(CameraProjection::Orthographic {
+                    vertical_span: Some(20.0),
+                    zoom: 2.0,
+                }),
+                ..RenderOptions::default()
+            },
+        );
+        let equivalent = camera_state(
+            &scene(),
+            &RenderOptions {
+                camera: fixed_camera(CameraProjection::Orthographic {
+                    vertical_span: Some(10.0),
+                    zoom: 1.0,
+                }),
+                ..RenderOptions::default()
+            },
+        );
+        assert_matrix_close(zoomed.projection, equivalent.projection);
+    }
+
+    #[test]
+    fn output_dimensions_define_projection_aspect() {
+        for (width, height) in [(800, 400), (400, 800)] {
+            let state = camera_state(
+                &scene(),
+                &RenderOptions {
+                    width,
+                    height,
+                    camera: fixed_camera(CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 45.0,
+                        zoom: 1.0,
+                    }),
+                    ..RenderOptions::default()
+                },
+            );
+            let aspect = width as f32 / height as f32;
+            assert!((state.projection.y_axis.y / state.projection.x_axis.x - aspect).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn fixed_camera_supports_derived_and_explicit_clipping() {
+        let derived = camera_state(
+            &scene(),
+            &RenderOptions {
+                camera: RenderCamera::Fixed {
+                    position: [0.0, 0.0, 10.0],
+                    target: [0.0, 0.0, 0.0],
+                    up: [0.0, 1.0, 0.0],
+                    projection: CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 45.0,
+                        zoom: 1.0,
+                    },
+                    clipping: None,
+                },
+                ..RenderOptions::default()
+            },
+        );
+        let explicit = camera_state(
+            &scene(),
+            &RenderOptions {
+                camera: fixed_camera(CameraProjection::Perspective {
+                    vertical_field_of_view_deg: 45.0,
+                    zoom: 1.0,
+                }),
+                ..RenderOptions::default()
+            },
+        );
+        assert!(derived.projection.is_finite());
+        assert!(explicit.projection.is_finite());
+        assert_ne!(derived.projection, explicit.projection);
+    }
+
+    #[test]
+    fn derived_clipping_handles_bounds_behind_the_camera() {
+        let (near, far) = bounds_clip_planes(
+            Mat4::IDENTITY,
+            Vec3::new(-1.0, -1.0, 1.0),
+            Vec3::new(1.0, 1.0, 2.0),
+            10.0,
+        );
+        assert!((near - 0.01).abs() < f32::EPSILON);
+        assert_eq!(far, 20.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "fixed orthographic cameras resolve a vertical span")]
+    fn fixed_orthographic_camera_requires_a_resolved_span() {
+        camera_state(
+            &scene(),
+            &RenderOptions {
+                camera: fixed_camera(CameraProjection::Orthographic {
+                    vertical_span: None,
+                    zoom: 1.0,
+                }),
+                ..RenderOptions::default()
+            },
+        );
     }
 
     #[test]
     fn fit_zoom_scales_linearly_with_padding() {
         let (min, max) = (Vec3::splat(-1.0), Vec3::splat(1.0));
         let fov = 45f32.to_radians();
-        let (offset, up) = spherical_eye(8.0, 60f32.to_radians(), -45f32.to_radians(), UpAxis::Y);
         let input = FitZoomInput {
-            eye: offset,
+            eye: Vec3::new(5.0, 4.0, 5.0),
             target: Vec3::ZERO,
             min,
             max,
             fov,
             aspect: 16.0 / 9.0,
             padding: 0.9,
-            world_up: up,
+            world_up: Vec3::Y,
         };
         let full = fit_zoom(input);
         let half = fit_zoom(FitZoomInput {
@@ -1787,16 +2080,15 @@ mod tests {
         // Camera looking straight down the up axis: forward is parallel to
         // world up, exercising the fallback basis branch.
         let (min, max) = (Vec3::splat(-1.0), Vec3::splat(1.0));
-        let (offset, up) = spherical_eye(8.0, 0.0, 0.0, UpAxis::Y);
         let zoom = fit_zoom(FitZoomInput {
-            eye: offset,
+            eye: Vec3::Y * 8.0,
             target: Vec3::ZERO,
             min,
             max,
             fov: 45f32.to_radians(),
             aspect: 16.0 / 9.0,
             padding: 0.9,
-            world_up: up,
+            world_up: Vec3::Y,
         });
         assert!(zoom > 0.0 && zoom.is_finite());
     }
@@ -1928,6 +2220,128 @@ mod tests {
         assert!(srgb_to_linear(0.5) > srgb_to_linear(0.02));
         assert_eq!(srgb_to_linear(-1.0), 0.0);
         assert_eq!(srgb_to_linear(2.0), 1.0);
+    }
+
+    #[test]
+    fn line_width_is_measured_in_output_pixels() {
+        for (width, height) in [(192, 192), (768, 432), (3072, 1728)] {
+            let options = RenderOptions {
+                width,
+                height,
+                line_width: 0.75,
+                ..RenderOptions::default()
+            };
+            assert_eq!(line_width_px(&options), 0.75);
+        }
+    }
+
+    #[test]
+    fn line_raster_width_matches_output_pixels_across_resolutions() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        for size in [192, 768] {
+            for width in [0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0] {
+                let options = RenderOptions {
+                    width: size,
+                    height: size,
+                    line_width: width,
+                    background: Some([1.0; 4]),
+                    camera: fixed_camera(CameraProjection::Orthographic {
+                        vertical_span: Some(4.0),
+                        zoom: 1.0,
+                    }),
+                    ..RenderOptions::default()
+                };
+                let rendered = render_test_scene(
+                    &mut renderer,
+                    line_scene(&[[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]]),
+                    options,
+                );
+                let x = size / 2;
+                let coverage: f64 = (0..size)
+                    .map(|y| {
+                        let red = rendered.rgba[((y * size + x) * 4) as usize] as f32 / 255.0;
+                        1.0 - srgb_to_linear(red)
+                    })
+                    .sum();
+                assert!((coverage - f64::from(width)).abs() < 0.35);
+            }
+        }
+        renderer.destroy();
+    }
+
+    #[test]
+    fn line_caps_are_round_and_hidden_lines_stay_hidden() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let options = RenderOptions {
+            width: 256,
+            height: 256,
+            line_width: 8.0,
+            background: Some([1.0; 4]),
+            camera: fixed_camera(CameraProjection::Orthographic {
+                vertical_span: Some(4.0),
+                zoom: 1.0,
+            }),
+            ..RenderOptions::default()
+        };
+        let line = render_test_scene(
+            &mut renderer,
+            line_scene(&[[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]]),
+            options.clone(),
+        );
+        let red = |x: u32, y: u32| line.rgba[((y * 256 + x) * 4) as usize];
+        assert!(red(61, 128) < 200);
+        assert_eq!(red(61, 124), 255);
+
+        let surface = render_test_scene(&mut renderer, occluded_line_scene(false), options.clone());
+        let hidden_line = render_test_scene(&mut renderer, occluded_line_scene(true), options);
+        assert_eq!(surface.rgba, hidden_line.rgba);
+        renderer.destroy();
+    }
+
+    #[test]
+    fn fixed_camera_lines_trim_at_the_near_plane() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let options = RenderOptions {
+            width: 256,
+            height: 256,
+            background: Some([1.0; 4]),
+            camera: RenderCamera::Fixed {
+                position: [0.0, 0.0, 2.0],
+                target: [0.0, 0.0, 0.0],
+                up: [0.0, 1.0, 0.0],
+                projection: CameraProjection::Perspective {
+                    vertical_field_of_view_deg: 60.0,
+                    zoom: 1.0,
+                },
+                clipping: Some(crate::ClipPlanes {
+                    near: 1.0,
+                    far: 10.0,
+                }),
+            },
+            ..RenderOptions::default()
+        };
+        let visible = [[[-0.8, -0.5, 0.0], [0.8, -0.5, 0.0]]];
+        let crossing = [
+            [[-0.8, -0.5, 0.0], [0.8, -0.5, 0.0]],
+            [[-0.8, 0.0, 0.0], [0.8, 0.0, 1.5]],
+        ];
+        let behind = [
+            [[-0.8, -0.5, 0.0], [0.8, -0.5, 0.0]],
+            [[-0.8, 0.0, 0.0], [0.8, 0.0, 1.5]],
+            [[-0.8, 0.5, 1.5], [0.8, 0.5, 1.5]],
+        ];
+        let visible = render_test_scene(&mut renderer, line_scene(&visible), options.clone());
+        let crossing = render_test_scene(&mut renderer, line_scene(&crossing), options.clone());
+        let behind = render_test_scene(&mut renderer, line_scene(&behind), options);
+        assert_ne!(visible.rgba, crossing.rgba);
+        assert_eq!(crossing.rgba, behind.rgba);
+        renderer.destroy();
     }
 
     #[test]

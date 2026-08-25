@@ -112,23 +112,33 @@ Node.js builtin and resolves the wasm asset without bundler configuration.
 **Main-thread renders.** The one-shot functions work there too, at the price
 of readback and encode competing with input.
 
-**Capturing a live viewer's camera.** An orbiting viewer (three.js, Babylon,
-your own) knows its eye position relative to the target; nanoraster wants
-`phi` and `theta`. Convert the offset; for a Y-up scene:
+**Capturing a live viewer's camera.** Freeze the viewer's numeric pose before
+starting the asynchronous render. The vectors must use the submitted GLB's
+world frame, and output width and height must use the same aspect as the viewer.
 
 ```typescript
-const anglesFromOffset = ([x, y, z]: readonly [number, number, number]) => {
-  const distance = Math.hypot(x, y, z);
-  const degrees = 180 / Math.PI;
-  return {
-    phi: Math.acos(y / distance) * degrees,
-    theta: Math.atan2(-z, x) * degrees,
-  };
-};
+const camera = {
+  framing: 'fixed',
+  position: [eye.x, eye.y, eye.z],
+  target: [target.x, target.y, target.z],
+  up: [viewer.up.x, viewer.up.y, viewer.up.z],
+  projection: {
+    kind: 'perspective',
+    verticalFieldOfView: viewer.fov,
+    zoom: viewer.zoom,
+  },
+} as const;
 
-const image = await renderImage(glb, { format: 'webp', ...anglesFromOffset(eye) });
+const image = await renderImage(glb, {
+  format: 'webp',
+  width: 1600,
+  height: 900,
+  camera,
+});
 ```
 
-Distance is discarded on purpose: nanoraster
-[fits the model itself](frame-the-model), so the capture matches the viewer's
-direction, not its zoom.
+For an orthographic viewer, use `kind: 'orthographic'` and set `verticalSpan`
+to its unzoomed visible height. The wire contract defines field of view, zoom,
+and span without naming a framework; keep object extraction in a consumer
+adapter. [Place the camera](place-the-camera) gives the equations and clipping
+rules.

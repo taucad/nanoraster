@@ -14,6 +14,19 @@ import { renderImage } from '#index.node.js';
 import { withPbrFactors } from './pbr-fixture.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const ISOMETRIC = [0.6123724357, 0.5, 0.6123724357];
+const FRONT = [0, 0, 1];
+const BACK = [0, 0, -1];
+const RIGHT = [1, 0, 0];
+const LEFT = [-1, 0, 0];
+const TOP = [0, 1, 0];
+const BOTTOM = [0, -1, 0];
+const fitCamera = (direction, projection = 'perspective') => ({
+  framing: 'fit',
+  direction,
+  up: Math.abs(direction[1]) === 1 ? [0, 0, 1] : [0, 1, 0],
+  projection: { kind: projection },
+});
 const native =
   /**
    * @type {{
@@ -78,7 +91,7 @@ if (matteFirst.equals(metalFirst)) {
 }
 const interleavedPng = await native.renderImage(
   interleavedGlb,
-  JSON.stringify({ width: 768, height: 576, format: 'png' }),
+  JSON.stringify({ width: 768, height: 576, format: 'png', background: [1, 1, 1, 1], lineWidth: 1 }),
 );
 if (
   !(interleavedPng[0] === 0x89 && interleavedPng[1] === 0x50) ||
@@ -113,35 +126,26 @@ if (!transparentJpegError.startsWith('encode:')) {
 
 const shared = { width: 768, height: 432, format: 'png' };
 const views = [
-  { id: 'front', phi: 90, theta: 0 },
-  { id: 'top', phi: 0, theta: 0 },
+  { id: 'front', camera: fitCamera(RIGHT) },
+  { id: 'top', camera: fitCamera(TOP) },
 ];
 const batch = (await native.renderImages(glb, JSON.stringify({ ...shared, views }))).images;
 if (batch.length !== views.length || !Buffer.isBuffer(batch[0]) || !Buffer.isBuffer(batch[1])) {
   throw new Error('batch output is not an ordered Buffer array');
 }
 for (const [index, view] of views.entries()) {
-  const singularView = await native.renderImage(
-    glb,
-    JSON.stringify({ ...shared, phi: view.phi, theta: view.theta }),
-  );
+  const singularView = await native.renderImage(glb, JSON.stringify({ ...shared, camera: view.camera }));
   if (!batch[index].equals(singularView)) {
     throw new Error(`batch view ${view.id} differs from singular bytes`);
   }
 }
-const axesRequest = { ...shared, phi: 60, theta: -45, axes: true };
-const explicitAxesOff = await native.renderImage(
-  glb,
-  JSON.stringify({ ...shared, phi: 60, theta: -45, axes: false }),
-);
+const axesRequest = { ...shared, axes: true };
+const explicitAxesOff = await native.renderImage(glb, JSON.stringify({ ...shared, axes: false }));
 const axes = await native.renderImage(glb, JSON.stringify(axesRequest));
-const labelA = await native.renderImage(glb, JSON.stringify({ ...shared, phi: 60, theta: -45, label: 'A' }));
-const labelB = await native.renderImage(glb, JSON.stringify({ ...shared, phi: 60, theta: -45, label: 'B' }));
+const labelA = await native.renderImage(glb, JSON.stringify({ ...shared, label: 'A' }));
+const labelB = await native.renderImage(glb, JSON.stringify({ ...shared, label: 'B' }));
 const axesBatch = (
-  await native.renderImages(
-    glb,
-    JSON.stringify({ ...shared, axes: true, views: [{ id: 'isometric', phi: 60, theta: -45 }] }),
-  )
+  await native.renderImages(glb, JSON.stringify({ ...shared, axes: true, views: [{ id: 'isometric' }] }))
 ).images;
 if (
   !explicitAxesOff.equals(png) ||
@@ -162,10 +166,8 @@ const annotations = await native.renderImage(
     width: 768,
     height: 576,
     format: 'png',
-    projection: 'orthographic',
+    camera: fitCamera(FRONT, 'orthographic'),
     label: 'Front — View From +Z',
-    phi: 90,
-    theta: 270,
     axes: true,
     scaleBar: true,
   }),
@@ -176,11 +178,11 @@ const annotations = await native.renderImage(
 // lazy renderer makes that structurally impossible, so this goes through the
 // package façade (the only layer that owns the queue) rather than the addon.
 const visualCases = [
-  { name: '192', width: 192, height: 192, label: 'Isometric', phi: 60, theta: -45 },
-  { name: '800', width: 800, height: 800, label: 'Front — View From +Z', phi: 90, theta: 270 },
-  { name: '1600', width: 1600, height: 1600, label: 'Front — View From +Z', phi: 90, theta: 270 },
-  { name: '4k', width: 3840, height: 2160, label: 'Front — View From +Z', phi: 90, theta: 270 },
-  { name: '4096', width: 4096, height: 4096, label: 'Front — View From +Z', phi: 90, theta: 270 },
+  { name: '192', width: 192, height: 192, label: 'Isometric', direction: ISOMETRIC },
+  { name: '800', width: 800, height: 800, label: 'Front — View From +Z', direction: FRONT },
+  { name: '1600', width: 1600, height: 1600, label: 'Front — View From +Z', direction: FRONT },
+  { name: '4k', width: 3840, height: 2160, label: 'Front — View From +Z', direction: FRONT },
+  { name: '4096', width: 4096, height: 4096, label: 'Front — View From +Z', direction: FRONT },
 ].map(async (view) => ({
   ...view,
   bytes: (
@@ -188,11 +190,9 @@ const visualCases = [
       width: view.width,
       height: view.height,
       format: 'png',
-      projection: 'orthographic',
+      camera: fitCamera(view.direction, 'orthographic'),
       background: [0.94, 0.97, 0.96, 1],
       label: view.label,
-      phi: view.phi,
-      theta: view.theta,
       axes: true,
       scaleBar: true,
     })
@@ -207,11 +207,9 @@ const coldSmallLadder = await native.renderImage(
     width: 192,
     height: 192,
     format: 'png',
-    projection: 'orthographic',
+    camera: fitCamera(ISOMETRIC, 'orthographic'),
     background: [0.94, 0.97, 0.96, 1],
     label: 'Isometric',
-    phi: 60,
-    theta: -45,
     axes: true,
     scaleBar: true,
   }),
@@ -221,14 +219,19 @@ if (!coldSmallLadder.equals(Buffer.from(resolvedVisualCases[0].bytes))) {
 }
 
 const parityViews = [
-  { id: 'isometric', label: 'Isometric', phi: 60, theta: -45 },
-  { id: 'front', label: 'Front — View From +Z', phi: 90, theta: 270 },
-  { id: 'back', label: 'Back — View From −Z', phi: 90, theta: 90 },
-  { id: 'right', label: 'Right — View From +X', phi: 90, theta: 0 },
-  { id: 'left', label: 'Left — View From −X', phi: 90, theta: 180 },
-  { id: 'top', label: 'Top — View From +Y', phi: 0, theta: 0 },
-  { id: 'bottom', label: 'Bottom — View From −Y', phi: 180, theta: 0 },
+  { id: 'isometric', label: 'Isometric', direction: ISOMETRIC },
+  { id: 'front', label: 'Front — View From +Z', direction: FRONT },
+  { id: 'back', label: 'Back — View From −Z', direction: BACK },
+  { id: 'right', label: 'Right — View From +X', direction: RIGHT },
+  { id: 'left', label: 'Left — View From −X', direction: LEFT },
+  { id: 'top', label: 'Top — View From +Y', direction: TOP },
+  { id: 'bottom', label: 'Bottom — View From −Y', direction: BOTTOM },
 ];
+const renderView = (view, projection, labelled = true) => ({
+  id: view.id,
+  ...(labelled ? { label: view.label } : {}),
+  camera: fitCamera(view.direction, projection),
+});
 let parityCases = 0;
 // Labels have no flag of their own any more, so the label leg is spelled by
 // keeping or stripping each view's `label`.
@@ -256,18 +259,16 @@ for (const { format, projection, axes, labelled, scaleBar } of parityOptions) {
     width: 512,
     height: 384,
     format,
-    projection,
     ...(format === 'jpeg' ? { background: [1, 1, 1, 1] } : {}),
     axes,
     scaleBar,
   };
-  // `undefined` drops out of JSON.stringify, so this is an absent label.
-  const views = parityViews.map((view) => (labelled ? view : { ...view, label: undefined }));
+  const views = parityViews.map((view) => renderView(view, projection, labelled));
   const images = (await native.renderImages(glb, JSON.stringify({ ...common, views }))).images;
   for (const [index, view] of views.entries()) {
     const one = await native.renderImage(
       glb,
-      JSON.stringify({ ...common, label: view.label, phi: view.phi, theta: view.theta }),
+      JSON.stringify({ ...common, label: view.label, camera: view.camera }),
     );
     if (!images[index].equals(one)) {
       throw new Error(
@@ -289,11 +290,10 @@ const canonicalVisuals = (
       width: 800,
       height: 800,
       format: 'png',
-      projection: 'orthographic',
       background: [0.94, 0.97, 0.96, 1],
       axes: true,
       scaleBar: true,
-      views: parityViews.slice(1),
+      views: parityViews.slice(1).map((view) => renderView(view, 'orthographic')),
     }),
   )
 ).images;
@@ -303,11 +303,9 @@ const isometricPerspective = await native.renderImage(
     width: 800,
     height: 800,
     format: 'png',
-    projection: 'perspective',
     background: [0.94, 0.97, 0.96, 1],
     label: 'Isometric',
-    phi: 60,
-    theta: -45,
+    camera: fitCamera(ISOMETRIC),
     axes: true,
     scaleBar: true,
   }),
@@ -328,10 +326,10 @@ const studioSpelledOut = {
   space: 'view',
   exposure: 1,
 };
-const lightingBase = { width: 256, height: 256, format: 'png', phi: 60, theta: -45 };
+const lightingBase = { width: 256, height: 256, format: 'png' };
 const lightingViews = [
-  { id: 'isometric', phi: 60, theta: -45 },
-  { id: 'back', phi: 90, theta: 90 },
+  { id: 'isometric', camera: fitCamera(ISOMETRIC) },
+  { id: 'back', camera: fitCamera(BACK) },
 ];
 const renderLit = (lighting) => native.renderImage(glb, JSON.stringify({ ...lightingBase, ...lighting }));
 const renderLitBatch = async (lighting) =>
@@ -340,8 +338,6 @@ const renderLitBatch = async (lighting) =>
       glb,
       JSON.stringify({
         ...lightingBase,
-        phi: undefined,
-        theta: undefined,
         ...lighting,
         views: lightingViews,
       }),
@@ -378,8 +374,8 @@ if (brighter.equals(studioOmitted)) throw new Error('exposure 2 must not match e
 
 // World space pins the rig to the model, so an orbiting view sees it move.
 const worldLight = { lights: [{ direction: [0.4, 0.8, 0.45], color: [3, 3, 3] }] };
-const worldBack = await renderLit({ phi: 90, theta: 90, lighting: { ...worldLight, space: 'world' } });
-const viewBack = await renderLit({ phi: 90, theta: 90, lighting: { ...worldLight, space: 'view' } });
+const worldBack = await renderLit({ camera: fitCamera(BACK), lighting: { ...worldLight, space: 'world' } });
+const viewBack = await renderLit({ camera: fitCamera(BACK), lighting: { ...worldLight, space: 'view' } });
 if (worldBack.equals(viewBack)) {
   throw new Error('space "world" must differ from space "view" on a non-front view');
 }
@@ -432,7 +428,13 @@ if (!glbError.startsWith('parse:')) {
 }
 let atomicError = '';
 try {
-  await native.renderImages(glb, JSON.stringify({ format: 'jpeg', views: parityViews.slice(0, 2) }));
+  await native.renderImages(
+    glb,
+    JSON.stringify({
+      format: 'jpeg',
+      views: parityViews.slice(0, 2).map((view) => renderView(view, 'perspective')),
+    }),
+  );
 } catch (error) {
   atomicError = String(error instanceof Error ? error.message : error);
 }
@@ -458,20 +460,20 @@ const ladder = (
       width: 512,
       height: 384,
       views: [
-        { id: 'base', phi: 60, theta: -45 },
-        { id: 'big', phi: 60, theta: -45, width: 1024, height: 768 },
-        { id: 'weblossy', phi: 60, theta: -45, format: 'webp', quality: 0.9 },
+        { id: 'base' },
+        { id: 'big', width: 1024, height: 768 },
+        { id: 'weblossy', format: 'webp', quality: 0.9 },
       ],
     }),
   )
 ).images;
 const bigSingular = await renderer.renderImage(
   glb,
-  JSON.stringify({ format: 'png', width: 1024, height: 768, phi: 60, theta: -45 }),
+  JSON.stringify({ format: 'png', width: 1024, height: 768 }),
 );
 const lossySingular = await renderer.renderImage(
   glb,
-  JSON.stringify({ format: 'webp', quality: 0.9, width: 512, height: 384, phi: 60, theta: -45 }),
+  JSON.stringify({ format: 'webp', quality: 0.9, width: 512, height: 384 }),
 );
 if (!ladder[1].equals(bigSingular) || !ladder[2].equals(lossySingular)) {
   throw new Error('ladder overrides differ from their singular equivalents');
@@ -509,10 +511,7 @@ const rawPlan = await renderer.renderImages(
     quality: 1,
     width: 192,
     height: 192,
-    views: [
-      { id: 'thumb', phi: 60, theta: -45 },
-      { id: 'frame', phi: 60, theta: -45, format: 'raw' },
-    ],
+    views: [{ id: 'thumb' }, { id: 'frame', format: 'raw' }],
   }),
 );
 if (rawPlan.images.length !== 2 || rawPlan.images[0].toString('latin1', 0, 4) !== 'RIFF') {

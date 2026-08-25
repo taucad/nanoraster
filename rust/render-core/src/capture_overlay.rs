@@ -90,10 +90,13 @@ pub(crate) fn prepare_view(
     debug_assert_ne!(FONT_ATLAS_FNV, 0);
     let mut camera = camera_state(scene, options);
     let alignment = classify_alignment(camera.forward);
+    let projection = options.camera.projection_kind();
     // A label's presence is its own switch — there is no flag to disagree with.
     let label = options.label.clone();
     let mut layout = measure_layout(options, label.as_deref())?;
-    camera = overlay_safe_camera(scene, options, camera, &layout)?;
+    if options.camera.is_fit() {
+        camera = overlay_safe_camera(scene, options, camera, &layout)?;
+    }
 
     let (scale_width_px, scale_label, scale_font_px) = if let Some(rect) = layout.scale {
         let meters_per_pixel = meters_per_pixel(camera, options)?;
@@ -101,9 +104,10 @@ pub(crate) fn prepare_view(
         let (length, exponent) = nice_length(meters_per_pixel * target_width);
         let width = length / meters_per_pixel;
         let quantity = format_si(length, exponent);
-        let label = match options.projection {
+        let label = match projection {
             Projection::Orthographic => quantity,
-            Projection::Perspective => format!("{quantity} @ center"),
+            Projection::Perspective if options.camera.is_fit() => format!("{quantity} @ center"),
+            Projection::Perspective => format!("{quantity} @ target"),
         };
         let preferred_font = layout.font_px * SCALE_FONT_RATIO;
         let available_width = rect.width as f32 * 0.8;
@@ -128,7 +132,7 @@ pub(crate) fn prepare_view(
         scale_width_px,
         scale_label,
         scale_font_px,
-        projection: options.projection,
+        projection,
     })
 }
 
@@ -415,7 +419,7 @@ fn intersects(envelope: (f32, f32, f32, f32), rect: Rect, guard: f32) -> bool {
 
 fn meters_per_pixel(camera: CameraState, options: &RenderOptions) -> Result<f32, RenderError> {
     let projection_scale = camera.projection.y_axis.y.abs();
-    let value = match options.projection {
+    let value = match options.camera.projection_kind() {
         Projection::Orthographic => 2.0 / (projection_scale * options.height as f32),
         Projection::Perspective => {
             2.0 * camera.target_depth / (projection_scale * options.height as f32)
@@ -950,6 +954,7 @@ fn composite_coverage(rendered: &mut Rendered, coverage: &[u8], rect: Rect, colo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CameraProjection, RenderCamera};
     use glam::Mat4;
 
     fn scene() -> Scene {
@@ -981,6 +986,41 @@ mod tests {
             view: Mat4::IDENTITY,
             forward,
             target_depth: 4.0,
+        }
+    }
+
+    fn fit_options(direction: [f32; 3], up: [f32; 3], projection: Projection) -> RenderOptions {
+        RenderOptions {
+            camera: RenderCamera::Fit {
+                direction,
+                up,
+                padding_factor: 0.9,
+                projection: match projection {
+                    Projection::Perspective => CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 45.0,
+                        zoom: 1.0,
+                    },
+                    Projection::Orthographic => CameraProjection::Orthographic {
+                        vertical_span: None,
+                        zoom: 1.0,
+                    },
+                },
+            },
+            ..RenderOptions::default()
+        }
+    }
+
+    fn direction_near_axis(axis: usize, angle_deg: f32) -> [f32; 3] {
+        let angle = angle_deg.to_radians();
+        let aligned = AXES[axis];
+        let perpendicular = AXES[(axis + 1) % 3];
+        (-(aligned * angle.cos() + perpendicular * angle.sin())).to_array()
+    }
+
+    fn up_for_axis(axis: usize) -> [f32; 3] {
+        match axis {
+            1 => Vec3::Z.to_array(),
+            _ => Vec3::Y.to_array(),
         }
     }
 
@@ -1020,12 +1060,14 @@ mod tests {
 
     #[test]
     fn labels_are_preserved_verbatim_for_aligned_and_unaligned_views() {
-        for (phi_deg, theta_deg) in [(90.0, 270.0), (60.0, -45.0)] {
+        for camera in [
+            fit_options([0.0, 0.0, 1.0], [0.0, 1.0, 0.0], Projection::Perspective).camera,
+            RenderCamera::default(),
+        ] {
             let prepared = prepare_view(
                 &scene(),
                 &RenderOptions {
-                    phi_deg,
-                    theta_deg,
+                    camera,
                     label: Some("Housing datum A".into()),
                     ..RenderOptions::default()
                 },
@@ -1036,18 +1078,15 @@ mod tests {
     }
 
     #[test]
-    fn polar_alignment_is_consistent_for_every_up_axis_and_projection() {
-        for (up, axis) in [
-            (crate::UpAxis::X, 0),
-            (crate::UpAxis::Y, 1),
-            (crate::UpAxis::Z, 2),
+    fn canonical_alignment_is_consistent_for_every_axis_and_projection() {
+        for (direction, up, axis) in [
+            ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], 0),
+            ([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], 1),
+            ([0.0, 0.0, 1.0], [0.0, 1.0, 0.0], 2),
         ] {
             for projection in [Projection::Perspective, Projection::Orthographic] {
                 let options = RenderOptions {
-                    phi_deg: 0.0,
-                    theta_deg: 0.0,
-                    up,
-                    projection,
+                    camera: fit_options(direction, up, projection).camera,
                     label: Some("Top".into()),
                     axes: true,
                     scale_bar: true,
@@ -1076,20 +1115,16 @@ mod tests {
         };
         let center = (100_u32, 100_u32);
         let ring_offset = 11_u32;
-        for (up, axis) in [
-            (crate::UpAxis::X, 0),
-            (crate::UpAxis::Y, 1),
-            (crate::UpAxis::Z, 2),
-        ] {
-            for phi_deg in [0.0, 180.0] {
+        for (axis, expected_color) in AXIS_COLORS.iter().enumerate() {
+            for direction in [
+                direction_near_axis(axis, 0.0),
+                direction_near_axis(axis, 180.0),
+            ] {
                 for projection in [Projection::Perspective, Projection::Orthographic] {
                     let options = RenderOptions {
                         width: 256,
                         height: 256,
-                        phi_deg,
-                        theta_deg: 0.0,
-                        up,
-                        projection,
+                        camera: fit_options(direction, up_for_axis(axis), projection).camera,
                         axes: true,
                         ..RenderOptions::default()
                     };
@@ -1106,7 +1141,7 @@ mod tests {
                         (center.0, center.1 - ring_offset),
                         (center.0, center.1 + ring_offset),
                     ] {
-                        assert_eq!(pixel(&rendered, x, y), AXIS_COLORS[axis]);
+                        assert_eq!(pixel(&rendered, x, y), *expected_color);
                     }
                 }
             }
@@ -1139,18 +1174,16 @@ mod tests {
         };
         let center = Vec2::splat(100.0);
         let radius = 100.0;
-        for (up, aligned_axis) in [
-            (crate::UpAxis::X, 0),
-            (crate::UpAxis::Y, 1),
-            (crate::UpAxis::Z, 2),
-        ] {
-            for phi_deg in [0.0, 14.9, 15.0, 165.0, 165.1, 180.0] {
+        for aligned_axis in 0..3 {
+            for angle_deg in [0.0, 14.9, 15.0, 165.0, 165.1, 180.0] {
                 for projection in [Projection::Perspective, Projection::Orthographic] {
                     let options = RenderOptions {
-                        phi_deg,
-                        theta_deg: 0.0,
-                        up,
-                        projection,
+                        camera: fit_options(
+                            direction_near_axis(aligned_axis, angle_deg),
+                            up_for_axis(aligned_axis),
+                            projection,
+                        )
+                        .camera,
                         axes: true,
                         ..RenderOptions::default()
                     };
@@ -1181,15 +1214,17 @@ mod tests {
                     }
                 }
             }
-            for phi_deg in [15.1, 164.9] {
+            for angle_deg in [15.1, 164.9] {
                 for projection in [Projection::Perspective, Projection::Orthographic] {
                     let prepared = prepare_view(
                         &scene(),
                         &RenderOptions {
-                            phi_deg,
-                            theta_deg: 0.0,
-                            up,
-                            projection,
+                            camera: fit_options(
+                                direction_near_axis(aligned_axis, angle_deg),
+                                up_for_axis(aligned_axis),
+                                projection,
+                            )
+                            .camera,
                             axes: true,
                             ..RenderOptions::default()
                         },
@@ -1267,12 +1302,7 @@ mod tests {
 
     #[test]
     fn overlay_fit_preserves_unannotated_camera_and_separates_enabled_slots() {
-        let options = RenderOptions {
-            projection: Projection::Orthographic,
-            phi_deg: 90.0,
-            theta_deg: 270.0,
-            ..RenderOptions::default()
-        };
+        let options = fit_options([0.0, 0.0, 1.0], [0.0, 1.0, 0.0], Projection::Orthographic);
         let expected = camera_state(&scene(), &options);
         let unannotated = prepare_view(&scene(), &options).expect("unannotated view");
         assert_eq!(unannotated.camera.projection, expected.projection);
@@ -1306,6 +1336,36 @@ mod tests {
     }
 
     #[test]
+    fn fixed_camera_annotations_never_reframe_the_requested_pose() {
+        let options = RenderOptions {
+            camera: RenderCamera::Fixed {
+                position: [4.0, 3.0, 2.0],
+                target: [1.0, 0.0, -1.0],
+                up: [0.0, 0.0, 1.0],
+                projection: CameraProjection::Perspective {
+                    vertical_field_of_view_deg: 35.0,
+                    zoom: 1.5,
+                },
+                clipping: None,
+            },
+            label: Some("Inspection".into()),
+            axes: true,
+            scale_bar: true,
+            ..RenderOptions::default()
+        };
+        let expected = camera_state(&scene(), &options);
+        let prepared = prepare_view(&scene(), &options).expect("annotated fixed view");
+        assert_eq!(prepared.camera.view, expected.view);
+        assert_eq!(prepared.camera.projection, expected.projection);
+        assert!(
+            prepared
+                .scale_label
+                .as_deref()
+                .is_some_and(|label| label.ends_with(" @ target"))
+        );
+    }
+
+    #[test]
     fn overlay_fit_covers_canonical_views_projections_and_extreme_shapes() {
         let scenes = [
             bounded_scene([-20.0, -1.0, -1.0], [20.0, 1.0, 1.0]),
@@ -1316,22 +1376,20 @@ mod tests {
             bounded_scene([-1.0e-9; 3], [1.0e-9; 3]),
         ];
         let views = [
-            (90.0, 270.0),
-            (90.0, 90.0),
-            (90.0, 0.0),
-            (90.0, 180.0),
-            (0.0, 0.0),
-            (180.0, 0.0),
+            ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+            ([-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+            ([0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
+            ([0.0, -1.0, 0.0], [0.0, 0.0, 1.0]),
+            ([0.0, 0.0, 1.0], [0.0, 1.0, 0.0]),
+            ([0.0, 0.0, -1.0], [0.0, 1.0, 0.0]),
         ];
         for scene in scenes {
             for projection in [Projection::Perspective, Projection::Orthographic] {
-                for (phi_deg, theta_deg) in views {
+                for (direction, up) in views {
                     let options = RenderOptions {
                         width: 768,
                         height: 576,
-                        phi_deg,
-                        theta_deg,
-                        projection,
+                        camera: fit_options(direction, up, projection).camera,
                         label: Some("V".into()),
                         axes: true,
                         scale_bar: true,
@@ -1372,7 +1430,9 @@ mod tests {
                 &RenderOptions {
                     width: 200,
                     height: 200,
-                    projection: Projection::Orthographic,
+                    camera:
+                        fit_options([0.0, 0.0, 1.0], [0.0, 1.0, 0.0], Projection::Orthographic,)
+                            .camera,
                     ..RenderOptions::default()
                 }
             )
@@ -1385,7 +1445,8 @@ mod tests {
                 &RenderOptions {
                     width: 200,
                     height: 200,
-                    projection: Projection::Perspective,
+                    camera: fit_options([0.0, 0.0, 1.0], [0.0, 1.0, 0.0], Projection::Perspective,)
+                        .camera,
                     ..RenderOptions::default()
                 }
             )
@@ -1403,7 +1464,7 @@ mod tests {
                     &RenderOptions {
                         width,
                         height,
-                        projection,
+                        camera: fit_options([0.0, 0.0, 1.0], [0.0, 1.0, 0.0], projection).camera,
                         scale_bar: true,
                         ..RenderOptions::default()
                     },
@@ -1425,10 +1486,7 @@ mod tests {
     #[test]
     fn subject_center_scale_tracks_world_size_linearly() {
         for projection in [Projection::Perspective, Projection::Orthographic] {
-            let options = RenderOptions {
-                projection,
-                ..RenderOptions::default()
-            };
+            let options = fit_options([0.0, 0.0, 1.0], [0.0, 1.0, 0.0], projection);
             let small = meters_per_pixel(camera_state(&scaled_scene(1.0), &options), &options)
                 .expect("small scene scale");
             let large = meters_per_pixel(camera_state(&scaled_scene(2.0), &options), &options)
@@ -1568,7 +1626,9 @@ mod tests {
             meters_per_pixel(
                 zero_camera,
                 &RenderOptions {
-                    projection: Projection::Orthographic,
+                    camera:
+                        fit_options([0.0, 0.0, 1.0], [0.0, 1.0, 0.0], Projection::Orthographic,)
+                            .camera,
                     ..Default::default()
                 }
             )

@@ -1,16 +1,15 @@
 ---
 title: Render a view sheet
-description: Build a four-view contact sheet from one GLB, learning batch rendering, camera angles, and labels along the way.
+description: Build a four-view contact sheet from one GLB, learning batch rendering, fitted cameras, and labels along the way.
 ---
 
 Build a labelled four-view contact sheet (front, right, top and iso) from one
 GLB in a single render call.
 
-## Step 1: Render a single view from a chosen angle
+## Step 1: Render a single fitted view
 
 Start with one view so the camera controls are visible on their own.
-[Frame the model](guides/frame-the-model) explains the two angles, `phi` and
-`theta`.
+[Frame the model](guides/frame-the-model) explains `direction` and `up`.
 
 <RenderDemo>
 
@@ -25,8 +24,7 @@ const front = await renderImage(glb, {
   format: 'webp',
   width: 512,
   height: 512,
-  phi: 90,
-  theta: 0,
+  camera: { framing: 'fit', direction: [1, 0, 0] },
 });
 
 await writeFile('front.webp', front.bytes);
@@ -41,8 +39,7 @@ await writeFile('front.webp', front.bytes);
 Rendering each view with its own call parses and uploads the GLB every time.
 `renderImages` does that once and renders every view in the list — start
 with two, then add the rest in step 3. A sheet wants a tighter fit than a
-single hero image, so `margin` drops to `0.05`; drag it and both views refit
-together.
+single hero image, so each preset uses `margin: 0.05`.
 
 <RenderDemo>
 
@@ -57,10 +54,9 @@ const sheet = await renderImages(glb, {
   format: 'webp',
   width: 512,
   height: 512,
-  margin: 0.05,
   views: [
-    { id: 'front', phi: 90, theta: 0 },
-    { id: 'right', phi: 90, theta: 90 },
+    { id: 'front', camera: { framing: 'fit', direction: [1, 0, 0], margin: 0.05 } },
+    { id: 'right', camera: { framing: 'fit', direction: [0, 0, -1], margin: 0.05 } },
   ],
 });
 
@@ -95,13 +91,12 @@ const sheet = await renderImages(glb, {
   format: 'webp',
   width: 512,
   height: 512,
-  margin: 0.05,
   axes: true,
   views: [
-    { id: 'front', phi: 90, theta: 0 },
-    { id: 'right', phi: 90, theta: 90 },
-    { id: 'top', phi: 0, theta: 0 },
-    { id: 'iso', phi: 60, theta: -45 },
+    { id: 'front', camera: { framing: 'fit', direction: [1, 0, 0], margin: 0.05 } },
+    { id: 'right', camera: { framing: 'fit', direction: [0, 0, -1], margin: 0.05 } },
+    { id: 'top', camera: { framing: 'fit', direction: [0, 1, 0], up: [0, 0, 1], margin: 0.05 } },
+    { id: 'iso', camera: { framing: 'fit', direction: [0.6123724357, 0.5, 0.6123724357], margin: 0.05 } },
   ],
 });
 ```
@@ -109,7 +104,7 @@ const sheet = await renderImages(glb, {
 </RenderDemo>
 
 **Verify**: four files. `render-top.webp` looks down at the model, and `render-iso.webp` uses
-[the quick start's angles](/docs), because those are the defaults.
+[the quick start's direction](/docs).
 
 ## Step 4: Label each view
 
@@ -126,14 +121,21 @@ const sheet = await renderImages(glb, {
   format: 'webp',
   width: 512,
   height: 512,
-  margin: 0.05,
   axes: true,
   scaleBar: true,
   views: [
-    { id: 'front', phi: 90, theta: 0, label: 'Front' },
-    { id: 'right', phi: 90, theta: 90, label: 'Right' },
-    { id: 'top', phi: 0, theta: 0, label: 'Top' },
-    { id: 'iso', phi: 60, theta: -45, label: 'Iso' },
+    { id: 'front', camera: { framing: 'fit', direction: [1, 0, 0], margin: 0.05 }, label: 'Front' },
+    { id: 'right', camera: { framing: 'fit', direction: [0, 0, -1], margin: 0.05 }, label: 'Right' },
+    {
+      id: 'top',
+      camera: { framing: 'fit', direction: [0, 1, 0], up: [0, 0, 1], margin: 0.05 },
+      label: 'Top',
+    },
+    {
+      id: 'iso',
+      camera: { framing: 'fit', direction: [0.6123724357, 0.5, 0.6123724357], margin: 0.05 },
+      label: 'Iso',
+    },
   ],
 });
 ```

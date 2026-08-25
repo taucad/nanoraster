@@ -17,7 +17,7 @@ stage name (`parse`, `gpu`, `encode`).
 flowchart TD
   subgraph CPU1[CPU]
     A([GLB bytes]) --> B[Parse geometry and materials]
-    B --> C[Fit camera to bounds]
+    B --> C[Resolve fitted or fixed camera]
   end
   subgraph GPU[GPU]
     D[Upload buffers] --> E[Rasterise + edge pass] --> F[Read back pixels]
@@ -33,12 +33,14 @@ input; a failure here is classified `parse`. An out-of-profile _material_ is
 not rejected — it degrades instead, as the [material model](#material-model)
 describes.
 
-**Fit and upload** compute a camera that frames the model's bounds from your
-`phi`, `theta`, `up`, `projection` and `margin`, then move the geometry to the
-device once; see [Frame the model](guides/frame-the-model).
+**Resolve and upload** either fit the model bounds from a direction and margin
+or preserve a fixed position, target, up vector, projection, and clipping
+request, then move the geometry to the device once; see [Frame the model](guides/frame-the-model)
+and [Place the camera](guides/place-the-camera).
 
 **Rasterise** draws the model under the studio preset or the rig you supply,
-tone maps with the ACES filmic curve, then draws authored edge lines. Failures here are GPU-class.
+tone maps with the ACES filmic curve, then draws authored edge lines. Failures
+here are GPU-class.
 
 **Encode** compresses the pixels that came back. A request it cannot
 represent, such as a transparent JPEG, fails as `encode`. Because the failure

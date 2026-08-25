@@ -61,7 +61,10 @@ const frames = await renderImages(glb, {
   format: 'raw',
   width: 480,
   height: 360,
-  views: Array.from({ length: 36 }, (_, step) => ({ id: `f${step}`, phi: 60, theta: step * 10 - 180 })),
+  views: Array.from({ length: 36 }, (_, step) => {
+    const angle = ((step * 10 - 180) * Math.PI) / 180;
+    return { id: `f${step}`, camera: { framing: 'fit', direction: [Math.cos(angle), 0.5, Math.sin(angle)] } };
+  }),
 });
 
 for (const { file } of frames) encoder.stdin.write(file.bytes);
@@ -90,9 +93,7 @@ import { renderImage } from 'nanoraster';
 
 const { bytes, width, height } = await renderImage(glb, {
   format: 'raw',
-  phi: 62,
-  theta: -38,
-  margin: 0.08,
+  camera: { framing: 'fit', direction: [0.65, 0.47, 0.6], margin: 0.08 },
 });
 
 // No copy and no decode: ImageData wraps the memory the renderer wrote.

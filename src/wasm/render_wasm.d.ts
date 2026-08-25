@@ -30,7 +30,7 @@ export function render_images(glb: Uint8Array, options_json: string): Promise<Re
  * `"raw"`. `options_json` is the shared
  * render-request contract (`render_core::RenderRequest`): a required
  * format `"png" | "webp" | "jpeg" | "jpg" | "raw"`, width/height, quality 0..=1,
- * phi/theta degrees, margin 0..=0.5, up `"x" | "y" | "z"`, background
+ * a fitted or fixed Cartesian camera, output-pixel line width, and background
  * `[r, g, b, a]` in 0..=1.
  * One-shot sugar: creates and destroys a device per call — hold a `Renderer`
  * to amortize that across calls.
@@ -42,20 +42,20 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_renderer_free: (a: number, b: number) => void;
-    readonly render_image: (a: number, b: number, c: number, d: number) => number;
-    readonly render_images: (a: number, b: number, c: number, d: number) => number;
     readonly renderer_create: (a: number, b: number) => number;
-    readonly renderer_dispose: (a: number) => void;
     readonly renderer_render_image: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly renderer_render_images: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly renderer_trim_targets: (a: number) => void;
-    readonly __wasm_bindgen_func_elem_1897: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_930: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_930_4: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_930_5: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1912: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_935: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_935_3: (a: number, b: number, c: number) => void;
+    readonly renderer_dispose: (a: number) => void;
+    readonly render_image: (a: number, b: number, c: number, d: number) => number;
+    readonly render_images: (a: number, b: number, c: number, d: number) => number;
+    readonly __wasm_bindgen_func_elem_2053: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1059: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1059_4: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1059_5: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2070: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1056: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1056_3: (a: number, b: number, c: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

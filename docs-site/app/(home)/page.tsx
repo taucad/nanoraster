@@ -3,6 +3,7 @@ import Link from 'next/link';
 
 import { RenderDemo } from '@/components/render-demo';
 import { SizeStrip } from '@/components/size-strip';
+import { createDemoDescriptor } from '@/lib/demo-source';
 
 import styles from './page.module.css';
 
@@ -11,15 +12,15 @@ const heroExample = `import { renderImage } from 'nanoraster';
 const image = await renderImage(glb, {
   format: 'webp',
   quality: 1,
-  phi: 60,
-  theta: -45,
-  margin: 0.1,
-  projection: 'perspective',
-  up: 'y',
+  camera: {
+    framing: 'fit',
+    direction: [0.6123724357, 0.5, 0.6123724357],
+    projection: { kind: 'perspective', verticalFieldOfView: 45 },
+  },
   background: '#101418',
-  axes: false,
-  scaleBar: false,
 });`;
+
+const heroDescriptor = createDemoDescriptor(heroExample);
 
 /** Render the nanoraster homepage and its live demo. */
 const Page = (): React.JSX.Element => (
@@ -65,7 +66,7 @@ const Page = (): React.JSX.Element => (
         The example below runs in your browser on WebGPU. Move a control and the request re-renders; the same
         call runs unchanged in Node.js.
       </p>
-      <RenderDemo code={heroExample} codeBelowControls />
+      <RenderDemo code={heroExample} codeBelowControls descriptor={heroDescriptor} />
     </section>
 
     <section className={styles.afterword}>

@@ -18,25 +18,27 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // condition and server-bundler externalization, and cross-platform installs
 // through `supportedArchitectures`.
 //
-// `api.mdx` was raised for the `driver-unsupported` failure code: one member of
-// the `RenderFailureCode` union and one row of the table that documents it.
+// Camera framing adds one public tagged union, three range constants, the
+// fixed-camera guide, and the migration examples. These measured ceilings pay
+// for that public surface; unchanged pages retain their prior ceilings.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 2_345,
-  'guides/format-and-annotate.mdx': 750,
+  'api.mdx': 2_620,
+  'guides/format-and-annotate.mdx': 830,
   'guides/frame-the-model.mdx': 620,
   'guides/handle-render-failures.mdx': 560,
   'guides/light-the-subject.mdx': 650,
+  'guides/place-the-camera.mdx': 730,
   'guides/render-for-llms.mdx': 500,
-  'guides/render-in-the-browser.mdx': 660,
+  'guides/render-in-the-browser.mdx': 700,
   'guides/render-multiple-views.mdx': 660,
   'guides/reuse-the-renderer.mdx': 650,
-  'guides/work-with-raw-pixels.mdx': 700,
-  'how-it-works.mdx': 1_150,
+  'guides/work-with-raw-pixels.mdx': 730,
+  'how-it-works.mdx': 1_180,
   'index.mdx': 330,
   'install.mdx': 740,
-  'tutorial.mdx': 600,
+  'tutorial.mdx': 690,
 };
-const siteCeiling = 10_700;
+const siteCeiling = 11_900;
 
 const pages = globSync('**/*.mdx', { cwd: docsDir })
   .toSorted()

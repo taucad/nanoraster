@@ -6,14 +6,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   cleanLabel,
   demoControls,
+  describeDemoView,
   isRawDemo,
-  readDemoLights,
   readDemoOptions,
-  readDemoViews,
   substituteDemoValues,
+  type DemoDescriptor,
   type DemoValue,
 } from '@/lib/demo-options';
-import { angleKeys, buildDemoRequest } from '@/lib/demo-request';
+import { buildDemoRequest } from '@/lib/demo-request';
 import { hexToLinear, linearToHex, patchMaterialFactors } from '@/lib/glb-material';
 import { hasWebGpu, loadDemoModel, loadWasmRenderer } from '@/lib/wasm-renderer';
 
@@ -63,20 +63,29 @@ const twoColumnControls = 8;
 export const RenderDemo = ({
   code,
   codeBelowControls = false,
+  descriptor,
+  descriptorJson,
   lang = 'typescript',
 }: {
   readonly code: string;
   readonly codeBelowControls?: boolean;
+  readonly descriptor?: DemoDescriptor;
+  readonly descriptorJson?: string;
   readonly lang?: string;
   /** The MDX fence stays a child for the projection; the block below renders instead. */
   readonly children?: React.ReactNode;
 }): React.JSX.Element => {
-  const views = useMemo(() => readDemoViews(code), [code]);
-  const lights = useMemo(() => readDemoLights(code), [code]);
+  const parsedDescriptor = useMemo(
+    () => descriptor ?? (JSON.parse(descriptorJson ?? '{}') as DemoDescriptor),
+    [descriptor, descriptorJson],
+  );
+  const views = parsedDescriptor.views;
   const batch = views.length > 0;
-  const raw = isRawDemo(code);
-  const controls = demoControls(code).filter((control) => !batch || !angleKeys.has(control.key));
-  const [values, setValues] = useState<Record<string, DemoValue>>(() => readDemoOptions(code));
+  const raw = isRawDemo(parsedDescriptor);
+  const cameraViews = views.filter(({ camera }) => camera !== undefined);
+  const [selectedViewId, setSelectedViewId] = useState(cameraViews[0]?.id ?? '');
+  const controls = demoControls(parsedDescriptor, selectedViewId);
+  const [values, setValues] = useState<Record<string, DemoValue>>(() => readDemoOptions(parsedDescriptor));
   const [state, setState] = useState<State>('idle');
   const [message, setMessage] = useState('');
   const [srcs, setSrcs] = useState<readonly string[]>([]);
@@ -113,7 +122,7 @@ export const RenderDemo = ({
         try {
           const [renderer, source] = await Promise.all([loadWasmRenderer(), loadDemoModel()]);
 
-          const { material, request } = buildDemoRequest(values, { lights, size: RENDER_SIZE, views });
+          const { material, request } = buildDemoRequest(parsedDescriptor, values, RENDER_SIZE);
           const glb = Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
 
           const json = JSON.stringify(request);
@@ -174,7 +183,7 @@ export const RenderDemo = ({
         inFlightRef.current = false;
       }
     },
-    [batch, lights, raw, views],
+    [batch, parsedDescriptor, raw, views],
   );
 
   // The canvas only exists once there is a frame to paint, so the paint waits
@@ -211,7 +220,10 @@ export const RenderDemo = ({
     void draw(next);
   };
 
-  const shown = useMemo(() => substituteDemoValues(code, values), [code, values]);
+  const shown = useMemo(
+    () => (parsedDescriptor.code === code ? substituteDemoValues(parsedDescriptor, values) : code),
+    [code, parsedDescriptor, values],
+  );
 
   // The bytes the request produced, under the image they produced: the same
   // evidence `image.bytes.length` and `mimeType` carry in the example itself.
@@ -237,7 +249,7 @@ export const RenderDemo = ({
     </figure>
   );
 
-  // One image per declared view, captioned with the angles the code states.
+  // One image per declared view, captioned with the camera contract the code states.
   const sheet = batch ? (
     views.map((view, index) => (
       <figure className={styles.tile} key={view.id}>
@@ -247,7 +259,7 @@ export const RenderDemo = ({
           src={srcs[index] ?? ''}
         />
         <figcaption className={styles.caption}>
-          {view.id} · φ {view.phi}° θ {view.theta}°
+          {view.id} · {describeDemoView(view)}
         </figcaption>
         {badge(index)}
       </figure>
@@ -260,7 +272,7 @@ export const RenderDemo = ({
   );
 
   return (
-    <div className={styles.demo}>
+    <div className={styles.demo} data-render-demo data-render-state={state}>
       {codeBelowControls ? undefined : (
         <DynamicCodeBlock code={shown} codeblock={codeblockProps} lang={lang} />
       )}
@@ -291,13 +303,26 @@ export const RenderDemo = ({
           className={styles.controls}
           data-columns={controls.length >= twoColumnControls ? 'two' : undefined}
         >
+          {cameraViews.length > 1 ? (
+            <label className={styles.control}>
+              <span>preset</span>
+              <select
+                onChange={(event) => {
+                  setSelectedViewId(event.currentTarget.value);
+                }}
+                value={selectedViewId}
+              >
+                {cameraViews.map((view) => (
+                  <option key={view.id} value={view.id}>
+                    {view.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : undefined}
           {controls.map((control) => (
             <label className={styles.control} key={control.key}>
-              <span>
-                {control.kind === 'text' && control.view !== undefined
-                  ? `label · ${control.view}`
-                  : control.key}
-              </span>
+              <span>{control.label}</span>
 
               {control.kind === 'range' ? (
                 <input
@@ -325,6 +350,26 @@ export const RenderDemo = ({
                     </option>
                   ))}
                 </select>
+              ) : control.kind === 'vector' ? (
+                <span className={styles.vector}>
+                  {[0, 1, 2].map((index) => (
+                    <input
+                      aria-label={`${control.label} ${['x', 'y', 'z'][index]}`}
+                      key={index}
+                      max={control.max}
+                      min={control.min}
+                      onChange={(event) => {
+                        const current = values[control.key];
+                        const vector = Array.isArray(current) ? Array.from(current) : [0, 0, 0];
+                        vector[index] = Number(event.currentTarget.value);
+                        update(control.key, vector);
+                      }}
+                      step={control.step}
+                      type="number"
+                      value={(values[control.key] as readonly number[] | undefined)?.[index] ?? 0}
+                    />
+                  ))}
+                </span>
               ) : control.kind === 'text' ? (
                 <input
                   onChange={(event) => {
