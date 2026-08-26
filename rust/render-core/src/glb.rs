@@ -700,6 +700,73 @@ mod tests {
             .reduce(Vec3::max)
             .expect("positions");
         assert_eq!(Some((min.to_array(), max.to_array())), scene.bounds);
+
+        let surfaces_only = RenderOptions {
+            lines: false,
+            ..RenderOptions::default()
+        };
+        let mut surface_positions = Vec::new();
+        scene
+            .for_each_position(&surfaces_only, &mut |position| {
+                surface_positions.push(position)
+            })
+            .expect("surface positions");
+        assert_eq!(
+            surface_positions.len(),
+            scene.instances.len() * scene.meshes[0].primitives[0].indices.len()
+        );
+
+        let lines_only = RenderOptions {
+            surfaces: false,
+            ..RenderOptions::default()
+        };
+        let mut line_positions = Vec::new();
+        scene
+            .for_each_position(&lines_only, &mut |position| line_positions.push(position))
+            .expect("line positions");
+        assert_eq!(
+            line_positions.len(),
+            scene.instances.len() * scene.meshes[0].primitives[1].indices.len()
+        );
+
+        let first_instance = RenderOptions {
+            visible_primitives: Some(vec![PrimitiveRef {
+                node_index: 1,
+                mesh_index: 0,
+                primitive_index: 0,
+            }]),
+            ..RenderOptions::default()
+        };
+        assert_eq!(
+            scene.presented_bounds(&first_instance),
+            Some(([-4.5, -0.25, 0.0], [-1.5, 2.15, 0.0]))
+        );
+        assert!(scene.validate_primitive_refs(&first_instance).is_ok());
+        let mut selected_positions = Vec::new();
+        scene
+            .for_each_position(&first_instance, &mut |position| {
+                selected_positions.push(position)
+            })
+            .expect("selected positions");
+        assert_eq!(
+            selected_positions.len(),
+            scene.meshes[0].primitives[0].indices.len()
+        );
+
+        let wrong_instance = RenderOptions {
+            visible_primitives: Some(vec![PrimitiveRef {
+                node_index: 0,
+                mesh_index: 0,
+                primitive_index: 0,
+            }]),
+            ..RenderOptions::default()
+        };
+        assert_eq!(
+            scene.validate_primitive_refs(&wrong_instance),
+            Err(
+                "visiblePrimitives[0] does not match a reachable source node/mesh/primitive".into()
+            )
+        );
     }
 
     #[test]

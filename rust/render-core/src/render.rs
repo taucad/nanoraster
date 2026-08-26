@@ -2714,12 +2714,52 @@ mod tests {
                     vertical_span: Some(4.0),
                     zoom: 1.0,
                 }),
-                ..options
+                ..options.clone()
             },
         );
         let dark = |x: u32| line.rgba[((128 * 256 + x) * 4) as usize] < 200;
         assert!(!dark(96));
         assert!(dark(160));
+
+        let surface_only = render_test_scene(
+            &mut renderer,
+            line_scene(&[[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]]),
+            RenderOptions {
+                camera: fixed_camera(CameraProjection::Orthographic {
+                    vertical_span: Some(4.0),
+                    zoom: 1.0,
+                }),
+                sections: Some(crate::Sections {
+                    clip_lines: false,
+                    ..sections.clone()
+                }),
+                ..options.clone()
+            },
+        );
+        let surface_only_dark = |x: u32| surface_only.rgba[((128 * 256 + x) * 4) as usize] < 200;
+        assert!(surface_only_dark(96));
+        assert!(surface_only_dark(160));
+
+        let uncut_cube = render_test_scene(
+            &mut renderer,
+            cube_scene(),
+            RenderOptions {
+                sections: Some(crate::Sections {
+                    clip_surfaces: false,
+                    ..sections
+                }),
+                ..options.clone()
+            },
+        );
+        let whole_cube = render_test_scene(
+            &mut renderer,
+            cube_scene(),
+            RenderOptions {
+                sections: None,
+                ..options.clone()
+            },
+        );
+        assert_eq!(uncut_cube.rgba, whole_cube.rgba);
 
         let hidden_line = render_test_scene(
             &mut renderer,

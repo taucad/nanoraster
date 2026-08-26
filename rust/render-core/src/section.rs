@@ -2,7 +2,7 @@
 //! clips the resulting cap triangles against the other active planes.
 
 use crate::glb::{self, MODE_TRIANGLES};
-use crate::{RenderError, RenderOptions, SectionPlane};
+use crate::{PrimitiveRef, RenderError, RenderOptions, SectionPlane};
 use glam::{Mat4, Vec3};
 use i_triangle::i_overlay::core::fill_rule::FillRule;
 use i_triangle::i_overlay::core::overlay::Overlay;
@@ -95,6 +95,7 @@ fn build_plane(
             let segments = triangle_segments(
                 primitive,
                 instance.model,
+                scene.primitive_ref(instance, primitive),
                 basis,
                 normal,
                 epsilon,
@@ -179,6 +180,7 @@ fn build_plane(
 fn triangle_segments(
     primitive: &glb::Primitive,
     model: Mat4,
+    source: PrimitiveRef,
     basis: Basis,
     normal: Vec3,
     epsilon: f32,
@@ -205,12 +207,16 @@ fn triangle_segments(
                 points.push(vertices[left].lerp(vertices[right], a / (a - b)));
             }
         }
-        points.dedup_by(|left, right| left.distance_squared(*right) <= epsilon * epsilon);
+        let points = points
+            .into_iter()
+            .map(|point| quantize(basis, point, plane_index, source))
+            .collect::<Result<BTreeSet<_>, _>>()?;
         if points.len() != 2 {
             continue;
         }
-        let a = quantize(basis, points[0], plane_index)?;
-        let b = quantize(basis, points[1], plane_index)?;
+        let mut points = points.into_iter();
+        let a = points.next().expect("two section points");
+        let b = points.next().expect("two section points");
         if a != b {
             segments.insert(ordered_segment(a, b));
         }
@@ -392,7 +398,12 @@ fn ordered_segment(a: Point, b: Point) -> Segment {
     if a <= b { (a, b) } else { (b, a) }
 }
 
-fn quantize(basis: Basis, world: Vec3, plane_index: usize) -> Result<Point, RenderError> {
+fn quantize(
+    basis: Basis,
+    world: Vec3,
+    plane_index: usize,
+    source: PrimitiveRef,
+) -> Result<Point, RenderError> {
     let relative = world - basis.origin;
     let coordinates = [relative.dot(basis.u), relative.dot(basis.v)];
     let mut result = [0_i64; 2];
@@ -400,7 +411,8 @@ fn quantize(basis: Basis, world: Vec3, plane_index: usize) -> Result<Point, Rend
         let scaled = f64::from(coordinate) * PRECISION;
         if !scaled.is_finite() || scaled.abs() >= SAFE_COORDINATE as f64 {
             return Err(RenderError::Parse(format!(
-                "sections.planes[{plane_index}] cap coordinate exceeds fixed-precision range"
+                "sections.planes[{plane_index}] source node {}/mesh {}/primitive {} cap coordinate exceeds fixed-precision range",
+                source.node_index, source.mesh_index, source.primitive_index
             )));
         }
         result[index] = scaled.round() as i64;
@@ -479,30 +491,49 @@ fn linear_to_srgb(channel: f32) -> f32 {
 mod tests {
     use super::*;
 
-    fn cube_scene(instance_count: usize) -> glb::Scene {
-        let positions = vec![
+    const TEST_SOURCE: PrimitiveRef = PrimitiveRef {
+        node_index: 0,
+        mesh_index: 0,
+        primitive_index: 0,
+    };
+
+    fn cube_primitive(
+        source_index: usize,
+        center: Vec3,
+        half_extent: f32,
+        base_color: [f32; 4],
+    ) -> glb::Primitive {
+        let mut positions = vec![
             -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0,
             1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0,
         ];
-        let indices = vec![
-            0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5, 0, 1, 5, 0, 5,
-            4, 3, 7, 6, 3, 6, 2,
-        ];
+        for position in positions.chunks_exact_mut(3) {
+            position[0] = position[0] * half_extent + center.x;
+            position[1] = position[1] * half_extent + center.y;
+            position[2] = position[2] * half_extent + center.z;
+        }
+        glb::Primitive {
+            source_index,
+            mode: MODE_TRIANGLES,
+            normals: positions.clone(),
+            positions,
+            indices: vec![
+                0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5, 0, 1, 5, 0,
+                5, 4, 3, 7, 6, 3, 6, 2,
+            ],
+            material: glb::Material {
+                base_color,
+                metallic: 0.0,
+                roughness: 1.0,
+            },
+        }
+    }
+
+    fn cube_scene(instance_count: usize) -> glb::Scene {
         glb::Scene {
             meshes: vec![glb::MeshAsset {
                 source_index: 0,
-                primitives: vec![glb::Primitive {
-                    source_index: 0,
-                    mode: MODE_TRIANGLES,
-                    normals: positions.clone(),
-                    positions,
-                    indices,
-                    material: glb::Material {
-                        base_color: [0.5, 0.5, 0.5, 1.0],
-                        metallic: 0.0,
-                        roughness: 1.0,
-                    },
-                }],
+                primitives: vec![cube_primitive(0, Vec3::ZERO, 1.0, [0.5, 0.5, 0.5, 1.0])],
             }],
             instances: (0..instance_count)
                 .map(|source_node_index| glb::MeshInstance {
@@ -549,6 +580,22 @@ mod tests {
                 roughness: 1.0,
             },
         }
+    }
+
+    fn cap_area(geometry: &CapGeometry) -> f32 {
+        geometry
+            .indices
+            .chunks_exact(3)
+            .map(|triangle| {
+                let point = |index: u32| {
+                    Vec3::from_slice(&geometry.vertices[index as usize * CAP_VERTEX_FLOATS..][..3])
+                };
+                (point(triangle[1]) - point(triangle[0]))
+                    .cross(point(triangle[2]) - point(triangle[0]))
+                    .length()
+                    * 0.5
+            })
+            .sum()
     }
 
     #[test]
@@ -599,6 +646,61 @@ mod tests {
     }
 
     #[test]
+    fn hollow_transformed_and_material_split_solids_keep_section_evidence() {
+        let mut hollow = cube_scene(1);
+        let inner = cube_primitive(0, Vec3::ZERO, 0.4, [0.5, 0.5, 0.5, 1.0]);
+        let primitive = &mut hollow.meshes[0].primitives[0];
+        let vertex_offset = u32::try_from(primitive.positions.len() / 3).expect("small fixture");
+        primitive.positions.extend_from_slice(&inner.positions);
+        primitive.normals.extend_from_slice(&inner.normals);
+        primitive
+            .indices
+            .extend(inner.indices.into_iter().map(|index| index + vertex_offset));
+        let hollow_cap = build(&hollow, &section_options()).expect("hollow cap");
+        assert!((cap_area(&hollow_cap) - 3.36).abs() < 1.0e-4);
+
+        let mut transformed = cube_scene(1);
+        transformed.instances[0].model = Mat4::from_translation(Vec3::X * 5.0);
+        let mut transformed_options = section_options();
+        transformed_options
+            .sections
+            .as_mut()
+            .expect("sections")
+            .planes[0]
+            .point = [5.0, 0.0, 0.0];
+        let transformed_cap = build(&transformed, &transformed_options).expect("transformed cap");
+        assert!(
+            transformed_cap
+                .vertices
+                .chunks_exact(CAP_VERTEX_FLOATS)
+                .all(|vertex| (vertex[0] - 5.0).abs() < 1.0e-6)
+        );
+
+        let mut split = cube_scene(1);
+        let first_color = [0.2, 0.3, 0.4, 1.0];
+        let second_color = [0.7, 0.6, 0.5, 1.0];
+        split.meshes[0].primitives = vec![
+            cube_primitive(0, Vec3::Y * -2.0, 0.75, first_color),
+            cube_primitive(1, Vec3::Y * 2.0, 0.75, second_color),
+        ];
+        let split_cap = build(&split, &section_options()).expect("material split cap");
+        let first_base = material_colors(first_color).0;
+        let second_base = material_colors(second_color).0;
+        assert!(
+            split_cap
+                .vertices
+                .chunks_exact(CAP_VERTEX_FLOATS)
+                .any(|vertex| vertex[5..9] == first_base)
+        );
+        assert!(
+            split_cap
+                .vertices
+                .chunks_exact(CAP_VERTEX_FLOATS)
+                .any(|vertex| vertex[5..9] == second_base)
+        );
+    }
+
+    #[test]
     fn open_degenerate_and_out_of_range_sections_are_deterministic() {
         let open = triangle_scene(
             vec![-1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0],
@@ -628,18 +730,35 @@ mod tests {
             vec![0, 1, 2],
         );
         assert!(
-            triangle_segments(&coplanar, Mat4::IDENTITY, basis, Vec3::X, 1.0e-6, 0)
-                .expect("coplanar")
-                .is_empty()
+            triangle_segments(
+                &coplanar,
+                Mat4::IDENTITY,
+                TEST_SOURCE,
+                basis,
+                Vec3::X,
+                1.0e-6,
+                0,
+            )
+            .expect("coplanar")
+            .is_empty()
         );
         let on_plane_vertex = triangle_primitive(
-            vec![0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, -1.0, 0.0],
+            vec![0.0, 0.0, 0.0, 1.0, 1.0, 0.0, -1.0, 0.0, 1.0],
             vec![0, 1, 2],
         );
-        assert!(
-            triangle_segments(&on_plane_vertex, Mat4::IDENTITY, basis, Vec3::X, 1.0e-6, 0)
-                .expect("vertex on plane")
-                .is_empty()
+        assert_eq!(
+            triangle_segments(
+                &on_plane_vertex,
+                Mat4::IDENTITY,
+                TEST_SOURCE,
+                basis,
+                Vec3::X,
+                1.0e-6,
+                0,
+            )
+            .expect("vertex on plane")
+            .len(),
+            1
         );
 
         let huge = triangle_scene(
@@ -647,19 +766,22 @@ mod tests {
             vec![0, 1, 2],
         );
         let mut output = CapGeometry::default();
+        let error = build_plane(
+            &huge,
+            &section_options(),
+            &SectionPlane {
+                point: [0.0; 3],
+                normal: [1.0, 0.0, 0.0],
+            },
+            0,
+            1.0,
+            &mut output,
+        )
+        .expect_err("out-of-range section must fail");
         assert!(
-            build_plane(
-                &huge,
-                &section_options(),
-                &SectionPlane {
-                    point: [0.0; 3],
-                    normal: [1.0, 0.0, 0.0]
-                },
-                0,
-                1.0,
-                &mut output,
-            )
-            .is_err()
+            error
+                .to_string()
+                .contains("source node 0/mesh 0/primitive 0")
         );
 
         let square = vec![vec![vec![
