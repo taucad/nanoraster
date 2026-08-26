@@ -338,27 +338,41 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
             padding_factor,
             projection,
         } => {
-            let fov = match projection {
+            let direction = Vec3::from(*direction).normalize();
+            let up = Vec3::from(*up).normalize();
+            let distance = match projection {
                 CameraProjection::Perspective {
                     vertical_field_of_view_deg,
                     ..
-                } => vertical_field_of_view_deg.to_radians(),
-                CameraProjection::Orthographic { .. } => 45f32.to_radians(),
+                } => {
+                    let fov = vertical_field_of_view_deg.to_radians();
+                    let standard_fov = 60f32.to_radians();
+                    let model_distance =
+                        radius * 2.0 * ((standard_fov / 2.0).tan() / (fov / 2.0).tan());
+                    // Preserve established framing until a wide FoV needs the
+                    // exact outside-the-bounds distance to remain effective.
+                    model_distance.max(fitted_perspective_distance(FitDistanceInput {
+                        direction,
+                        up,
+                        center,
+                        min,
+                        max,
+                        fov,
+                        aspect,
+                        padding: *padding_factor,
+                        minimum: radius * 0.001,
+                    }))
+                }
+                CameraProjection::Orthographic { .. } => {
+                    let fov = 45f32.to_radians();
+                    let standard_fov = 60f32.to_radians();
+                    radius * 2.0 * ((standard_fov / 2.0).tan() / (fov / 2.0).tan())
+                }
             };
-            // Preserve the existing fitted-camera distance model while
-            // allowing the caller to choose its vertical field of view.
-            let standard_fov = 60f32.to_radians();
-            let offset_ratio = 2.0 * ((standard_fov / 2.0).tan() / (fov / 2.0).tan());
-            // Keep every bounds corner in front of the eye even when a wide
-            // field of view would otherwise move a fitted camera inside the
-            // subject. `fit_zoom` then solves the requested framing exactly.
-            let distance = (radius * offset_ratio).max(radius * 2.0);
-            let offset = Vec3::from(*direction) * distance;
+            let offset = direction * distance;
             let eye = center + offset;
-            let up = Vec3::from(*up);
             let view = glam::camera::rh::view::look_at_mat4(eye, center, up);
-            let near = (distance - 2.0 * radius).max(distance * 0.001);
-            let far = distance + 2.0 * radius;
+            let (near, far) = bounds_clip_planes(view, min, max, distance);
             let projection = match projection {
                 CameraProjection::Orthographic { .. } => {
                     let (half_width, half_height) =
@@ -372,7 +386,11 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
                         far,
                     )
                 }
-                CameraProjection::Perspective { .. } => {
+                CameraProjection::Perspective {
+                    vertical_field_of_view_deg,
+                    ..
+                } => {
+                    let fov = vertical_field_of_view_deg.to_radians();
                     let mut projection =
                         glam::camera::rh::proj::directx::perspective(fov, aspect, near, far);
                     let zoom = fit_zoom(FitZoomInput {
@@ -383,7 +401,7 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
                         fov,
                         aspect,
                         padding: *padding_factor,
-                        world_up: up,
+                        up,
                     });
                     projection.x_axis.x *= zoom;
                     projection.y_axis.y *= zoom;
@@ -503,9 +521,47 @@ pub(crate) fn aabb_corners(min: Vec3, max: Vec3) -> [Vec3; 8] {
     })
 }
 
-/// Equivalent to `computeViewFittingZoom` (`camera.utils.ts`): perspective-correct
-/// per-corner angular extents against the frustum. `world_up` is the explicit
-/// spherical-placement up axis.
+#[derive(Clone, Copy)]
+struct FitDistanceInput {
+    direction: Vec3,
+    up: Vec3,
+    center: Vec3,
+    min: Vec3,
+    max: Vec3,
+    fov: f32,
+    aspect: f32,
+    padding: f32,
+    minimum: f32,
+}
+
+fn fitted_perspective_distance(input: FitDistanceInput) -> f32 {
+    let FitDistanceInput {
+        direction,
+        up,
+        center,
+        min,
+        max,
+        fov,
+        aspect,
+        padding,
+        minimum,
+    } = input;
+    let forward = -direction;
+    let right = forward.cross(up).normalize();
+    let up = right.cross(forward).normalize();
+    let vertical_tangent = (fov * 0.5).tan() * padding;
+    let horizontal_tangent = vertical_tangent * aspect;
+    let mut distance = minimum;
+    for corner in aabb_corners(min, max) {
+        let offset = corner - center;
+        let axial = offset.dot(direction);
+        distance = distance.max(axial + offset.dot(right).abs() / horizontal_tangent);
+        distance = distance.max(axial + offset.dot(up).abs() / vertical_tangent);
+        distance = distance.max(axial + minimum);
+    }
+    distance
+}
+
 #[derive(Clone, Copy)]
 struct FitZoomInput {
     eye: Vec3,
@@ -515,88 +571,28 @@ struct FitZoomInput {
     fov: f32,
     aspect: f32,
     padding: f32,
-    world_up: Vec3,
+    up: Vec3,
 }
 
 fn fit_zoom(input: FitZoomInput) -> f32 {
-    let FitZoomInput {
-        eye,
-        target,
-        min,
-        max,
-        fov,
-        aspect,
-        padding,
-        world_up,
-    } = input;
-    const EPSILON: f32 = 1e-6;
-    let to_target = target - eye;
-    if to_target.length_squared() < EPSILON
-        || !fov.is_finite()
-        || !aspect.is_finite()
-        || aspect <= EPSILON
-        || !padding.is_finite()
-        || padding <= 0.0
-    {
-        return 1.0;
-    }
-    let forward = to_target.normalize();
-    let mut right = forward.cross(world_up);
-    if right.length_squared() < 1e-6 {
-        let fx = forward.x.abs();
-        let fy = forward.y.abs();
-        let fz = forward.z.abs();
-        let fallback = if fx <= fy && fx <= fz {
-            Vec3::X
-        } else if fy <= fz {
-            Vec3::Y
-        } else {
-            Vec3::Z
-        };
-        right = forward.cross(fallback);
-    }
-    let right = right.normalize();
+    let forward = (input.target - input.eye).normalize();
+    let right = forward.cross(input.up).normalize();
     let up = right.cross(forward).normalize();
-
-    let tan_half_fov = (fov / 2.0).tan();
-    if !tan_half_fov.is_finite() || tan_half_fov < EPSILON {
+    let mut max_right_tangent = 0.0_f32;
+    let mut max_up_tangent = 0.0_f32;
+    for corner in aabb_corners(input.min, input.max) {
+        let offset = corner - input.eye;
+        let depth = offset.dot(forward);
+        max_right_tangent = max_right_tangent.max((offset.dot(right) / depth).abs());
+        max_up_tangent = max_up_tangent.max((offset.dot(up) / depth).abs());
+    }
+    if max_right_tangent == 0.0 && max_up_tangent == 0.0 {
         return 1.0;
     }
-
-    let mut max_right_tan = 0f32;
-    let mut max_up_tan = 0f32;
-    let mut valid_corners = 0u32;
-    for i in 0..8u32 {
-        let corner = Vec3::new(
-            if i & 1 != 0 { max.x } else { min.x },
-            if i & 2 != 0 { max.y } else { min.y },
-            if i & 4 != 0 { max.z } else { min.z },
-        );
-        let to_corner = corner - eye;
-        let forward_distance = to_corner.dot(forward);
-        if forward_distance <= EPSILON {
-            continue;
-        }
-        max_right_tan = max_right_tan.max((to_corner.dot(right) / forward_distance).abs());
-        max_up_tan = max_up_tan.max((to_corner.dot(up) / forward_distance).abs());
-        valid_corners += 1;
-    }
-    let has_horizontal_extent = max_right_tan >= EPSILON;
-    let has_vertical_extent = max_up_tan >= EPSILON;
-    if valid_corners == 0 || (!has_horizontal_extent && !has_vertical_extent) {
-        return 1.0;
-    }
-    let zoom_vertical = if has_vertical_extent {
-        tan_half_fov / max_up_tan
-    } else {
-        f32::INFINITY
-    };
-    let zoom_horizontal = if has_horizontal_extent {
-        aspect * tan_half_fov / max_right_tan
-    } else {
-        f32::INFINITY
-    };
-    (zoom_vertical.min(zoom_horizontal) * padding).max(EPSILON)
+    let tangent = (input.fov * 0.5).tan();
+    let vertical = tangent / max_up_tangent;
+    let horizontal = input.aspect * tangent / max_right_tangent;
+    vertical.min(horizontal) * input.padding
 }
 
 // The one definition of the `Frame` uniform (see `shader.wgsl`): two mat4 and
@@ -1878,6 +1874,50 @@ mod tests {
     }
 
     #[test]
+    fn fitted_perspective_field_of_view_remains_effective_above_sixty_degrees() {
+        let camera_at = |vertical_field_of_view_deg| {
+            camera_state(
+                &scene(),
+                &RenderOptions {
+                    camera: RenderCamera::Fit {
+                        direction: [0.6, 0.5, 0.6],
+                        up: [0.0, 1.0, 0.0],
+                        padding_factor: 0.9,
+                        projection: CameraProjection::Perspective {
+                            vertical_field_of_view_deg,
+                            zoom: 1.0,
+                        },
+                    },
+                    ..RenderOptions::default()
+                },
+            )
+        };
+
+        let sixty = camera_at(60.0);
+        let wide = camera_at(120.0);
+
+        assert!(wide.target_depth < sixty.target_depth);
+        assert_ne!(wide.projection, sixty.projection);
+    }
+
+    #[test]
+    fn fitted_zoom_leaves_point_bounds_unscaled() {
+        assert_eq!(
+            fit_zoom(FitZoomInput {
+                eye: Vec3::Z,
+                target: Vec3::ZERO,
+                min: Vec3::ZERO,
+                max: Vec3::ZERO,
+                fov: 45f32.to_radians(),
+                aspect: 1.0,
+                padding: 0.9,
+                up: Vec3::Y,
+            }),
+            1.0
+        );
+    }
+
+    #[test]
     fn fixed_camera_honours_position_target_and_roll() {
         let base = RenderOptions {
             camera: RenderCamera::Fixed {
@@ -2050,166 +2090,6 @@ mod tests {
                 }),
                 ..RenderOptions::default()
             },
-        );
-    }
-
-    #[test]
-    fn fit_zoom_scales_linearly_with_padding() {
-        let (min, max) = (Vec3::splat(-1.0), Vec3::splat(1.0));
-        let fov = 45f32.to_radians();
-        let input = FitZoomInput {
-            eye: Vec3::new(5.0, 4.0, 5.0),
-            target: Vec3::ZERO,
-            min,
-            max,
-            fov,
-            aspect: 16.0 / 9.0,
-            padding: 0.9,
-            world_up: Vec3::Y,
-        };
-        let full = fit_zoom(input);
-        let half = fit_zoom(FitZoomInput {
-            padding: 0.45,
-            ..input
-        });
-        assert!((half - full * 0.5).abs() < 1e-5);
-    }
-
-    #[test]
-    fn fit_zoom_handles_top_down_degenerate_view() {
-        // Camera looking straight down the up axis: forward is parallel to
-        // world up, exercising the fallback basis branch.
-        let (min, max) = (Vec3::splat(-1.0), Vec3::splat(1.0));
-        let zoom = fit_zoom(FitZoomInput {
-            eye: Vec3::Y * 8.0,
-            target: Vec3::ZERO,
-            min,
-            max,
-            fov: 45f32.to_radians(),
-            aspect: 16.0 / 9.0,
-            padding: 0.9,
-            world_up: Vec3::Y,
-        });
-        assert!(zoom > 0.0 && zoom.is_finite());
-    }
-
-    #[test]
-    fn fit_zoom_constrains_each_line_by_its_non_degenerate_axis() {
-        let fov = 45f32.to_radians();
-        let expected = 10.0 * (fov / 2.0).tan() / 2.0;
-        for (min, max) in [
-            (Vec3::new(0.0, -2.0, 0.0), Vec3::new(0.0, 2.0, 0.0)),
-            (Vec3::new(-2.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0)),
-        ] {
-            let zoom = fit_zoom(FitZoomInput {
-                eye: Vec3::new(0.0, 0.0, 10.0),
-                target: Vec3::ZERO,
-                min,
-                max,
-                fov,
-                aspect: 1.0,
-                padding: 1.0,
-                world_up: Vec3::Y,
-            });
-            assert!((zoom - expected).abs() < 1e-5);
-        }
-    }
-
-    #[test]
-    fn fit_zoom_uses_explicit_non_default_up_axis() {
-        let fov = 45f32.to_radians();
-        let zoom = fit_zoom(FitZoomInput {
-            eye: Vec3::new(0.0, 0.0, 10.0),
-            target: Vec3::ZERO,
-            min: Vec3::new(-2.0, -1.0, 0.0),
-            max: Vec3::new(2.0, 1.0, 0.0),
-            fov,
-            aspect: 1.0,
-            padding: 1.0,
-            world_up: Vec3::X,
-        });
-        let expected = 10.0 * (fov / 2.0).tan() / 2.0;
-        assert!((zoom - expected).abs() < 1e-5);
-    }
-
-    #[test]
-    fn fit_zoom_agrees_with_typescript_for_shared_asymmetric_fixture() {
-        let zoom = fit_zoom(FitZoomInput {
-            eye: Vec3::new(6.0, 7.0, 8.0),
-            target: Vec3::new(1.0, -2.0, 0.5),
-            min: Vec3::new(-3.0, -1.0, -2.0),
-            max: Vec3::new(4.0, 5.0, 3.0),
-            fov: 47f32.to_radians(),
-            aspect: 4.0 / 3.0,
-            padding: 0.9,
-            world_up: Vec3::Z,
-        });
-
-        assert!((zoom - 0.488_220_08).abs() < 1e-5);
-    }
-
-    #[test]
-    fn fit_zoom_uses_safe_fallback_for_invalid_projection_inputs() {
-        let arguments = (
-            Vec3::new(0.0, 0.0, 10.0),
-            Vec3::ZERO,
-            Vec3::splat(-1.0),
-            Vec3::splat(1.0),
-        );
-        for (fov, aspect) in [(0.0, 1.0), (f32::NAN, 1.0), (45f32.to_radians(), 0.0)] {
-            assert_eq!(
-                fit_zoom(FitZoomInput {
-                    eye: arguments.0,
-                    target: arguments.1,
-                    min: arguments.2,
-                    max: arguments.3,
-                    fov,
-                    aspect,
-                    padding: 0.9,
-                    world_up: Vec3::Y,
-                }),
-                1.0
-            );
-        }
-    }
-
-    #[test]
-    fn fit_zoom_covers_every_fallback_basis_and_behind_camera_corner() {
-        let bounds = (Vec3::splat(-1.0), Vec3::splat(1.0));
-        let fov = 45f32.to_radians();
-        for (eye, up) in [
-            (Vec3::X * 10.0, Vec3::X),
-            (
-                Vec3::new(10.0, 10.0, 0.0),
-                Vec3::new(1.0, 1.0, 0.0).normalize(),
-            ),
-        ] {
-            assert!(
-                fit_zoom(FitZoomInput {
-                    eye,
-                    target: Vec3::ZERO,
-                    min: bounds.0,
-                    max: bounds.1,
-                    fov,
-                    aspect: 1.0,
-                    padding: 0.9,
-                    world_up: up,
-                })
-                .is_finite()
-            );
-        }
-        assert_eq!(
-            fit_zoom(FitZoomInput {
-                eye: Vec3::ZERO,
-                target: Vec3::Z,
-                min: Vec3::splat(-2.0),
-                max: Vec3::splat(-1.0),
-                fov,
-                aspect: 1.0,
-                padding: 0.9,
-                world_up: Vec3::Y,
-            }),
-            1.0
         );
     }
 

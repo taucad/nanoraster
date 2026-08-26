@@ -12,6 +12,7 @@ const heroExample = `import { renderImage } from 'nanoraster';
 const image = await renderImage(glb, {
   format: 'webp',
   quality: 1,
+  lineWidth: 3,
   camera: {
     framing: 'fit',
     direction: [0.6123724357, 0.5, 0.6123724357],

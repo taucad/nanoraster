@@ -52,12 +52,33 @@ test('the shipped wasm drops the bench surface and renders as its sibling does',
 });
 
 test('wasm shell renders a deterministic 192x192 PNG', async () => {
-  const png = await render_image(glb, JSON.stringify({ width: 192, height: 192, format: 'png' }));
+  const options = { width: 192, height: 192, format: 'png' };
+  const png = await render_image(glb, JSON.stringify(options));
+  expect(png).toEqual(await render_image(glb, JSON.stringify({ ...options, lineWidth: 3 })));
   expect([...png.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
   const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
   expect(view.getUint32(16)).toBe(192);
   expect(view.getUint32(20)).toBe(192);
   expect(png.byteLength).toBeGreaterThan(1_000);
+});
+
+test('fitted perspective keeps field of view effective above sixty degrees', async () => {
+  const renderAt = (verticalFieldOfView) =>
+    render_image(
+      glb,
+      JSON.stringify({
+        width: 192,
+        height: 192,
+        format: 'raw',
+        camera: {
+          framing: 'fit',
+          direction: [0.6123724357, 0.5, 0.6123724357],
+          projection: { kind: 'perspective', verticalFieldOfView },
+        },
+      }),
+    );
+
+  expect(await renderAt(120)).not.toEqual(await renderAt(60));
 });
 
 test('a warm renderer produces byte-identical output and disposes cleanly', async () => {
