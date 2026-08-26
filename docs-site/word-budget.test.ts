@@ -27,7 +27,7 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 const pageCeilings: Readonly<Record<string, number>> = {
   'api.mdx': 2_780,
   'guides/choose-visible-geometry.mdx': 340,
-  'guides/cut-section-views.mdx': 340,
+  'guides/render-section-views.mdx': 340,
   'guides/format-and-annotate.mdx': 830,
   'guides/frame-the-model.mdx': 620,
   'guides/handle-render-failures.mdx': 560,

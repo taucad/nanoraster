@@ -197,7 +197,7 @@ describe('static agent documentation', () => {
       'guides/render-multiple-views',
       'guides/frame-the-model',
       'guides/choose-visible-geometry',
-      'guides/cut-section-views',
+      'guides/render-section-views',
       'how-it-works',
       'api',
     ];
