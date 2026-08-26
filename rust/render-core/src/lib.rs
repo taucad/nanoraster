@@ -229,7 +229,7 @@ impl Default for RenderOptions {
             width: 768,
             height: 432,
             camera: RenderCamera::default(),
-            line_width: 2.0,
+            line_width: 3.0,
             background: None,
             label: None,
             axes: false,
@@ -886,7 +886,7 @@ mod tests {
         assert_eq!(options.width, 768);
         assert_eq!(options.height, 432);
         assert_eq!(options.camera, RenderCamera::default());
-        assert_eq!(options.line_width, 2.0);
+        assert_eq!(options.line_width, 3.0);
         assert_eq!(options.camera.projection_kind(), Projection::Perspective);
         assert_eq!(options.background, None);
         assert_eq!(options.label, None);

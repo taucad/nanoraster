@@ -54,7 +54,7 @@ test('the shipped wasm drops the bench surface and renders as its sibling does',
 test('wasm shell renders a deterministic 192x192 PNG', async () => {
   const options = { width: 192, height: 192, format: 'png' };
   const png = await render_image(glb, JSON.stringify(options));
-  expect(png).toEqual(await render_image(glb, JSON.stringify({ ...options, lineWidth: 2 })));
+  expect(png).toEqual(await render_image(glb, JSON.stringify({ ...options, lineWidth: 3 })));
   expect([...png.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
   const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
   expect(view.getUint32(16)).toBe(192);
