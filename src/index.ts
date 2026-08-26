@@ -30,6 +30,7 @@ export {
   renderImageLightColorRange,
   renderImageMarginRange,
   renderImageMaxLights,
+  renderImageMaxSections,
   renderImageQualityRange,
   renderImageVerticalFieldOfViewRange,
   renderImageViewIdPattern,
@@ -49,5 +50,8 @@ export type {
   RenderLight,
   RenderLighting,
   RenderLightingRig,
+  RenderPrimitiveReference,
+  RenderSectionPlane,
+  RenderSections,
   StrictRenderImagesOptions,
 } from '#options.js';

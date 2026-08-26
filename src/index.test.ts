@@ -233,7 +233,15 @@ describe('renderImages', () => {
       timings: JSON.stringify({
         parse: 0.5,
         setup: 2,
+        capBuild: 0.25,
+        upload: 0.5,
         peakReadbackBytes: 4,
+        glbParses: 1,
+        adapterDeviceRequests: 0,
+        pipelineSets: 0,
+        presentationBuilds: 1,
+        sceneUploads: 1,
+        targetAllocations: 0,
         views: [{ id: 'front', render: 1, overlay: 0, encode: 3 }],
       }),
     });
@@ -247,6 +255,15 @@ describe('renderImages', () => {
     expect(results.timings).toEqual({
       parse: 0.5,
       setup: 2,
+      capBuild: 0.25,
+      upload: 0.5,
+      peakReadbackBytes: 4,
+      glbParses: 1,
+      adapterDeviceRequests: 0,
+      pipelineSets: 0,
+      presentationBuilds: 1,
+      sceneUploads: 1,
+      targetAllocations: 0,
       views: [{ id: 'front', render: 1, overlay: 0, encode: 3 }],
     });
     expect(results[0].file.name).toBe('render-front.png');

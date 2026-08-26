@@ -28,6 +28,13 @@ describe('image request serialization', () => {
         clipping: { near: 0.1, far: 100 },
       },
       lineWidth: 1.25,
+      surfaces: false,
+      lines: true,
+      visiblePrimitives: [{ nodeIndex: 2, meshIndex: 1, primitiveIndex: 0 }],
+      sections: {
+        planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }],
+        clipLines: false,
+      },
       background: '#FF800040',
       label: 'Front',
       axes: true,
@@ -48,11 +55,62 @@ describe('image request serialization', () => {
         clipping: { near: 0.1, far: 100 },
       },
       lineWidth: 1.25,
+      surfaces: false,
+      lines: true,
+      visiblePrimitives: [{ nodeIndex: 2, meshIndex: 1, primitiveIndex: 0 }],
+      sections: {
+        planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }],
+        clipLines: false,
+      },
       background: [1, 128 / 255, 0, 64 / 255],
       label: 'Front',
       axes: true,
       scaleBar: true,
     });
+  });
+
+  it('should reject invalid presentation state at its exact path', () => {
+    const invalid: readonly (readonly [Record<string, unknown>, string])[] = [
+      [{ surfaces: 'yes' }, 'surfaces must be a boolean'],
+      [{ lines: 1 }, 'lines must be a boolean'],
+      [{ visiblePrimitives: {} }, 'visiblePrimitives must be an array'],
+      [{ visiblePrimitives: [null] }, 'visiblePrimitives[0] must be an object'],
+      [
+        { visiblePrimitives: [{ nodeIndex: 0, meshIndex: 0, primitiveIndex: -1 }] },
+        'visiblePrimitives[0] indices must be non-negative safe integers',
+      ],
+      [
+        {
+          visiblePrimitives: [
+            { nodeIndex: 0, meshIndex: 0, primitiveIndex: 0 },
+            { nodeIndex: 0, meshIndex: 0, primitiveIndex: 0 },
+          ],
+        },
+        'visiblePrimitives[1] duplicates an earlier primitive reference',
+      ],
+      [{ sections: null }, 'sections must be an object'],
+      [{ sections: { planes: [] } }, 'sections.planes must contain between 1 and 6 planes'],
+      [{ sections: { planes: [null] } }, 'sections.planes[0] must be an object'],
+      [
+        { sections: { planes: Array.from({ length: 7 }, () => ({ point: [0, 0, 0], normal: [1, 0, 0] })) } },
+        'sections.planes must contain between 1 and 6 planes',
+      ],
+      [
+        { sections: { planes: [{ point: [0, 0, 0], normal: [0, 0, 0] }] } },
+        'sections.planes[0].normal must not be zero length',
+      ],
+      [
+        { sections: { planes: [{ point: [0, 0, Number.NaN], normal: [1, 0, 0] }] } },
+        'sections.planes[0].point must contain three finite numbers',
+      ],
+      [
+        { sections: { planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }], clipSurfaces: 'yes' } },
+        'sections.clipSurfaces must be a boolean',
+      ],
+    ];
+    for (const [presentation, message] of invalid) {
+      expect(() => toImageRequestJson({ format: 'png', ...presentation })).toThrow(message);
+    }
   });
 
   it('should serialize ordered plural views and shared settings', () => {

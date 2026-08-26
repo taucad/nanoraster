@@ -12,6 +12,9 @@ export type {
   RenderLight,
   RenderLighting,
   RenderLightingRig,
+  RenderPrimitiveReference,
+  RenderSectionPlane,
+  RenderSections,
   RenderedImage,
   RenderedImages,
 } from 'nanoraster';

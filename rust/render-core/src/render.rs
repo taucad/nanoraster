@@ -50,6 +50,7 @@ pub(crate) struct CameraState {
 }
 
 struct GpuMesh {
+    source_primitive_index: usize,
     positions: wgpu::Buffer,
     normals: wgpu::Buffer,
     indices: wgpu::Buffer,
@@ -58,17 +59,20 @@ struct GpuMesh {
 }
 
 struct GpuLines {
+    source_primitive_index: usize,
     segments: wgpu::Buffer,
     segment_count: u32,
     bind_group: wgpu::BindGroup,
 }
 
 struct GpuMeshAsset {
+    source_mesh_index: usize,
     surfaces: Vec<GpuMesh>,
     lines: Vec<GpuLines>,
 }
 
 struct GpuInstance {
+    source_node_index: usize,
     mesh_index: usize,
     bind_group: wgpu::BindGroup,
 }
@@ -99,7 +103,22 @@ impl Scene {
 
 struct PipelinePair {
     mesh: wgpu::RenderPipeline,
+    cap: wgpu::RenderPipeline,
     line: wgpu::RenderPipeline,
+}
+
+struct GpuCap {
+    vertices: wgpu::Buffer,
+    indices: wgpu::Buffer,
+    index_count: u32,
+}
+
+pub(crate) struct PresentationBuffers {
+    cap: Option<GpuCap>,
+    boundary: Option<wgpu::Buffer>,
+    boundary_count: u32,
+    boundary_material: Option<wgpu::BindGroup>,
+    identity_object: Option<wgpu::BindGroup>,
 }
 
 /// Render targets plus readback for one output size. The two readback buffers
@@ -136,6 +155,7 @@ struct InFlightView {
 pub(crate) struct Counters {
     pub(crate) device_requests: u32,
     pub(crate) pipeline_sets: u32,
+    pub(crate) presentation_builds: u32,
     pub(crate) scene_uploads: u32,
     pub(crate) target_allocations: u32,
 }
@@ -145,6 +165,7 @@ impl Counters {
         Self {
             device_requests: self.device_requests - start.device_requests,
             pipeline_sets: self.pipeline_sets - start.pipeline_sets,
+            presentation_builds: self.presentation_builds - start.presentation_builds,
             scene_uploads: self.scene_uploads - start.scene_uploads,
             target_allocations: self.target_allocations - start.target_allocations,
         }
@@ -320,7 +341,9 @@ fn mapped_range_error(error: wgpu::MapRangeError) -> RenderError {
 
 /// Resolve fitted or fixed camera framing into WebGPU view/projection matrices.
 pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> CameraState {
-    let (min, max) = scene.bounds.unwrap_or(([-1.0; 3], [1.0; 3]));
+    let (min, max) = scene
+        .presented_bounds(options)
+        .unwrap_or(([-1.0; 3], [1.0; 3]));
     let min = Vec3::from(min);
     let max = Vec3::from(max);
     let center = (min + max) * 0.5;
@@ -346,6 +369,7 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
                     ..
                 } => fitted_perspective_pose(
                     scene,
+                    options,
                     center,
                     (direction, up),
                     (vertical_field_of_view_deg.to_radians(), aspect),
@@ -356,15 +380,22 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
                     let fov = 45f32.to_radians();
                     let standard_fov = 60f32.to_radians();
                     let distance = radius * 2.0 * ((standard_fov / 2.0).tan() / (fov / 2.0).tan());
-                    fitted_orthographic_pose(scene, center, direction, up, distance)
+                    fitted_orthographic_pose(scene, options, center, direction, up, distance)
                 }
             };
             let view = glam::camera::rh::view::look_at_mat4(eye, target, up);
-            let (near, far) = position_clip_planes(scene, view, (eye - target).length());
+            let (near, far) = position_clip_planes(scene, options, view, (eye - target).length());
             let projection = match projection {
                 CameraProjection::Orthographic { .. } => {
                     let (half_width, half_height) =
-                        orthographic_half_extents(scene, view, aspect, *padding_factor, radius);
+                        orthographic_half_extents(
+                            scene,
+                            options,
+                            view,
+                            aspect,
+                            *padding_factor,
+                            radius,
+                        );
                     glam::camera::rh::proj::directx::orthographic(
                         -half_width,
                         half_width,
@@ -402,7 +433,7 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
             let target = Vec3::from(*target);
             let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::from(*up));
             let (near, far) = clipping.map_or_else(
-                || position_clip_planes(scene, view, (eye - target).length()),
+                || position_clip_planes(scene, options, view, (eye - target).length()),
                 |planes| (planes.near, planes.far),
             );
             let projection = match projection {
@@ -444,11 +475,14 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
     }
 }
 
-fn for_each_camera_position(scene: &glb::Scene, mut visit: impl FnMut(Vec3)) {
-    let any = scene
-        .for_each_position(&mut visit)
+fn for_each_camera_position(
+    scene: &glb::Scene,
+    options: &RenderOptions,
+    mut visit: impl FnMut(Vec3),
+) {
+    scene
+        .for_each_position(options, &mut visit)
         .expect("parsed draw positions remain finite");
-    debug_assert!(any, "camera preparation requires validated draw geometry");
 }
 
 fn camera_basis(direction: Vec3, up: Vec3) -> (Vec3, Vec3) {
@@ -459,6 +493,7 @@ fn camera_basis(direction: Vec3, up: Vec3) -> (Vec3, Vec3) {
 
 fn fitted_perspective_pose(
     scene: &glb::Scene,
+    options: &RenderOptions,
     center: Vec3,
     (direction, requested_up): (Vec3, Vec3),
     (fov, aspect): (f32, f32),
@@ -473,7 +508,7 @@ fn fitted_perspective_pose(
     let mut max_y_plus = f32::NEG_INFINITY;
     let mut min_y_minus = f32::INFINITY;
     let mut max_z = f32::NEG_INFINITY;
-    for_each_camera_position(scene, |position| {
+    for_each_camera_position(scene, options, |position| {
         let offset = position - center;
         let x = offset.dot(right);
         let y = offset.dot(up);
@@ -497,6 +532,7 @@ fn fitted_perspective_pose(
 
 fn fitted_orthographic_pose(
     scene: &glb::Scene,
+    options: &RenderOptions,
     center: Vec3,
     direction: Vec3,
     requested_up: Vec3,
@@ -507,7 +543,7 @@ fn fitted_orthographic_pose(
     let mut max_x = f32::NEG_INFINITY;
     let mut min_y = f32::INFINITY;
     let mut max_y = f32::NEG_INFINITY;
-    for_each_camera_position(scene, |position| {
+    for_each_camera_position(scene, options, |position| {
         let offset = position - center;
         let x = offset.dot(right);
         let y = offset.dot(up);
@@ -520,10 +556,15 @@ fn fitted_orthographic_pose(
     (target + direction * distance, target)
 }
 
-fn position_clip_planes(scene: &glb::Scene, view: Mat4, fallback_depth: f32) -> (f32, f32) {
+fn position_clip_planes(
+    scene: &glb::Scene,
+    options: &RenderOptions,
+    view: Mat4,
+    fallback_depth: f32,
+) -> (f32, f32) {
     let mut nearest = f32::INFINITY;
     let mut farthest = 0.0_f32;
-    for_each_camera_position(scene, |position| {
+    for_each_camera_position(scene, options, |position| {
         let depth = -view.transform_point3(position).z;
         if depth > 0.0 {
             nearest = nearest.min(depth);
@@ -540,6 +581,7 @@ fn position_clip_planes(scene: &glb::Scene, view: Mat4, fallback_depth: f32) -> 
 
 fn orthographic_half_extents(
     scene: &glb::Scene,
+    options: &RenderOptions,
     view: Mat4,
     aspect: f32,
     padding: f32,
@@ -547,7 +589,7 @@ fn orthographic_half_extents(
 ) -> (f32, f32) {
     let mut max_x = 0.0_f32;
     let mut max_y = 0.0_f32;
-    for_each_camera_position(scene, |position| {
+    for_each_camera_position(scene, options, |position| {
         let camera = view.transform_point3(position);
         max_x = max_x.max(camera.x.abs());
         max_y = max_y.max(camera.y.abs());
@@ -565,12 +607,14 @@ fn orthographic_half_extents(
 }
 
 // The one definition of the `Frame` uniform (see `shader.wgsl`): two mat4 and
-// a viewport vec4, then eight Lights at a 32-byte stride, then a 16-byte tail
-// of light_count/ambient/exposure/environment. 416 bytes.
-const FRAME_FLOATS: usize = 104;
+// a viewport vec4, then eight Lights at a 32-byte stride, a 16-byte lighting
+// tail, six section planes, and a 16-byte section tail. 528 bytes.
+const FRAME_FLOATS: usize = 132;
 const FRAME_LIGHTS: usize = 36;
 const FRAME_LIGHT_STRIDE: usize = 8;
 const FRAME_TAIL: usize = 100;
+const FRAME_SECTION_PLANES: usize = 104;
+const FRAME_SECTION_TAIL: usize = 128;
 
 fn frame_uniform(
     view_projection: Mat4,
@@ -604,11 +648,37 @@ fn frame_uniform(
     data[FRAME_TAIL + 1] = lighting.ambient;
     data[FRAME_TAIL + 2] = lighting.exposure;
     data[FRAME_TAIL + 3] = f32::from_bits(u32::from(lighting.environment));
+    if let Some(sections) = &options.sections {
+        for (index, plane) in sections.planes.iter().enumerate() {
+            let base = FRAME_SECTION_PLANES + index * 4;
+            let normal = Vec3::from(plane.normal).normalize();
+            data[base..base + 3].copy_from_slice(&normal.to_array());
+            data[base + 3] = -normal.dot(Vec3::from(plane.point));
+        }
+        data[FRAME_SECTION_TAIL] = f32::from_bits(sections.planes.len() as u32);
+        data[FRAME_SECTION_TAIL + 1] = f32::from_bits(u32::from(sections.clip_surfaces));
+        data[FRAME_SECTION_TAIL + 2] = f32::from_bits(u32::from(sections.clip_lines));
+    }
     data
 }
 
 fn line_width_px(options: &RenderOptions) -> f32 {
     options.line_width
+}
+
+fn primitive_selected(
+    options: &RenderOptions,
+    node_index: usize,
+    mesh_index: usize,
+    primitive_index: usize,
+) -> bool {
+    options.visible_primitives.as_ref().is_none_or(|visible| {
+        visible.contains(&crate::PrimitiveRef {
+            node_index,
+            mesh_index,
+            primitive_index,
+        })
+    })
 }
 
 /// sRGB EOTF: `RenderOptions::background` is authored in sRGB, but wgpu clear
@@ -753,7 +823,50 @@ fn create_pipeline_pair(
         cache: None,
     });
 
-    PipelinePair { mesh, line }
+    let cap_layout = wgpu::VertexBufferLayout {
+        array_stride: 68,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &wgpu::vertex_attr_array![
+            0 => Float32x3,
+            1 => Float32x2,
+            2 => Float32x4,
+            3 => Float32x4,
+            4 => Float32x4
+        ],
+    };
+    let cap = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("section cap"),
+        layout: Some(pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_cap"),
+            compilation_options: Default::default(),
+            buffers: &[Some(cap_layout)],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_cap"),
+            compilation_options: Default::default(),
+            targets: std::slice::from_ref(&color_target),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample,
+        multiview_mask: None,
+        cache: None,
+    });
+
+    PipelinePair { mesh, cap, line }
 }
 
 impl DeviceState {
@@ -1022,6 +1135,7 @@ impl Renderer {
                     let bind_group = make_bind_group(&primitive.material);
                     if primitive.mode == MODE_TRIANGLES {
                         surfaces.push(GpuMesh {
+                            source_primitive_index: primitive.source_index,
                             positions: device.create_buffer_init(
                                 &wgpu::util::BufferInitDescriptor {
                                     label: Some("positions"),
@@ -1053,6 +1167,7 @@ impl Renderer {
                         })
                         .collect();
                     lines.push(GpuLines {
+                        source_primitive_index: primitive.source_index,
                         segments: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                             label: Some("segments"),
                             contents: bytemuck::cast_slice(&segments),
@@ -1062,7 +1177,11 @@ impl Renderer {
                         bind_group,
                     });
                 }
-                GpuMeshAsset { surfaces, lines }
+                GpuMeshAsset {
+                    source_mesh_index: mesh.source_index,
+                    surfaces,
+                    lines,
+                }
             })
             .collect();
 
@@ -1079,6 +1198,7 @@ impl Renderer {
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
                 GpuInstance {
+                    source_node_index: instance.source_node_index,
                     mesh_index: instance.mesh_index,
                     bind_group: device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("object"),
@@ -1096,6 +1216,80 @@ impl Renderer {
             gpu_assets,
             gpu_instances,
         }
+    }
+
+    pub(crate) fn prepare_presentation(
+        &mut self,
+        scene: &glb::Scene,
+        options: &RenderOptions,
+    ) -> Result<PresentationBuffers, RenderError> {
+        self.counters.presentation_builds += 1;
+        let geometry = crate::section::build(scene, options)?;
+        let device = &self.state.device;
+        let cap = (!geometry.indices.is_empty()).then(|| GpuCap {
+            vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("section cap vertices"),
+                contents: bytemuck::cast_slice(&geometry.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("section cap indices"),
+                contents: bytemuck::cast_slice(&geometry.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+            index_count: geometry.indices.len() as u32,
+        });
+        if geometry.boundaries.is_empty() {
+            return Ok(PresentationBuffers {
+                cap,
+                boundary: None,
+                boundary_count: 0,
+                boundary_material: None,
+                identity_object: None,
+            });
+        }
+
+        let boundary = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("section boundaries"),
+            contents: bytemuck::cast_slice(&geometry.boundaries),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let material = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("section boundary material"),
+            contents: bytemuck::cast_slice(&[0.0_f32, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let identity = [
+            Mat4::IDENTITY.to_cols_array(),
+            Mat4::IDENTITY.to_cols_array(),
+        ]
+        .concat();
+        let object = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("section boundary object"),
+            contents: bytemuck::cast_slice(&identity),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        Ok(PresentationBuffers {
+            cap,
+            boundary: Some(boundary),
+            boundary_count: (geometry.boundaries.len() / 6) as u32,
+            boundary_material: Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("section boundary material"),
+                layout: &self.state.prim_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: material.as_entire_binding(),
+                }],
+            })),
+            identity_object: Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("section boundary object"),
+                layout: &self.state.object_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: object.as_entire_binding(),
+                }],
+            })),
+        })
     }
 
     /// Index of the pipeline pair for this stroke width, creating and caching
@@ -1209,6 +1403,7 @@ impl Renderer {
     fn begin_view(
         &mut self,
         scene: &SceneBuffers,
+        presentation: &PresentationBuffers,
         entry: &PlanEntry,
     ) -> Result<InFlightView, RenderError> {
         let options = &entry.options;
@@ -1257,25 +1452,64 @@ impl Renderer {
             });
 
             pass.set_bind_group(0, &state.frame_bind_group, &[]);
-            pass.set_pipeline(&pair.mesh);
-            for instance in &scene.gpu_instances {
-                pass.set_bind_group(2, &instance.bind_group, &[]);
-                for mesh in &scene.gpu_assets[instance.mesh_index].surfaces {
-                    pass.set_bind_group(1, &mesh.bind_group, &[]);
-                    pass.set_vertex_buffer(0, mesh.positions.slice(..));
-                    pass.set_vertex_buffer(1, mesh.normals.slice(..));
-                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            if options.surfaces {
+                pass.set_pipeline(&pair.mesh);
+                for instance in &scene.gpu_instances {
+                    let asset = &scene.gpu_assets[instance.mesh_index];
+                    pass.set_bind_group(2, &instance.bind_group, &[]);
+                    for mesh in &asset.surfaces {
+                        if !primitive_selected(
+                            options,
+                            instance.source_node_index,
+                            asset.source_mesh_index,
+                            mesh.source_primitive_index,
+                        ) {
+                            continue;
+                        }
+                        pass.set_bind_group(1, &mesh.bind_group, &[]);
+                        pass.set_vertex_buffer(0, mesh.positions.slice(..));
+                        pass.set_vertex_buffer(1, mesh.normals.slice(..));
+                        pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                    }
                 }
             }
-            pass.set_pipeline(&pair.line);
-            for instance in &scene.gpu_instances {
-                pass.set_bind_group(2, &instance.bind_group, &[]);
-                for lines in &scene.gpu_assets[instance.mesh_index].lines {
-                    pass.set_bind_group(1, &lines.bind_group, &[]);
-                    pass.set_vertex_buffer(0, lines.segments.slice(..));
-                    pass.draw(0..8, 0..lines.segment_count);
+            if let Some(cap) = &presentation.cap {
+                pass.set_pipeline(&pair.cap);
+                pass.set_vertex_buffer(0, cap.vertices.slice(..));
+                pass.set_index_buffer(cap.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..cap.index_count, 0, 0..1);
+            }
+            if options.lines {
+                pass.set_pipeline(&pair.line);
+                for instance in &scene.gpu_instances {
+                    let asset = &scene.gpu_assets[instance.mesh_index];
+                    pass.set_bind_group(2, &instance.bind_group, &[]);
+                    for lines in &asset.lines {
+                        if !primitive_selected(
+                            options,
+                            instance.source_node_index,
+                            asset.source_mesh_index,
+                            lines.source_primitive_index,
+                        ) {
+                            continue;
+                        }
+                        pass.set_bind_group(1, &lines.bind_group, &[]);
+                        pass.set_vertex_buffer(0, lines.segments.slice(..));
+                        pass.draw(0..8, 0..lines.segment_count);
+                    }
                 }
+            }
+            if let (Some(boundary), Some(material), Some(object)) = (
+                &presentation.boundary,
+                &presentation.boundary_material,
+                &presentation.identity_object,
+            ) {
+                pass.set_pipeline(&pair.line);
+                pass.set_bind_group(1, material, &[]);
+                pass.set_bind_group(2, object, &[]);
+                pass.set_vertex_buffer(0, boundary.slice(..));
+                pass.draw(0..8, 0..presentation.boundary_count);
             }
         }
         let readback = &targets.readback[slot];
@@ -1379,9 +1613,10 @@ impl Renderer {
     pub(crate) async fn render_entry_to_rgba(
         &mut self,
         scene: &SceneBuffers,
+        presentation: &PresentationBuffers,
         entry: &PlanEntry,
     ) -> Result<Rendered, RenderError> {
-        let in_flight = self.begin_view(scene, entry)?;
+        let in_flight = self.begin_view(scene, presentation, entry)?;
         #[cfg(not(target_arch = "wasm32"))]
         let mut rendered = self.finish_view_blocking(in_flight)?;
         #[cfg(target_arch = "wasm32")]
@@ -1403,16 +1638,17 @@ impl Renderer {
     pub(crate) async fn execute_plan(
         &mut self,
         scene: &SceneBuffers,
+        presentation: &PresentationBuffers,
         plan: &[PlanEntry],
         now: Option<&(dyn Fn() -> f64 + Sync)>,
     ) -> Result<(Vec<Vec<u8>>, Vec<ViewTimings>), RenderError> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.execute_plan_native(scene, plan, now)
+            self.execute_plan_native(scene, presentation, plan, now)
         }
         #[cfg(target_arch = "wasm32")]
         {
-            self.execute_plan_wasm(scene, plan, now).await
+            self.execute_plan_wasm(scene, presentation, plan, now).await
         }
     }
 
@@ -1440,6 +1676,7 @@ impl Renderer {
     fn execute_plan_native(
         &mut self,
         scene: &SceneBuffers,
+        presentation: &PresentationBuffers,
         plan: &[PlanEntry],
         now: Option<&(dyn Fn() -> f64 + Sync)>,
     ) -> Result<(Vec<Vec<u8>>, Vec<ViewTimings>), RenderError> {
@@ -1447,7 +1684,7 @@ impl Renderer {
         if let [entry] = plan {
             // Single view: no pipelining or worker to win anything with.
             let render_started = clock(now);
-            let in_flight = self.begin_view(scene, entry)?;
+            let in_flight = self.begin_view(scene, presentation, entry)?;
             let rendered = with_view_result(self.finish_view_blocking(in_flight), &entry.id)?;
             let (bytes, timings) = encode_entry(
                 entry,
@@ -1495,7 +1732,7 @@ impl Renderer {
                 let mut pending: Option<(usize, f64, InFlightView)> = None;
                 for (index, entry) in plan.iter().enumerate() {
                     let started = clock(now);
-                    let in_flight = self.begin_view(scene, entry)?;
+                    let in_flight = self.begin_view(scene, presentation, entry)?;
                     let previous = pending.replace((index, started, in_flight));
                     self.resolve_pending(plan, previous, sender, now)?;
                 }
@@ -1527,6 +1764,7 @@ impl Renderer {
     async fn execute_plan_wasm(
         &mut self,
         scene: &SceneBuffers,
+        presentation: &PresentationBuffers,
         plan: &[PlanEntry],
         now: Option<&(dyn Fn() -> f64 + Sync)>,
     ) -> Result<(Vec<Vec<u8>>, Vec<ViewTimings>), RenderError> {
@@ -1539,7 +1777,7 @@ impl Renderer {
         // the CPU's de-pad + overlay + encode of the previous view.
         for (index, entry) in plan.iter().enumerate() {
             let started = clock(now);
-            let in_flight = self.begin_view(scene, entry)?;
+            let in_flight = self.begin_view(scene, presentation, entry)?;
             if let Some((prev_index, prev_started, prev_flight)) =
                 pending.replace((index, started, in_flight))
             {
@@ -1631,7 +1869,9 @@ mod tests {
     fn referenced_positions(scene: &glb::Scene) -> Vec<Vec3> {
         let mut positions = Vec::new();
         scene
-            .for_each_position(&mut |position| positions.push(position))
+            .for_each_position(&RenderOptions::default(), &mut |position| {
+                positions.push(position)
+            })
             .expect("positions");
         positions
     }
@@ -1664,7 +1904,9 @@ mod tests {
         let indices = (0..segments.len() as u32 * 2).collect();
         glb::Scene {
             meshes: vec![glb::MeshAsset {
+                source_index: 0,
                 primitives: vec![glb::Primitive {
+                    source_index: 0,
                     mode: glb::MODE_LINES,
                     positions,
                     normals: Vec::new(),
@@ -1677,6 +1919,7 @@ mod tests {
                 }],
             }],
             instances: vec![glb::MeshInstance {
+                source_node_index: 0,
                 mesh_index: 0,
                 model: Mat4::IDENTITY,
                 normal_matrix: Mat4::IDENTITY,
@@ -1691,7 +1934,9 @@ mod tests {
         ];
         glb::Scene {
             meshes: vec![glb::MeshAsset {
+                source_index: 0,
                 primitives: vec![glb::Primitive {
+                    source_index: 0,
                     mode: glb::MODE_LINES,
                     positions,
                     normals: Vec::new(),
@@ -1704,6 +1949,7 @@ mod tests {
                 }],
             }],
             instances: vec![glb::MeshInstance {
+                source_node_index: 0,
                 mesh_index: 0,
                 model: Mat4::IDENTITY,
                 normal_matrix: Mat4::IDENTITY,
@@ -1714,6 +1960,7 @@ mod tests {
 
     fn occluded_line_scene(include_line: bool) -> glb::Scene {
         let mut primitives = vec![glb::Primitive {
+            source_index: 0,
             mode: glb::MODE_TRIANGLES,
             positions: vec![
                 -1.0, -1.0, 0.0, 1.0, -1.0, 0.0, 1.0, 1.0, 0.0, -1.0, 1.0, 0.0,
@@ -1728,6 +1975,7 @@ mod tests {
         }];
         if include_line {
             primitives.push(glb::Primitive {
+                source_index: 1,
                 mode: glb::MODE_LINES,
                 positions: vec![-0.8, 0.0, -0.5, 0.8, 0.0, -0.5],
                 normals: Vec::new(),
@@ -1740,13 +1988,51 @@ mod tests {
             });
         }
         glb::Scene {
-            meshes: vec![glb::MeshAsset { primitives }],
+            meshes: vec![glb::MeshAsset {
+                source_index: 0,
+                primitives,
+            }],
             instances: vec![glb::MeshInstance {
+                source_node_index: 0,
                 mesh_index: 0,
                 model: Mat4::IDENTITY,
                 normal_matrix: Mat4::IDENTITY,
             }],
             bounds: Some(([-1.0, -1.0, -0.5], [1.0, 1.0, 0.0])),
+        }
+    }
+
+    fn cube_scene() -> glb::Scene {
+        let positions = vec![
+            -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0,
+            1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0,
+        ];
+        glb::Scene {
+            meshes: vec![glb::MeshAsset {
+                source_index: 0,
+                primitives: vec![glb::Primitive {
+                    source_index: 0,
+                    mode: glb::MODE_TRIANGLES,
+                    normals: positions.clone(),
+                    positions,
+                    indices: vec![
+                        0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5, 0,
+                        1, 5, 0, 5, 4, 3, 7, 6, 3, 6, 2,
+                    ],
+                    material: glb::Material {
+                        base_color: [0.5, 0.5, 0.5, 1.0],
+                        metallic: 0.0,
+                        roughness: 1.0,
+                    },
+                }],
+            }],
+            instances: vec![glb::MeshInstance {
+                source_node_index: 0,
+                mesh_index: 0,
+                model: Mat4::IDENTITY,
+                normal_matrix: Mat4::IDENTITY,
+            }],
+            bounds: Some(([-1.0; 3], [1.0; 3])),
         }
     }
 
@@ -1763,8 +2049,12 @@ mod tests {
             prepared,
         };
         let mut scene = Scene::new(parsed);
+        let presentation = renderer
+            .prepare_presentation(&scene.parsed, &entry.options)
+            .expect("presentation");
         let buffers = renderer.ensure_uploaded(&mut scene).expect("line upload");
-        pollster::block_on(renderer.render_entry_to_rgba(buffers, &entry)).expect("line render")
+        pollster::block_on(renderer.render_entry_to_rgba(buffers, &presentation, &entry))
+            .expect("line render")
     }
 
     #[test]
@@ -1784,6 +2074,14 @@ mod tests {
                 space: LightingSpace::World,
                 exposure: 2.0,
             },
+            sections: Some(crate::Sections {
+                planes: vec![crate::SectionPlane {
+                    point: [2.0, 0.0, 0.0],
+                    normal: [2.0, 0.0, 0.0],
+                }],
+                clip_surfaces: true,
+                clip_lines: false,
+            }),
             ..RenderOptions::default()
         };
         let data = frame_uniform(Mat4::IDENTITY, view, &options);
@@ -1796,6 +2094,13 @@ mod tests {
         assert_eq!(data[FRAME_TAIL + 1], 0.5);
         assert_eq!(data[FRAME_TAIL + 2], 2.0);
         assert_eq!(data[FRAME_TAIL + 3].to_bits(), 0);
+        assert_eq!(
+            &data[FRAME_SECTION_PLANES..FRAME_SECTION_PLANES + 4],
+            [1.0, 0.0, 0.0, -2.0]
+        );
+        assert_eq!(data[FRAME_SECTION_TAIL].to_bits(), 1);
+        assert_eq!(data[FRAME_SECTION_TAIL + 1].to_bits(), 1);
+        assert_eq!(data[FRAME_SECTION_TAIL + 2].to_bits(), 0);
         // Unwritten slots stay zero, and the studio rig fills exactly three.
         assert_eq!(data[FRAME_LIGHTS + FRAME_LIGHT_STRIDE], 0.0);
 
@@ -1950,7 +2255,7 @@ mod tests {
             let view_projection = camera.projection * camera.view;
             assert!(
                 scene
-                    .for_each_position(&mut |position| {
+                    .for_each_position(&RenderOptions::default(), &mut |position| {
                         let depth = -camera.view.transform_point3(position).z;
                         let clip = view_projection * position.extend(1.0);
                         let ndc = clip.truncate() / clip.w;
@@ -2005,7 +2310,8 @@ mod tests {
         let scene = asymmetric_scene();
         let eye = Vec3::new(8.0, 6.0, 10.0);
         let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
-        let (near, far) = position_clip_planes(&scene, view, eye.length());
+        let (near, far) =
+            position_clip_planes(&scene, &RenderOptions::default(), view, eye.length());
         let depths = referenced_positions(&scene)
             .into_iter()
             .map(|position| -view.transform_point3(position).z)
@@ -2228,7 +2534,12 @@ mod tests {
     #[test]
     fn derived_clipping_handles_bounds_behind_the_camera() {
         let scene = line_scene(&[[[-1.0, -1.0, 1.0], [1.0, 1.0, 2.0]]]);
-        let (near, far) = position_clip_planes(&scene, Mat4::IDENTITY, 10.0);
+        let (near, far) = position_clip_planes(
+            &scene,
+            &RenderOptions::default(),
+            Mat4::IDENTITY,
+            10.0,
+        );
         assert!((near - 0.01).abs() < f32::EPSILON);
         assert_eq!(far, 20.0);
     }
@@ -2338,6 +2649,151 @@ mod tests {
     }
 
     #[test]
+    fn presentation_switches_clip_authored_lines_and_draw_section_caps() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let camera = RenderCamera::Fixed {
+            position: [4.0, 3.0, 5.0],
+            target: [0.0; 3],
+            up: [0.0, 1.0, 0.0],
+            projection: CameraProjection::Orthographic {
+                vertical_span: Some(4.5),
+                zoom: 1.0,
+            },
+            clipping: Some(crate::ClipPlanes {
+                near: 0.1,
+                far: 100.0,
+            }),
+        };
+        let sections = crate::Sections {
+            planes: vec![crate::SectionPlane {
+                point: [0.0; 3],
+                normal: [1.0, 0.0, 0.0],
+            }],
+            clip_surfaces: true,
+            clip_lines: true,
+        };
+        let options = RenderOptions {
+            width: 256,
+            height: 256,
+            background: Some([1.0; 4]),
+            camera,
+            sections: Some(sections.clone()),
+            ..RenderOptions::default()
+        };
+        let cut = render_test_scene(&mut renderer, cube_scene(), options.clone());
+        assert!(cut.rgba.chunks_exact(4).any(|pixel| pixel[0] < 240));
+
+        let blank = render_test_scene(
+            &mut renderer,
+            cube_scene(),
+            RenderOptions {
+                surfaces: false,
+                lines: false,
+                ..options.clone()
+            },
+        );
+        assert!(blank.rgba.chunks_exact(4).all(|pixel| pixel == [255; 4]));
+
+        let hidden_surface = render_test_scene(
+            &mut renderer,
+            cube_scene(),
+            RenderOptions {
+                visible_primitives: Some(Vec::new()),
+                ..options.clone()
+            },
+        );
+        assert_eq!(hidden_surface.rgba, blank.rgba);
+
+        let line = render_test_scene(
+            &mut renderer,
+            line_scene(&[[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]]),
+            RenderOptions {
+                camera: fixed_camera(CameraProjection::Orthographic {
+                    vertical_span: Some(4.0),
+                    zoom: 1.0,
+                }),
+                ..options
+            },
+        );
+        let dark = |x: u32| line.rgba[((128 * 256 + x) * 4) as usize] < 200;
+        assert!(!dark(96));
+        assert!(dark(160));
+
+        let hidden_line = render_test_scene(
+            &mut renderer,
+            line_scene(&[[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]]),
+            RenderOptions {
+                width: 256,
+                height: 256,
+                background: Some([1.0; 4]),
+                camera: fixed_camera(CameraProjection::Orthographic {
+                    vertical_span: Some(4.0),
+                    zoom: 1.0,
+                }),
+                visible_primitives: Some(Vec::new()),
+                ..RenderOptions::default()
+            },
+        );
+        assert!(
+            hidden_line
+                .rgba
+                .chunks_exact(4)
+                .all(|pixel| pixel == [255; 4])
+        );
+        renderer.destroy();
+    }
+
+    #[test]
+    fn multiple_section_plane_order_does_not_change_pixels() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let planes = vec![
+            crate::SectionPlane {
+                point: [0.0; 3],
+                normal: [1.0, 0.0, 0.0],
+            },
+            crate::SectionPlane {
+                point: [0.0; 3],
+                normal: [0.0, 1.0, 0.0],
+            },
+        ];
+        let render = |renderer: &mut Renderer, planes| {
+            render_test_scene(
+                renderer,
+                cube_scene(),
+                RenderOptions {
+                    width: 256,
+                    height: 256,
+                    background: Some([1.0; 4]),
+                    camera: RenderCamera::Fixed {
+                        position: [4.0, 3.0, 5.0],
+                        target: [0.0; 3],
+                        up: [0.0, 1.0, 0.0],
+                        projection: CameraProjection::Orthographic {
+                            vertical_span: Some(4.5),
+                            zoom: 1.0,
+                        },
+                        clipping: None,
+                    },
+                    sections: Some(crate::Sections {
+                        planes,
+                        clip_surfaces: true,
+                        clip_lines: true,
+                    }),
+                    ..RenderOptions::default()
+                },
+            )
+        };
+        let forward = render(&mut renderer, planes.clone());
+        let reverse = render(&mut renderer, planes.into_iter().rev().collect());
+        assert_eq!(forward.rgba, reverse.rgba);
+        renderer.destroy();
+    }
+
+    #[test]
     fn fixed_camera_lines_trim_at_the_near_plane() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
@@ -2384,18 +2840,21 @@ mod tests {
         let start = Counters {
             device_requests: 1,
             pipeline_sets: 2,
-            scene_uploads: 3,
-            target_allocations: 4,
+            presentation_builds: 3,
+            scene_uploads: 4,
+            target_allocations: 5,
         };
         let end = Counters {
             device_requests: 1,
             pipeline_sets: 3,
-            scene_uploads: 4,
-            target_allocations: 6,
+            presentation_builds: 4,
+            scene_uploads: 5,
+            target_allocations: 7,
         };
         let delta = end.since(start);
         assert_eq!(delta.device_requests, 0);
         assert_eq!(delta.pipeline_sets, 1);
+        assert_eq!(delta.presentation_builds, 1);
         assert_eq!(delta.scene_uploads, 1);
         assert_eq!(delta.target_allocations, 2);
     }

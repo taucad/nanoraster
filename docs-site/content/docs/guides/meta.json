@@ -3,6 +3,8 @@
   "pages": [
     "frame-the-model",
     "place-the-camera",
+    "choose-visible-geometry",
+    "cut-section-views",
     "render-multiple-views",
     "reuse-the-renderer",
     "format-and-annotate",

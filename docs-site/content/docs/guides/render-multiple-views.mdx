@@ -104,7 +104,8 @@ tuple and returns a tuple even for one view, under the same
 it off and it is not. See [Format and annotate](format-and-annotate).
 
 **Shared-only settings.** `axes`, `scaleBar`, `background`, and `lighting`
-apply to the whole request. `camera`, `label`, and the four output
+apply to the whole request. Presentation filters and section planes are shared
+too, so one plan renders one presented subject from several cameras. `camera`, `label`, and the four output
 fields vary per view. There is no shared partial camera or inheritance order.
 
 **Renders spread over time.** The plan call shares the device across views
@@ -113,6 +114,6 @@ calls _over time_. They compose — a warm renderer accepts the same plan calls.
 Either way, when you can write the full list of images down, send it as one
 call rather than a loop: only the renderer can schedule work it can see.
 
-**Stage timings.** `timings: true` attaches parse, setup, and per-view render,
-overlay and encode milliseconds to the result as `results.timings`; see
+**Stage timings.** `timings: true` attaches stage and resource data to
+`results.timings`. `presentationBuilds` is `1` for the plan; see
 [`RenderTimings`](../api#rendertimings).

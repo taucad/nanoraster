@@ -21,8 +21,13 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // Camera framing adds one public tagged union, three range constants, the
 // fixed-camera guide, and the migration examples. These measured ceilings pay
 // for that public surface; unchanged pages retain their prior ceilings.
+//
+// Presentation adds three option types, one limit, and two task guides. The
+// API and site ceilings account only for that new public surface.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 2_620,
+  'api.mdx': 2_780,
+  'guides/choose-visible-geometry.mdx': 340,
+  'guides/cut-section-views.mdx': 340,
   'guides/format-and-annotate.mdx': 830,
   'guides/frame-the-model.mdx': 620,
   'guides/handle-render-failures.mdx': 560,
@@ -38,7 +43,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'install.mdx': 740,
   'tutorial.mdx': 690,
 };
-const siteCeiling = 11_900;
+const siteCeiling = 12_600;
 
 const pages = globSync('**/*.mdx', { cwd: docsDir })
   .toSorted()

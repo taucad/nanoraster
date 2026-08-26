@@ -296,7 +296,7 @@ fn overlay_safe_camera(
     if overlays.is_empty() {
         return Ok(camera);
     }
-    let envelope = projected_envelope(scene, camera, options.width, options.height)?;
+    let envelope = projected_envelope(scene, options, camera, options.width, options.height)?;
     let center = Vec2::new(options.width as f32 * 0.5, options.height as f32 * 0.5);
     // Keep one device pixel beyond the declared guard so floating-point
     // projection at the exact analytical boundary cannot fail the final
@@ -363,6 +363,7 @@ fn ratio(numerator: f32, denominator: f32) -> f32 {
 
 fn projected_envelope(
     scene: &Scene,
+    options: &RenderOptions,
     camera: CameraState,
     width: u32,
     height: u32,
@@ -376,7 +377,7 @@ fn projected_envelope(
     );
     let mut error = None;
     let any = scene
-        .for_each_position(&mut |position| {
+        .for_each_position(options, &mut |position| {
             if error.is_some() {
                 return;
             }
@@ -981,7 +982,9 @@ mod tests {
             .collect();
         Scene {
             meshes: vec![crate::glb::MeshAsset {
+                source_index: 0,
                 primitives: vec![crate::glb::Primitive {
+                    source_index: 0,
                     mode: crate::glb::MODE_LINES,
                     positions,
                     normals: Vec::new(),
@@ -994,6 +997,7 @@ mod tests {
                 }],
             }],
             instances: vec![crate::glb::MeshInstance {
+                source_node_index: 0,
                 mesh_index: 0,
                 model: Mat4::IDENTITY,
                 normal_matrix: Mat4::IDENTITY,
@@ -1346,6 +1350,7 @@ mod tests {
         let annotated = prepare_view(&scene(), &annotated_options).expect("annotated view");
         let envelope = projected_envelope(
             &scene(),
+            &annotated_options,
             annotated.camera,
             annotated_options.width,
             annotated_options.height,
@@ -1443,8 +1448,13 @@ mod tests {
                         ..RenderOptions::default()
                     };
                     let prepared = prepare_view(&scene, &options).expect("canonical view");
-                    let envelope =
-                        projected_envelope(&scene, prepared.camera, options.width, options.height)
+                    let envelope = projected_envelope(
+                        &scene,
+                        &options,
+                        prepared.camera,
+                        options.width,
+                        options.height,
+                    )
                             .expect("finite envelope");
                     for rect in [
                         prepared.layout.label,
@@ -1652,8 +1662,9 @@ mod tests {
             instances: Vec::new(),
             bounds: None,
         };
-        assert!(projected_envelope(&empty_scene, zero_camera, 100, 100).is_err());
-        assert!(projected_envelope(&scene(), zero_camera, 100, 100).is_err());
+        let options = RenderOptions::default();
+        assert!(projected_envelope(&empty_scene, &options, zero_camera, 100, 100).is_err());
+        assert!(projected_envelope(&scene(), &options, zero_camera, 100, 100).is_err());
         let overflow_camera = CameraState {
             projection: Mat4::from_cols(
                 Vec4::new(f32::MAX, 0.0, 0.0, 0.0),
@@ -1663,7 +1674,7 @@ mod tests {
             ),
             ..zero_camera
         };
-        assert!(projected_envelope(&scene(), overflow_camera, 100, 100,).is_err());
+        assert!(projected_envelope(&scene(), &options, overflow_camera, 100, 100).is_err());
         assert!(
             meters_per_pixel(
                 zero_camera,

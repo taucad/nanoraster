@@ -2,8 +2,9 @@
 
 use crate::encode::ImageFormat;
 use crate::{
-    CameraProjection, ClipPlanes, LightingSpace, MAX_LIGHTS, RenderCamera, RenderError,
-    RenderOptions, ResolvedLight, ResolvedLighting,
+    CameraProjection, ClipPlanes, LightingSpace, MAX_LIGHTS, MAX_SECTION_PLANES, PrimitiveRef,
+    RenderCamera, RenderError, RenderOptions, ResolvedLight, ResolvedLighting, SectionPlane,
+    Sections,
 };
 use serde::{Deserialize, Deserializer, de, de::DeserializeOwned};
 use std::collections::HashSet;
@@ -101,6 +102,32 @@ pub enum LightingRequest {
     Rig(Box<LightingRigRequest>),
 }
 
+/// Wire shape for one source glTF primitive instance.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PrimitiveRefRequest {
+    node_index: usize,
+    mesh_index: usize,
+    primitive_index: usize,
+}
+
+/// Wire shape for one world-space retained-half-space plane.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SectionPlaneRequest {
+    point: [f32; 3],
+    normal: [f32; 3],
+}
+
+/// Wire shape for configured sections.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SectionsRequest {
+    planes: Vec<SectionPlaneRequest>,
+    clip_surfaces: Option<bool>,
+    clip_lines: Option<bool>,
+}
+
 impl<'de> Deserialize<'de> for LightingRequest {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         // Untagged serde collapses every arm's failure into "did not match any
@@ -128,6 +155,10 @@ pub struct RenderRequest {
     pub quality: Option<f32>,
     pub camera: Option<CameraRequest>,
     pub line_width: Option<f32>,
+    pub surfaces: Option<bool>,
+    pub lines: Option<bool>,
+    pub visible_primitives: Option<Vec<PrimitiveRefRequest>>,
+    pub sections: Option<SectionsRequest>,
     pub background: Option<[f32; 4]>,
     pub label: Option<String>,
     pub axes: Option<bool>,
@@ -158,6 +189,10 @@ pub struct RenderImagesRequest {
     pub format: Option<String>,
     pub quality: Option<f32>,
     pub line_width: Option<f32>,
+    pub surfaces: Option<bool>,
+    pub lines: Option<bool>,
+    pub visible_primitives: Option<Vec<PrimitiveRefRequest>>,
+    pub sections: Option<SectionsRequest>,
     pub background: Option<[f32; 4]>,
     pub axes: Option<bool>,
     pub scale_bar: Option<bool>,
@@ -210,6 +245,10 @@ struct CommonRequest<'a> {
     height: Option<u32>,
     camera: Option<&'a CameraRequest>,
     line_width: Option<f32>,
+    surfaces: Option<bool>,
+    lines: Option<bool>,
+    visible_primitives: Option<&'a [PrimitiveRefRequest]>,
+    sections: Option<&'a SectionsRequest>,
     background: Option<[f32; 4]>,
     axes: Option<bool>,
     /// Whether the shared width/height must clear the annotated minimum. Only
@@ -245,6 +284,10 @@ impl RenderRequest {
             height: self.height,
             camera: self.camera.as_ref(),
             line_width: self.line_width,
+            surfaces: self.surfaces,
+            lines: self.lines,
+            visible_primitives: self.visible_primitives.as_deref(),
+            sections: self.sections.as_ref(),
             background: self.background,
             axes: self.axes,
             annotated: self.axes.unwrap_or(false)
@@ -343,6 +386,10 @@ impl RenderImagesRequest {
             height: self.height,
             camera: None,
             line_width: self.line_width,
+            surfaces: self.surfaces,
+            lines: self.lines,
+            visible_primitives: self.visible_primitives.as_deref(),
+            sections: self.sections.as_ref(),
             background: self.background,
             axes: self.axes,
             annotated: false,
@@ -425,12 +472,75 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<RenderOptions, RenderErr
     }
 
     let lighting = resolve_lighting(request.lighting)?;
+    let visible_primitives = request
+        .visible_primitives
+        .map(|primitives| {
+            let mut seen = HashSet::with_capacity(primitives.len());
+            primitives
+                .iter()
+                .enumerate()
+                .map(|(index, primitive)| {
+                    if !seen.insert(*primitive) {
+                        return Err(RenderError::Parse(format!(
+                            "visiblePrimitives[{index}] duplicates an earlier primitive reference"
+                        )));
+                    }
+                    Ok(PrimitiveRef {
+                        node_index: primitive.node_index,
+                        mesh_index: primitive.mesh_index,
+                        primitive_index: primitive.primitive_index,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+    let sections = request
+        .sections
+        .map(|sections| {
+            if sections.planes.is_empty() || sections.planes.len() > MAX_SECTION_PLANES {
+                return Err(RenderError::Parse(format!(
+                    "sections.planes must contain between 1 and {MAX_SECTION_PLANES} planes"
+                )));
+            }
+            let planes = sections
+                .planes
+                .iter()
+                .enumerate()
+                .map(|(index, plane)| {
+                    let point = finite_vector(
+                        plane.point,
+                        &format!("sections.planes[{index}].point"),
+                        true,
+                    )
+                    .map_err(RenderError::Parse)?;
+                    let normal = normalized_direction(
+                        plane.normal,
+                        &format!("sections.planes[{index}].normal"),
+                    )
+                    .map_err(RenderError::Parse)?;
+                    Ok(SectionPlane {
+                        point: point.to_array(),
+                        normal: normal.to_array(),
+                    })
+                })
+                .collect::<Result<Vec<_>, RenderError>>()?;
+            Ok(Sections {
+                planes,
+                clip_surfaces: sections.clip_surfaces.unwrap_or(true),
+                clip_lines: sections.clip_lines.unwrap_or(true),
+            })
+        })
+        .transpose()?;
 
     Ok(RenderOptions {
         width,
         height,
         camera,
         line_width,
+        surfaces: request.surfaces.unwrap_or(true),
+        lines: request.lines.unwrap_or(true),
+        visible_primitives,
+        sections,
         background: request.background,
         axes,
         scale_bar,
@@ -1093,7 +1203,7 @@ mod tests {
 
     #[test]
     fn resolves_every_common_option_variant() {
-        let json = r#"{"format":"jpeg","quality":0.8,"width":192,"height":193,"lineWidth":0.25,"camera":{"framing":"fixed","position":[4,3,2],"target":[0,0,0],"up":[0,0,1],"projection":{"kind":"orthographic","verticalSpan":12,"zoom":1.5},"clipping":{"near":0.1,"far":100}},"background":[0,0.25,0.5,1],"label":"µ—−","axes":true,"scaleBar":true}"#;
+        let json = r#"{"format":"jpeg","quality":0.8,"width":192,"height":193,"lineWidth":0.25,"surfaces":false,"lines":true,"visiblePrimitives":[{"nodeIndex":2,"meshIndex":1,"primitiveIndex":0}],"sections":{"planes":[{"point":[1,2,3],"normal":[2,0,0]}],"clipLines":false},"camera":{"framing":"fixed","position":[4,3,2],"target":[0,0,0],"up":[0,0,1],"projection":{"kind":"orthographic","verticalSpan":12,"zoom":1.5},"clipping":{"near":0.1,"far":100}},"background":[0,0.25,0.5,1],"label":"µ—−","axes":true,"scaleBar":true}"#;
         let (options, format) = RenderRequest::from_json(json)
             .expect("parse")
             .resolve()
@@ -1101,6 +1211,20 @@ mod tests {
         assert_eq!(options.width, 192);
         assert_eq!(options.height, 193);
         assert_eq!(options.line_width, 0.25);
+        assert!(!options.surfaces);
+        assert!(options.lines);
+        assert_eq!(
+            options.visible_primitives,
+            Some(vec![PrimitiveRef {
+                node_index: 2,
+                mesh_index: 1,
+                primitive_index: 0,
+            }])
+        );
+        let sections = options.sections.as_ref().expect("sections");
+        assert_eq!(sections.planes[0].normal, [1.0, 0.0, 0.0]);
+        assert!(sections.clip_surfaces);
+        assert!(!sections.clip_lines);
         assert!(options.axes);
         assert!(options.scale_bar);
         assert_eq!(
@@ -1108,6 +1232,22 @@ mod tests {
             crate::Projection::Orthographic
         );
         assert_eq!(format, ImageFormat::Jpeg { quality: 80 });
+    }
+
+    #[test]
+    fn rejects_invalid_presentation_requests() {
+        for json in [
+            r#"{"format":"png","visiblePrimitives":[{"nodeIndex":0,"meshIndex":0,"primitiveIndex":0},{"nodeIndex":0,"meshIndex":0,"primitiveIndex":0}]}"#,
+            r#"{"format":"png","sections":{"planes":[]}}"#,
+            r#"{"format":"png","sections":{"planes":[{"point":[0,0,0],"normal":[0,0,0]}]}}"#,
+            r#"{"format":"png","sections":{"planes":[{"point":[0,0,0],"normal":[1,0,0]},{"point":[0,0,0],"normal":[0,1,0]},{"point":[0,0,0],"normal":[0,0,1]},{"point":[0,0,0],"normal":[-1,0,0]},{"point":[0,0,0],"normal":[0,-1,0]},{"point":[0,0,0],"normal":[0,0,-1]},{"point":[0,0,0],"normal":[1,1,0]}]}}"#,
+        ] {
+            assert!(
+                RenderRequest::from_json(json)
+                    .and_then(|request| request.resolve())
+                    .is_err()
+            );
+        }
     }
 
     #[test]

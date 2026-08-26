@@ -17,6 +17,10 @@ const image = await renderImage(glb, {
   height: 432, // default
   quality: 1, // webp default (lossless); jpeg defaults to 0.92; png and raw ignore it
   lineWidth: 3, // output pixels; default
+  surfaces: true, // default
+  lines: true, // default
+  visiblePrimitives: undefined, // default (all reachable primitives)
+  sections: undefined, // default (no section view)
   background: undefined, // default (transparent)
   axes: false, // default
   scaleBar: false, // default
@@ -200,6 +204,45 @@ export type RenderVector3 = readonly [x: number, y: number, z: number];
 A Cartesian vector in the submitted GLB's world coordinate frame. Camera
 direction and up vectors accept any finite non-zero magnitude and are
 normalized internally.
+
+### `RenderPrimitiveReference`
+
+```typescript
+export type RenderPrimitiveReference = {
+  readonly nodeIndex: number;
+  readonly meshIndex: number;
+  readonly primitiveIndex: number;
+};
+```
+
+One reachable primitive instance in the submitted glTF document. All three
+indices are non-negative safe integers. See [Choose visible geometry](guides/choose-visible-geometry).
+
+### `RenderSectionPlane`
+
+```typescript
+export type RenderSectionPlane = {
+  readonly point: RenderVector3;
+  readonly normal: RenderVector3;
+};
+```
+
+The normal points into the retained world-space half-space and is normalized
+internally.
+
+### `RenderSections`
+
+```typescript
+export type RenderSections = {
+  readonly planes: readonly [RenderSectionPlane, ...RenderSectionPlane[]];
+  readonly clipSurfaces?: boolean;
+  readonly clipLines?: boolean;
+};
+```
+
+One to `renderImageMaxSections` planes shared by the request. Both clip flags
+default to `true`; [Cut section views](guides/cut-section-views) covers caps,
+outlines, and multiple retained half-spaces.
 
 ### `RenderCamera`
 
@@ -404,9 +447,9 @@ console.log(result[0].file.name, result.timings.parse); // 'render-iso.webp' 0.4
 ### `RenderTimings`
 
 Attached to a plan call's result when the options set `timings: true`. The
-fields map onto the [pipeline stages](how-it-works): parse, setup (device
-acquisition plus geometry upload), then per-view rasterise, annotate and
-encode, all in milliseconds.
+fields map onto the [pipeline stages](how-it-works): parse, shared cap-build,
+source upload, then per-view rasterise, annotate and encode. Resource counters
+show which work the call acquired; `presentationBuilds` is `1` for one plan.
 
 <auto-type-table path="./props.ts" name="RenderTimings" caption="RenderTimings properties" />
 
@@ -509,6 +552,7 @@ import them rather than restating them, so caller-side checks cannot drift.
 | `renderImageViewIdPattern`            | `/^[\dA-Za-z][\w-]{0,63}$/u`              | identifier syntax           | `id`                        |
 | `renderImageBackgroundPattern`        | `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`   | hexadecimal colour          | `background`                |
 | `renderImageMaxLights`                | `8`                                       | lights per rig              | `lighting.lights`           |
+| `renderImageMaxSections`              | `6`                                       | planes per request          | `sections.planes`           |
 | `renderImageLightColorRange`          | `readonly [0, 32]`                        | linear radiance per channel | `lighting.lights[].color`   |
 | `renderImageAmbientRange`             | `readonly [0, 4]`                         | diffuse multiplier          | `lighting.ambient`          |
 | `renderImageExposureRange`            | `readonly [0.01, 16]`                     | linear multiplier           | `lighting.exposure`         |
@@ -573,6 +617,10 @@ character is restricted.
 ### `renderImageMaxLights`
 
 Most directional lights one rig may carry.
+
+### `renderImageMaxSections`
+
+Most simultaneous retained-half-space planes one request may carry.
 
 ### `renderImageLightColorRange`
 

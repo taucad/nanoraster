@@ -7,8 +7,8 @@
     "brotli": 267843
   },
   "js": {
-    "raw": 1389,
-    "gzip": 441
+    "raw": 1445,
+    "gzip": 454
   },
   "native": {
     "android-arm-eabi": 3571292,

@@ -16,6 +16,7 @@ mod encode;
 mod glb;
 mod options;
 mod render;
+mod section;
 
 use glb::parse_glb;
 
@@ -160,6 +161,32 @@ pub struct ResolvedLighting {
 /// Uniform-array capacity for [`ResolvedLighting::lights`].
 pub const MAX_LIGHTS: usize = 8;
 
+/// Source glTF primitive instance selected for presentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PrimitiveRef {
+    pub node_index: usize,
+    pub mesh_index: usize,
+    pub primitive_index: usize,
+}
+
+/// One normalized world-space retained-half-space plane.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SectionPlane {
+    pub point: [f32; 3],
+    pub normal: [f32; 3],
+}
+
+/// Resolved section presentation shared by every view in a plan.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sections {
+    pub planes: Vec<SectionPlane>,
+    pub clip_surfaces: bool,
+    pub clip_lines: bool,
+}
+
+/// Maximum number of simultaneous retained-half-space planes.
+pub const MAX_SECTION_PLANES: usize = 6;
+
 impl ResolvedLighting {
     /// The studio preset — the one definition of the built-in rig. `fs_mesh`
     /// carries no lighting literals of its own; it reads these through the
@@ -206,6 +233,14 @@ pub struct RenderOptions {
     pub camera: RenderCamera,
     /// Edge line width in output pixels.
     pub line_width: f32,
+    /// Whether triangle primitives are drawn.
+    pub surfaces: bool,
+    /// Whether authored line primitives are drawn.
+    pub lines: bool,
+    /// Exact source primitive instances to draw; `None` means all.
+    pub visible_primitives: Option<Vec<PrimitiveRef>>,
+    /// Optional section presentation.
+    pub sections: Option<Sections>,
     /// Background clear color as sRGB straight-alpha `[r, g, b, a]` in 0..=1;
     /// `None` renders on transparent. JPEG output requires an opaque one.
     pub background: Option<[f32; 4]>,
@@ -230,6 +265,10 @@ impl Default for RenderOptions {
             height: 432,
             camera: RenderCamera::default(),
             line_width: 3.0,
+            surfaces: true,
+            lines: true,
+            visible_primitives: None,
+            sections: None,
             background: None,
             label: None,
             axes: false,
@@ -293,12 +332,17 @@ pub struct RenderViewTimings {
 pub struct RenderBatchTimings {
     /// Milliseconds. GLB parse, validation, and world-bounds computation.
     pub parse: f64,
-    /// Milliseconds. Renderer acquisition plus scene upload for this call.
+    /// Milliseconds. Renderer acquisition plus all presentation and upload work.
     pub setup: f64,
+    /// Milliseconds. Visibility resolution, section cap construction, and cap upload.
+    pub cap_build: f64,
+    /// Milliseconds. Source triangle and authored-line upload.
+    pub upload: f64,
     pub peak_readback_bytes: u64,
     pub glb_parses: u32,
     pub adapter_device_requests: u32,
     pub pipeline_sets: u32,
+    pub presentation_builds: u32,
     pub scene_uploads: u32,
     pub target_allocations: u32,
     pub views: Vec<RenderViewTimings>,
@@ -345,6 +389,34 @@ fn validate_options(options: &RenderOptions) -> Result<(), RenderError> {
         return Err(RenderError::Parse(
             "lineWidth must be between 0.25 and 16".into(),
         ));
+    }
+    if let Some(primitives) = &options.visible_primitives {
+        let mut seen = std::collections::HashSet::with_capacity(primitives.len());
+        if let Some(duplicate) = primitives
+            .iter()
+            .find(|primitive| !seen.insert(**primitive))
+        {
+            return Err(RenderError::Parse(format!(
+                "visiblePrimitives contains duplicate [{}, {}, {}]",
+                duplicate.node_index, duplicate.mesh_index, duplicate.primitive_index
+            )));
+        }
+    }
+    if let Some(sections) = &options.sections {
+        if sections.planes.is_empty() || sections.planes.len() > MAX_SECTION_PLANES {
+            return Err(RenderError::Parse(format!(
+                "sections.planes must contain between 1 and {MAX_SECTION_PLANES} planes"
+            )));
+        }
+        for (index, plane) in sections.planes.iter().enumerate() {
+            let point = glam::Vec3::from(plane.point);
+            let normal = glam::Vec3::from(plane.normal);
+            if !point.is_finite() || !normal.is_finite() || normal.length() < 1e-6 {
+                return Err(RenderError::Parse(format!(
+                    "sections.planes[{index}] must contain a finite point and non-zero normal"
+                )));
+            }
+        }
     }
     validate_camera(&options.camera)?;
     Ok(())
@@ -506,10 +578,19 @@ fn build_plan(
     format: ImageFormat,
     views: &[RenderView],
 ) -> Result<Vec<render::PlanEntry>, RenderError> {
+    scene
+        .validate_primitive_refs(options)
+        .map_err(RenderError::Parse)?;
     let mut plan = Vec::with_capacity(views.len());
     for view in views {
         let view_options = resolved_view_options(options, view);
         with_view_result(validate_options(&view_options), &view.id)?;
+        if view_options.camera.is_fit() && scene.presented_bounds(&view_options).is_none() {
+            return Err(with_view(
+                RenderError::Parse("fitted camera has no eligible geometry to frame".into()),
+                &view.id,
+            ));
+        }
         let prepared = with_view_result(
             capture_overlay::prepare_view(scene, &view_options),
             &view.id,
@@ -536,14 +617,23 @@ async fn run_plan(
     setup_started: f64,
 ) -> Result<(Vec<Vec<u8>>, Option<RenderBatchTimings>), RenderError> {
     let mut scene = render::Scene::new(parsed);
+    let cap_started = clock(now);
+    let presentation = renderer.prepare_presentation(&scene.parsed, &plan[0].options)?;
+    let cap_build = clock(now) - cap_started;
+    let upload_started = clock(now);
     let buffers = renderer.ensure_uploaded(&mut scene)?;
+    let upload = clock(now) - upload_started;
     let setup = clock(now) - setup_started;
-    let (images, view_stages) = renderer.execute_plan(buffers, &plan, now).await?;
+    let (images, view_stages) = renderer
+        .execute_plan(buffers, &presentation, &plan, now)
+        .await?;
     let timings = now.map(|_| {
         let delta = renderer.counters().since(counters_start);
         RenderBatchTimings {
             parse,
             setup,
+            cap_build,
+            upload,
             peak_readback_bytes: plan
                 .iter()
                 .map(|entry| u64::from(entry.options.width) * u64::from(entry.options.height) * 4)
@@ -552,6 +642,7 @@ async fn run_plan(
             glb_parses: 1,
             adapter_device_requests: delta.device_requests,
             pipeline_sets: delta.pipeline_sets,
+            presentation_builds: delta.presentation_builds,
             scene_uploads: delta.scene_uploads,
             target_allocations: delta.target_allocations,
             views: plan
@@ -736,8 +827,11 @@ pub async fn render_rgba(glb: &[u8], options: &RenderOptions) -> Result<Rendered
     let mut renderer = Renderer::new(wgpu::PowerPreference::HighPerformance).await?;
     let mut scene = render::Scene::new(parsed);
     let result = async {
+        let presentation = renderer.prepare_presentation(&scene.parsed, &entry.options)?;
         let buffers = renderer.ensure_uploaded(&mut scene)?;
-        renderer.render_entry_to_rgba(buffers, &entry).await
+        renderer
+            .render_entry_to_rgba(buffers, &presentation, &entry)
+            .await
     }
     .await;
     renderer.destroy();
@@ -887,6 +981,10 @@ mod tests {
         assert_eq!(options.height, 432);
         assert_eq!(options.camera, RenderCamera::default());
         assert_eq!(options.line_width, 3.0);
+        assert!(options.surfaces);
+        assert!(options.lines);
+        assert!(options.visible_primitives.is_none());
+        assert!(options.sections.is_none());
         assert_eq!(options.camera.projection_kind(), Projection::Perspective);
         assert_eq!(options.background, None);
         assert_eq!(options.label, None);
@@ -1044,11 +1142,70 @@ mod tests {
                 },
                 ..Default::default()
             },
+            RenderOptions {
+                visible_primitives: Some(vec![
+                    PrimitiveRef {
+                        node_index: 0,
+                        mesh_index: 0,
+                        primitive_index: 0,
+                    },
+                    PrimitiveRef {
+                        node_index: 0,
+                        mesh_index: 0,
+                        primitive_index: 0,
+                    },
+                ]),
+                ..Default::default()
+            },
+            RenderOptions {
+                sections: Some(Sections {
+                    planes: Vec::new(),
+                    clip_surfaces: true,
+                    clip_lines: true,
+                }),
+                ..Default::default()
+            },
+            RenderOptions {
+                sections: Some(Sections {
+                    planes: vec![SectionPlane {
+                        point: [0.0; 3],
+                        normal: [0.0; 3],
+                    }],
+                    clip_surfaces: true,
+                    clip_lines: true,
+                }),
+                ..Default::default()
+            },
+            RenderOptions {
+                sections: Some(Sections {
+                    planes: vec![SectionPlane {
+                        point: [f32::NAN, 0.0, 0.0],
+                        normal: [1.0, 0.0, 0.0],
+                    }],
+                    clip_surfaces: true,
+                    clip_lines: true,
+                }),
+                ..Default::default()
+            },
         ];
         for options in invalid {
             assert!(validate_options(&options).is_err());
         }
         assert!(validate_options(&RenderOptions::default()).is_ok());
+        assert!(
+            validate_options(&RenderOptions {
+                sections: Some(Sections {
+                    planes: vec![SectionPlane {
+                        point: [0.0; 3],
+                        normal: [1.0, 0.0, 0.0],
+                    }],
+                    clip_surfaces: true,
+                    clip_lines: true,
+                }),
+                ..RenderOptions::default()
+            })
+            .is_ok()
+        );
         assert!(
             validate_options(&RenderOptions {
                 camera: RenderCamera::Fit {
@@ -1143,6 +1300,69 @@ mod tests {
         ))
         .unwrap_err();
         assert!(error.to_string().contains("view \"tiny\""), "{error}");
+    }
+
+    #[test]
+    fn presentation_selection_validates_source_identity_and_fit_subjects() {
+        let scene = parse_glb(FIXTURE).expect("fixture");
+        let visible = RenderOptions {
+            visible_primitives: Some(vec![PrimitiveRef {
+                node_index: 0,
+                mesh_index: 0,
+                primitive_index: 0,
+            }]),
+            ..RenderOptions::default()
+        };
+        assert!(build_plan(&scene, &visible, ImageFormat::Png, &[view("front")]).is_ok());
+        let unknown = RenderOptions {
+            visible_primitives: Some(vec![PrimitiveRef {
+                node_index: usize::MAX,
+                mesh_index: 0,
+                primitive_index: 0,
+            }]),
+            ..RenderOptions::default()
+        };
+        assert!(
+            build_plan(&scene, &unknown, ImageFormat::Png, &[view("front")])
+                .err()
+                .expect("unknown source must fail")
+                .to_string()
+                .contains("does not match a reachable source")
+        );
+
+        let empty_fit = RenderOptions {
+            visible_primitives: Some(Vec::new()),
+            ..RenderOptions::default()
+        };
+        assert_eq!(
+            build_plan(&scene, &empty_fit, ImageFormat::Png, &[view("front")])
+                .err()
+                .expect("empty fitted subject must fail")
+                .to_string(),
+            "parse: view \"front\": fitted camera has no eligible geometry to frame"
+        );
+        let fixed = RenderOptions {
+            camera: RenderCamera::Fixed {
+                position: [0.0, 0.0, 10.0],
+                target: [0.0; 3],
+                up: [0.0, 1.0, 0.0],
+                projection: CameraProjection::Perspective {
+                    vertical_field_of_view_deg: 45.0,
+                    zoom: 1.0,
+                },
+                clipping: None,
+            },
+            ..empty_fit
+        };
+        let fixed_view = RenderView {
+            id: "front".into(),
+            label: None,
+            camera: fixed.camera.clone(),
+            width: None,
+            height: None,
+            format: None,
+        };
+        assert!(build_plan(&scene, &fixed, ImageFormat::Png, &[fixed_view]).is_ok());
     }
 
     #[test]
@@ -1309,6 +1529,7 @@ mod tests {
         .expect("timed render");
         assert_eq!(timings.glb_parses, 1);
         assert_eq!(timings.adapter_device_requests, 1);
+        assert_eq!(timings.presentation_builds, 1);
         assert_eq!(timings.scene_uploads, 1);
         assert_eq!(timings.views[0].id, "front");
         assert!(timings.views[0].encode > 0.0);
@@ -1387,10 +1608,13 @@ mod tests {
         let timings = RenderBatchTimings {
             parse: 1.5,
             setup: 2.0,
+            cap_build: 0.5,
+            upload: 1.0,
             peak_readback_bytes: 4096,
             glb_parses: 1,
             adapter_device_requests: 0,
             pipeline_sets: 0,
+            presentation_builds: 1,
             scene_uploads: 1,
             target_allocations: 0,
             views: vec![RenderViewTimings {
@@ -1402,7 +1626,9 @@ mod tests {
         };
         let json: serde_json::Value = serde_json::from_str(&timings.to_json()).expect("valid JSON");
         assert_eq!(json["parse"], 1.5);
+        assert_eq!(json["capBuild"], 0.5);
         assert_eq!(json["adapterDeviceRequests"], 0);
+        assert_eq!(json["presentationBuilds"], 1);
         assert_eq!(json["views"][0]["encode"], 4.0);
     }
 
@@ -1457,6 +1683,7 @@ mod tests {
         let timings = timings.expect("timings requested");
         assert_eq!(timings.adapter_device_requests, 0);
         assert_eq!(timings.pipeline_sets, 0);
+        assert_eq!(timings.presentation_builds, 1);
         assert_eq!(timings.target_allocations, 0);
         assert_eq!(timings.scene_uploads, 1);
         assert_eq!(timings.views.len(), 2);

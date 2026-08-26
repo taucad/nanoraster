@@ -30,6 +30,7 @@ expectTypeOf<keyof RenderModule>().toEqualTypeOf<
   | 'renderImageLightColorRange'
   | 'renderImageMarginRange'
   | 'renderImageMaxLights'
+  | 'renderImageMaxSections'
   | 'renderImageQualityRange'
   | 'renderImageVerticalFieldOfViewRange'
   | 'renderImageViewIdPattern'
@@ -43,6 +44,24 @@ const vector: renderModule.RenderVector3 = [1, 2, 3];
 expectTypeOf(vector).toEqualTypeOf<readonly [number, number, number]>();
 // @ts-expect-error the unreleased camera-specific tuple name was consolidated
 expectTypeOf<renderModule.CameraVector>();
+
+const primitive: renderModule.RenderPrimitiveReference = {
+  nodeIndex: 2,
+  meshIndex: 1,
+  primitiveIndex: 0,
+};
+const sections = {
+  planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }],
+  clipSurfaces: true,
+} as const satisfies renderModule.RenderSections;
+void renderImage(glb, {
+  format: 'png',
+  surfaces: true,
+  lines: false,
+  visiblePrimitives: [primitive],
+  sections,
+});
+expectTypeOf(renderModule.renderImageMaxSections).toEqualTypeOf<number>();
 
 const singular = {
   format: 'webp',
@@ -199,6 +218,16 @@ void renderImages(glb, {
       id: 'front',
       // @ts-expect-error scaleBar is shared, not per view
       scaleBar: true,
+    },
+  ],
+});
+void renderImages(glb, {
+  format: 'png',
+  views: [
+    {
+      id: 'front',
+      // @ts-expect-error presentation state is shared across a batch
+      surfaces: false,
     },
   ],
 });
