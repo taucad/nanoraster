@@ -374,13 +374,22 @@ type StrictLighting<Lighting> = Lighting extends RenderLightingRig
   ? NoExtraKeys<Lighting, RenderLightingRig>
   : Lighting;
 
+type StrictSectionPlane<Plane> = Plane extends RenderSectionPlane
+  ? NoExtraKeys<Plane, RenderSectionPlane>
+  : never;
+
+type StrictSectionPlanes<Planes extends readonly RenderSectionPlane[]> = number extends Planes['length']
+  ? readonly StrictSectionPlane<Planes[number]>[]
+  : Planes extends readonly [
+        infer First extends RenderSectionPlane,
+        ...infer Rest extends readonly RenderSectionPlane[],
+      ]
+    ? readonly [StrictSectionPlane<First>, ...StrictSectionPlanes<Rest>]
+    : readonly [];
+
 type StrictSections<Sections> = Sections extends RenderSections
   ? NoExtraKeys<Sections, RenderSections> & {
-      readonly planes: {
-        readonly [Index in keyof Sections['planes']]: Sections['planes'][Index] extends RenderSectionPlane
-          ? NoExtraKeys<Sections['planes'][Index], RenderSectionPlane>
-          : never;
-      };
+      readonly planes: StrictSectionPlanes<Sections['planes']>;
     }
   : Sections;
 

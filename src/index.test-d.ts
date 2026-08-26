@@ -54,6 +54,7 @@ const sections = {
   planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }],
   clipSurfaces: true,
 } as const satisfies renderModule.RenderSections;
+const adapterSections: renderModule.RenderSections = sections;
 void renderImage(glb, {
   format: 'png',
   surfaces: true,
@@ -61,6 +62,7 @@ void renderImage(glb, {
   visiblePrimitives: [primitive],
   sections,
 });
+void renderImage(glb, { format: 'png', sections: adapterSections });
 expectTypeOf(renderModule.renderImageMaxSections).toEqualTypeOf<number>();
 
 const singular = {
