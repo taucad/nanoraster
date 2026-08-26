@@ -62,7 +62,8 @@ impl CameraProjection {
     }
 }
 
-/// Explicit positive clipping distances for a fixed camera.
+/// Explicit positive clipping distances for a fixed camera. The renderer
+/// tightens unused range outside the subject bounds to preserve depth precision.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClipPlanes {
     pub near: f32,

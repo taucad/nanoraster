@@ -148,7 +148,7 @@ export type RenderCamera =
       readonly up: RenderVector3;
       /** Perspective or orthographic projection. @default perspective with a 45° vertical field of view and zoom 1 */
       readonly projection?: RenderFixedProjection;
-      /** Explicit positive clip distances. Omit to derive safe planes from referenced subject geometry. */
+      /** Explicit positive clip distances. Unused range outside referenced subject geometry is tightened to preserve depth precision. */
       readonly clipping?: {
         readonly near: number;
         readonly far: number;

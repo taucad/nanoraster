@@ -432,10 +432,19 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
             let eye = Vec3::from(*position);
             let target = Vec3::from(*target);
             let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::from(*up));
-            let (near, far) = clipping.map_or_else(
-                || position_clip_planes(scene, options, view, (eye - target).length()),
-                |planes| (planes.near, planes.far),
-            );
+            let derived_clipping =
+                position_clip_planes(scene, options, view, (eye - target).length());
+            let (near, far) = clipping.map_or(derived_clipping, |planes| {
+                let visible = (
+                    planes.near.max(derived_clipping.0),
+                    planes.far.min(derived_clipping.1),
+                );
+                if visible.0 < visible.1 {
+                    visible
+                } else {
+                    (planes.near, planes.far)
+                }
+            });
             let projection = match projection {
                 CameraProjection::Perspective {
                     vertical_field_of_view_deg,
@@ -2516,7 +2525,7 @@ mod tests {
                 ..RenderOptions::default()
             },
         );
-        let explicit = camera_state(
+        let generous = camera_state(
             &scene(),
             &RenderOptions {
                 camera: fixed_camera(CameraProjection::Perspective {
@@ -2527,8 +2536,49 @@ mod tests {
             },
         );
         assert!(derived.projection.is_finite());
-        assert!(explicit.projection.is_finite());
-        assert_ne!(derived.projection, explicit.projection);
+        assert_matrix_close(derived.projection, generous.projection);
+
+        let clipped = camera_state(
+            &scene(),
+            &RenderOptions {
+                camera: RenderCamera::Fixed {
+                    position: [0.0, 0.0, 10.0],
+                    target: [0.0, 0.0, 0.0],
+                    up: [0.0, 1.0, 0.0],
+                    projection: CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 45.0,
+                        zoom: 1.0,
+                    },
+                    clipping: Some(crate::ClipPlanes {
+                        near: 8.0,
+                        far: 10.0,
+                    }),
+                },
+                ..RenderOptions::default()
+            },
+        );
+        assert_ne!(derived.projection, clipped.projection);
+
+        let outside = camera_state(
+            &scene(),
+            &RenderOptions {
+                camera: RenderCamera::Fixed {
+                    position: [0.0, 0.0, 10.0],
+                    target: [0.0, 0.0, 0.0],
+                    up: [0.0, 1.0, 0.0],
+                    projection: CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 45.0,
+                        zoom: 1.0,
+                    },
+                    clipping: Some(crate::ClipPlanes {
+                        near: 0.1,
+                        far: 1.0,
+                    }),
+                },
+                ..RenderOptions::default()
+            },
+        );
+        assert_ne!(derived.projection, outside.projection);
     }
 
     #[test]
@@ -2642,6 +2692,37 @@ mod tests {
         assert!(red(61, 128) < 200);
         assert_eq!(red(61, 124), 255);
 
+        let surface = render_test_scene(&mut renderer, occluded_line_scene(false), options.clone());
+        let hidden_line = render_test_scene(&mut renderer, occluded_line_scene(true), options);
+        assert_eq!(surface.rgba, hidden_line.rgba);
+        renderer.destroy();
+    }
+
+    #[test]
+    fn broad_fixed_camera_clipping_does_not_reveal_hidden_lines() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let options = RenderOptions {
+            width: 256,
+            height: 256,
+            line_width: 3.0,
+            background: Some([1.0; 4]),
+            camera: RenderCamera::Fixed {
+                position: [0.0, 0.0, 10.0],
+                target: [0.0, 0.0, 0.0],
+                up: [0.0, 1.0, 0.0],
+                projection: CameraProjection::Perspective {
+                    vertical_field_of_view_deg: 45.0,
+                    zoom: 1.0,
+                },
+                clipping: Some(crate::ClipPlanes {
+                    near: 0.000_001,
+                    far: 10_000_000.0,
+                }),
+            },
+            ..RenderOptions::default()
+        };
         let surface = render_test_scene(&mut renderer, occluded_line_scene(false), options.clone());
         let hidden_line = render_test_scene(&mut renderer, occluded_line_scene(true), options);
         assert_eq!(surface.rgba, hidden_line.rgba);

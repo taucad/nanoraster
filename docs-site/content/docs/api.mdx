@@ -279,7 +279,8 @@ minimum margin `0.1`, and perspective field of view `45` with zoom `1`.
 `direction` fixes orientation from the subject toward the camera; fitting may
 translate the optical axis to balance the projected geometry. A fixed camera
 requires non-coincident position/target and a non-collinear up vector. Omitted
-clipping derives safe planes from referenced geometry.
+clipping derives safe planes from referenced geometry. Explicit range outside
+the referenced subject is tightened without changing visible geometry.
 
 ### `RenderImageOptions`
 
