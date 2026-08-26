@@ -147,7 +147,7 @@ type RenderImageSharedOptions = {
    * @default 0.92 (jpeg), 1 (webp)
    */
   readonly quality?: number;
-  /** Edge line width in output pixels, from 0.25 to 16. @default 3 */
+  /** Edge line width in output pixels, from 0.25 to 16. @default 2 */
   readonly lineWidth?: number;
   /** Transparent by default; otherwise `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. @default transparent */
   readonly background?: readonly [number, number, number, number] | string;
