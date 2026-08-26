@@ -9,7 +9,7 @@ The package has no compatibility commitments before its first stable release.
   cameras use `position`, `target`, and `up` with field of view or orthographic
   span, zoom, and optional clipping. Each batch view owns an optional complete
   camera. `lineWidth` is now public and measured in output pixels instead of
-  scaling with image height; its default is `3`. Removed wire keys fail with
+  scaling with image height; its default is `2`. Removed wire keys fail with
   the replacement path.
 - WebP `quality` values below `1` encode lossy instead of being ignored. A
   request that passed an explicit `quality` under a lossless-only release now

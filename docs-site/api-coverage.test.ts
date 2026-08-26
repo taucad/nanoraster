@@ -81,7 +81,7 @@ const defaults = {
   width: '768',
   height: '432',
   quality: '0.92 (jpeg), 1 (webp)',
-  lineWidth: '3',
+  lineWidth: '2',
   background: 'transparent',
   axes: 'false',
   scaleBar: 'false',
