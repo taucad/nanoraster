@@ -38,6 +38,8 @@ export {
 } from '#options.js';
 export type {
   RenderVector3,
+  RenderWorld,
+  RenderWorldAxis,
   RenderCamera,
   RenderImageOptions,
   RenderImagesOptions,

@@ -11,6 +11,7 @@ const Z_COLOR: [u8; 4] = [37, 78, 136, 255];
 const BLACK: [u8; 4] = [0, 0, 0, 255];
 const WHITE: [u8; 4] = [255, 255, 255, 255];
 const AXIS_COLORS: [[u8; 4]; 3] = [X_COLOR, Y_COLOR, Z_COLOR];
+#[cfg(test)]
 const AXES: [Vec3; 3] = [Vec3::X, Vec3::Y, Vec3::Z];
 const ALIGNMENT_DOT: f32 = 0.965_925_8; // cos(15°)
 const SUPERSAMPLE: u32 = 4;
@@ -58,6 +59,7 @@ struct OverlayLayout {
 
 pub(crate) struct PreparedView {
     pub(crate) camera: CameraState,
+    axes: [Vec3; 3],
     layout: OverlayLayout,
     alignment: Option<Alignment>,
     label: Option<String>,
@@ -89,7 +91,8 @@ pub(crate) fn prepare_view(
     debug_assert_ne!(FONT_SOURCE_FNV, 0);
     debug_assert_ne!(FONT_ATLAS_FNV, 0);
     let mut camera = camera_state(scene, options);
-    let alignment = classify_alignment(camera.forward);
+    let axes = options.world_axes.map(Vec3::from);
+    let alignment = classify_alignment(camera.forward, axes);
     let projection = options.camera.projection_kind();
     // A label's presence is its own switch — there is no flag to disagree with.
     let label = options.label.clone();
@@ -126,6 +129,7 @@ pub(crate) fn prepare_view(
     layout.inset = layout.inset.max(1);
     Ok(PreparedView {
         camera,
+        axes,
         layout,
         alignment,
         label,
@@ -209,8 +213,8 @@ pub(crate) fn stamp_capture_overlay(
     }
 }
 
-fn classify_alignment(forward: Vec3) -> Option<Alignment> {
-    AXES.into_iter().enumerate().find_map(|(axis, world_axis)| {
+fn classify_alignment(forward: Vec3, axes: [Vec3; 3]) -> Option<Alignment> {
+    axes.into_iter().enumerate().find_map(|(axis, world_axis)| {
         let dot = forward.dot(world_axis);
         (dot.abs() >= ALIGNMENT_DOT).then_some(Alignment {
             axis,
@@ -670,7 +674,12 @@ fn draw_axes(rendered: &mut Rendered, scratch: &mut Vec<u8>, rect: Rect, prepare
         WHITE,
     );
 
-    let mut axes = projected_axes(prepared.camera, prepared.projection, prepared.alignment);
+    let mut axes = projected_axes(
+        prepared.camera,
+        prepared.projection,
+        prepared.alignment,
+        prepared.axes,
+    );
     axes.sort_by(|left, right| left.2.total_cmp(&right.2).then(left.0.cmp(&right.0)));
     let shaft_length = rect.width as f32 * 0.29;
     let shaft_width = (rect.width as f32 * 0.03).max(1.0);
@@ -776,8 +785,9 @@ fn projected_axes(
     camera: CameraState,
     projection: Projection,
     alignment: Option<Alignment>,
+    axes: [Vec3; 3],
 ) -> Vec<(usize, Vec2, f32)> {
-    AXES.into_iter()
+    axes.into_iter()
         .enumerate()
         .filter(|(index, _)| alignment.is_none_or(|alignment| alignment.axis != *index))
         .map(|(index, world_axis)| {
@@ -1070,7 +1080,7 @@ mod tests {
             for (angle, aligned) in [(14.9_f32, true), (15.0, true), (15.1, false)] {
                 let radians = angle.to_radians();
                 let forward = Vec3::new(radians.sin(), 0.0, sign * radians.cos());
-                let result = classify_alignment(forward);
+                let result = classify_alignment(forward, AXES);
                 assert_eq!(result.is_some_and(|value| value.axis == 2), aligned);
             }
         }
@@ -1086,9 +1096,39 @@ mod tests {
             (Vec3::NEG_Y, false),
             (Vec3::Y, true),
         ] {
-            let alignment = classify_alignment(forward).expect("canonical alignment");
+            let alignment = classify_alignment(forward, AXES).expect("canonical alignment");
             assert_eq!(alignment.camera_forward_positive, positive);
         }
+    }
+
+    #[test]
+    fn caller_axes_drive_alignment_and_unit_scaling_leaves_the_scale_bar_unchanged() {
+        let tau_axes = [Vec3::X, Vec3::NEG_Z, Vec3::Y];
+        let alignment = classify_alignment(Vec3::NEG_Y, tau_axes).expect("Tau +Z alignment");
+        assert_eq!(alignment.axis, 2);
+        assert!(!alignment.camera_forward_positive);
+
+        let meter = crate::RenderRequest::from_json(
+            r#"{"format":"png","scaleBar":true,"camera":{"framing":"fixed","position":[0,0,4],"target":[0,0,0],"up":[0,1,0],"projection":{"kind":"orthographic","verticalSpan":2}}}"#,
+        )
+        .expect("metre request")
+        .resolve_options()
+        .expect("metre options");
+        let millimeter = crate::RenderRequest::from_json(
+            r#"{"format":"png","world":{"up":"+z","forward":"-y","unit":"millimeter"},"scaleBar":true,"camera":{"framing":"fixed","position":[0,-4000,0],"target":[0,0,0],"up":[0,0,1],"projection":{"kind":"orthographic","verticalSpan":2000}}}"#,
+        )
+        .expect("millimetre request")
+        .resolve_options()
+        .expect("millimetre options");
+        let meter = prepare_view(&scene(), &meter).expect("metre view");
+        let millimeter = prepare_view(&scene(), &millimeter).expect("millimetre view");
+        assert_eq!(meter.scale_label, millimeter.scale_label);
+        assert!(
+            (meter.scale_width_px.expect("metre scale")
+                - millimeter.scale_width_px.expect("millimetre scale"))
+            .abs()
+                < 1e-4
+        );
     }
 
     #[test]
@@ -1130,7 +1170,8 @@ mod tests {
                 assert_eq!(alignment.axis, axis);
                 assert!(!alignment.camera_forward_positive);
                 assert_eq!(
-                    projected_axes(prepared.camera, projection, Some(alignment)).len(),
+                    projected_axes(prepared.camera, projection, Some(alignment), prepared.axes)
+                        .len(),
                     2
                 );
                 assert!(prepared.scale_width_px.is_some_and(f32::is_finite));
@@ -1221,7 +1262,12 @@ mod tests {
                         ..RenderOptions::default()
                     };
                     let prepared = prepare_view(&scene(), &options).expect("polar view");
-                    let axes = projected_axes(prepared.camera, projection, prepared.alignment);
+                    let axes = projected_axes(
+                        prepared.camera,
+                        projection,
+                        prepared.alignment,
+                        prepared.axes,
+                    );
                     let directions = [axes[0].1.normalize_or_zero(), axes[1].1.normalize_or_zero()];
                     let text = format!("+{}", axis_name(aligned_axis));
                     let font = axis_font_size(rect);
@@ -1264,7 +1310,10 @@ mod tests {
                     )
                     .expect("non-aligned view");
                     assert_eq!(prepared.alignment, None);
-                    assert_eq!(projected_axes(prepared.camera, projection, None).len(), 3);
+                    assert_eq!(
+                        projected_axes(prepared.camera, projection, None, prepared.axes).len(),
+                        3
+                    );
                 }
             }
         }
@@ -1327,8 +1376,13 @@ mod tests {
 
     #[test]
     fn projected_axes_suppress_only_the_aligned_axis() {
-        let alignment = classify_alignment(Vec3::NEG_Z);
-        let axes = projected_axes(camera(Vec3::NEG_Z), Projection::Orthographic, alignment);
+        let alignment = classify_alignment(Vec3::NEG_Z, AXES);
+        let axes = projected_axes(
+            camera(Vec3::NEG_Z),
+            Projection::Orthographic,
+            alignment,
+            AXES,
+        );
         assert_eq!(axes.len(), 2);
         assert!(axes.iter().all(|axis| axis.0 != 2));
     }
@@ -1784,6 +1838,7 @@ mod tests {
 
         let prepared = PreparedView {
             camera: zero_camera,
+            axes: AXES,
             layout: OverlayLayout {
                 label: None,
                 scale: None,

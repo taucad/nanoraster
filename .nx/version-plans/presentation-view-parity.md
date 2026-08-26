@@ -2,4 +2,6 @@
 __default__: major
 ---
 
-Add renderer-neutral surface and line switches, glTF primitive selection, deterministic multi-plane section views with striped caps, and presentation timing/resource evidence.
+Add renderer-neutral surface and line switches, glTF primitive selection,
+deterministic multi-plane section views with striped caps, caller-world request
+coordinates, and presentation timing/resource evidence.

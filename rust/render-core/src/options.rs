@@ -128,6 +128,36 @@ pub struct SectionsRequest {
     clip_lines: Option<bool>,
 }
 
+/// Coordinate system of caller-authored spatial values and presentation.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorldRequest {
+    up: Option<String>,
+    forward: Option<String>,
+    unit: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct WorldTransform {
+    rotation: glam::Mat3,
+    meters_per_unit: f32,
+    axes: [[f32; 3]; 3],
+}
+
+impl WorldTransform {
+    fn point(self, value: glam::Vec3) -> glam::Vec3 {
+        self.rotation * value * self.meters_per_unit
+    }
+
+    fn direction(self, value: glam::Vec3) -> glam::Vec3 {
+        self.rotation * value
+    }
+
+    fn length(self, value: f32) -> f32 {
+        value * self.meters_per_unit
+    }
+}
+
 impl<'de> Deserialize<'de> for LightingRequest {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         // Untagged serde collapses every arm's failure into "did not match any
@@ -153,6 +183,7 @@ pub struct RenderRequest {
     pub height: Option<u32>,
     pub format: Option<String>,
     pub quality: Option<f32>,
+    pub world: Option<WorldRequest>,
     pub camera: Option<CameraRequest>,
     pub line_width: Option<f32>,
     pub surfaces: Option<bool>,
@@ -188,6 +219,7 @@ pub struct RenderImagesRequest {
     pub height: Option<u32>,
     pub format: Option<String>,
     pub quality: Option<f32>,
+    pub world: Option<WorldRequest>,
     pub line_width: Option<f32>,
     pub surfaces: Option<bool>,
     pub lines: Option<bool>,
@@ -244,6 +276,7 @@ struct CommonRequest<'a> {
     width: Option<u32>,
     height: Option<u32>,
     camera: Option<&'a CameraRequest>,
+    world: Option<&'a WorldRequest>,
     line_width: Option<f32>,
     surfaces: Option<bool>,
     lines: Option<bool>,
@@ -272,7 +305,7 @@ impl RenderRequest {
 
     /// The camera and annotation settings alone, with no encoder chosen yet.
     pub fn resolve_options(&self) -> Result<RenderOptions, RenderError> {
-        let mut options = resolve_common(self.common())?;
+        let (mut options, _) = resolve_common(self.common())?;
         validate_optional_label(self.label.as_deref(), "label")?;
         options.label.clone_from(&self.label);
         Ok(options)
@@ -283,6 +316,7 @@ impl RenderRequest {
             width: self.width,
             height: self.height,
             camera: self.camera.as_ref(),
+            world: self.world.as_ref(),
             line_width: self.line_width,
             surfaces: self.surfaces,
             lines: self.lines,
@@ -307,7 +341,7 @@ impl RenderImagesRequest {
     pub fn resolve(
         &self,
     ) -> Result<(RenderOptions, ImageFormat, Vec<RenderView>, bool), RenderError> {
-        let options = resolve_common(self.common())?;
+        let (options, world) = resolve_common(self.common())?;
         let (shared_format_name, format) =
             resolve_required_format(self.format.as_deref(), self.quality)?;
         if self.views.is_empty() {
@@ -330,7 +364,7 @@ impl RenderImagesRequest {
                     view.id
                 )));
             }
-            let camera = resolve_camera(view.camera.as_ref())
+            let camera = resolve_camera(view.camera.as_ref(), world)
                 .map_err(|error| RenderError::Parse(format!("views[{index}].camera: {error}")))?;
             for (name, value) in [("width", view.width), ("height", view.height)] {
                 if let Some(value) = value
@@ -385,6 +419,7 @@ impl RenderImagesRequest {
             width: self.width,
             height: self.height,
             camera: None,
+            world: self.world.as_ref(),
             line_width: self.line_width,
             surfaces: self.surfaces,
             lines: self.lines,
@@ -433,8 +468,11 @@ fn reject_legacy_camera_keys(value: &serde_json::Value) -> Result<(), RenderErro
     Ok(())
 }
 
-fn resolve_common(request: CommonRequest<'_>) -> Result<RenderOptions, RenderError> {
+fn resolve_common(
+    request: CommonRequest<'_>,
+) -> Result<(RenderOptions, WorldTransform), RenderError> {
     let defaults = RenderOptions::default();
+    let world = resolve_world(request.world)?;
     let width = request.width.unwrap_or(defaults.width);
     let height = request.height.unwrap_or(defaults.height);
     if !(MIN_DIMENSION..=MAX_DIMENSION).contains(&width)
@@ -452,7 +490,7 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<RenderOptions, RenderErr
         )));
     }
 
-    let camera = resolve_camera(request.camera).map_err(RenderError::Parse)?;
+    let camera = resolve_camera(request.camera, world).map_err(RenderError::Parse)?;
     let line_width = request.line_width.unwrap_or(defaults.line_width);
     if !line_width.is_finite() || !LINE_WIDTH_RANGE.contains(&line_width) {
         return Err(RenderError::Parse(format!(
@@ -471,7 +509,7 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<RenderOptions, RenderErr
         ));
     }
 
-    let lighting = resolve_lighting(request.lighting)?;
+    let lighting = resolve_lighting(request.lighting, world)?;
     let visible_primitives = request
         .visible_primitives
         .map(|primitives| {
@@ -507,17 +545,21 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<RenderOptions, RenderErr
                 .iter()
                 .enumerate()
                 .map(|(index, plane)| {
-                    let point = finite_vector(
-                        plane.point,
-                        &format!("sections.planes[{index}].point"),
-                        true,
-                    )
-                    .map_err(RenderError::Parse)?;
-                    let normal = normalized_direction(
-                        plane.normal,
-                        &format!("sections.planes[{index}].normal"),
-                    )
-                    .map_err(RenderError::Parse)?;
+                    let point = world.point(
+                        finite_vector(
+                            plane.point,
+                            &format!("sections.planes[{index}].point"),
+                            true,
+                        )
+                        .map_err(RenderError::Parse)?,
+                    );
+                    let normal = world.direction(
+                        normalized_direction(
+                            plane.normal,
+                            &format!("sections.planes[{index}].normal"),
+                        )
+                        .map_err(RenderError::Parse)?,
+                    );
                     Ok(SectionPlane {
                         point: point.to_array(),
                         normal: normal.to_array(),
@@ -532,20 +574,83 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<RenderOptions, RenderErr
         })
         .transpose()?;
 
-    Ok(RenderOptions {
-        width,
-        height,
-        camera,
-        line_width,
-        surfaces: request.surfaces.unwrap_or(true),
-        lines: request.lines.unwrap_or(true),
-        visible_primitives,
-        sections,
-        background: request.background,
-        axes,
-        scale_bar,
-        lighting,
-        ..defaults
+    Ok((
+        RenderOptions {
+            width,
+            height,
+            camera,
+            line_width,
+            surfaces: request.surfaces.unwrap_or(true),
+            lines: request.lines.unwrap_or(true),
+            visible_primitives,
+            sections,
+            background: request.background,
+            axes,
+            scale_bar,
+            lighting,
+            world_axes: world.axes,
+            ..defaults
+        },
+        world,
+    ))
+}
+
+fn signed_axis(value: &str, name: &str) -> Result<(usize, glam::Vec3), RenderError> {
+    let (index, vector) = match value {
+        "+x" => (0, glam::Vec3::X),
+        "-x" => (0, glam::Vec3::NEG_X),
+        "+y" => (1, glam::Vec3::Y),
+        "-y" => (1, glam::Vec3::NEG_Y),
+        "+z" => (2, glam::Vec3::Z),
+        "-z" => (2, glam::Vec3::NEG_Z),
+        other => {
+            return Err(RenderError::Parse(format!(
+                "{name} {other:?} not +x/-x/+y/-y/+z/-z"
+            )));
+        }
+    };
+    Ok((index, vector))
+}
+
+fn resolve_world(request: Option<&WorldRequest>) -> Result<WorldTransform, RenderError> {
+    let up_name = request
+        .and_then(|world| world.up.as_deref())
+        .unwrap_or("+y");
+    let forward_name = request
+        .and_then(|world| world.forward.as_deref())
+        .unwrap_or("+z");
+    let (up_index, up) = signed_axis(up_name, "world.up")?;
+    let (forward_index, forward) = signed_axis(forward_name, "world.forward")?;
+    if up_index == forward_index {
+        return Err(RenderError::Parse(
+            "world.up and world.forward must name different axes".into(),
+        ));
+    }
+    let remaining = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z][3 - up_index - forward_index];
+    let caller_basis = glam::Mat3::from_cols(remaining, up, forward);
+    if caller_basis.determinant() < 0.0 {
+        return Err(RenderError::Parse(
+            "world.up and world.forward must define a right-handed frame".into(),
+        ));
+    }
+    let rotation = caller_basis.transpose();
+    let meters_per_unit = match request.and_then(|world| world.unit.as_deref()) {
+        None | Some("meter") => 1.0,
+        Some("millimeter") => 0.001,
+        Some(other) => {
+            return Err(RenderError::Parse(format!(
+                "world.unit {other:?} not meter/millimeter"
+            )));
+        }
+    };
+    Ok(WorldTransform {
+        rotation,
+        meters_per_unit,
+        axes: [
+            (rotation * glam::Vec3::X).to_array(),
+            (rotation * glam::Vec3::Y).to_array(),
+            (rotation * glam::Vec3::Z).to_array(),
+        ],
     })
 }
 
@@ -618,6 +723,7 @@ fn resolve_fit_projection(
 
 fn resolve_fixed_projection(
     request: Option<&FixedProjectionRequest>,
+    world: WorldTransform,
 ) -> Result<CameraProjection, String> {
     match request {
         None => Ok(CameraProjection::Perspective {
@@ -641,16 +747,27 @@ fn resolve_fixed_projection(
                 ));
             }
             Ok(CameraProjection::Orthographic {
-                vertical_span: Some(*vertical_span),
+                vertical_span: Some(world.length(*vertical_span)),
                 zoom: zoom(*requested_zoom)?,
             })
         }
     }
 }
 
-fn resolve_camera(request: Option<&CameraRequest>) -> Result<RenderCamera, String> {
+fn resolve_camera(
+    request: Option<&CameraRequest>,
+    world: WorldTransform,
+) -> Result<RenderCamera, String> {
     let Some(request) = request else {
-        return Ok(RenderCamera::default());
+        return resolve_camera(
+            Some(&CameraRequest::Fit {
+                direction: None,
+                up: None,
+                margin: None,
+                projection: None,
+            }),
+            world,
+        );
     };
     match request {
         CameraRequest::Fit {
@@ -659,11 +776,11 @@ fn resolve_camera(request: Option<&CameraRequest>) -> Result<RenderCamera, Strin
             margin,
             projection,
         } => {
-            let direction = normalized_direction(
+            let direction = world.direction(normalized_direction(
                 direction.unwrap_or([0.612_372_46, 0.5, 0.612_372_46]),
                 "direction",
-            )?;
-            let up = normalized_direction(up.unwrap_or([0.0, 1.0, 0.0]), "up")?;
+            )?);
+            let up = world.direction(normalized_direction(up.unwrap_or([0.0, 1.0, 0.0]), "up")?);
             validate_orientation(direction, up, "direction")?;
             let margin = margin.unwrap_or(0.1);
             if !margin.is_finite() || !(0.0..=0.5).contains(&margin) {
@@ -683,13 +800,13 @@ fn resolve_camera(request: Option<&CameraRequest>) -> Result<RenderCamera, Strin
             projection,
             clipping,
         } => {
-            let position = finite_vector(*position, "position", true)?;
-            let target = finite_vector(*target, "target", true)?;
+            let position = world.point(finite_vector(*position, "position", true)?);
+            let target = world.point(finite_vector(*target, "target", true)?);
             let direction = position - target;
             if direction.length() < MIN_DIRECTION_LENGTH {
                 return Err("position and target must not coincide".into());
             }
-            let up = normalized_direction(*up, "up")?;
+            let up = world.direction(normalized_direction(*up, "up")?);
             validate_orientation(direction.normalize(), up, "view direction")?;
             let clipping = clipping
                 .as_ref()
@@ -702,8 +819,8 @@ fn resolve_camera(request: Option<&CameraRequest>) -> Result<RenderCamera, Strin
                         return Err("clipping requires finite 0 < near < far".to_owned());
                     }
                     Ok(ClipPlanes {
-                        near: clipping.near,
-                        far: clipping.far,
+                        near: world.length(clipping.near),
+                        far: world.length(clipping.far),
                     })
                 })
                 .transpose()?;
@@ -711,7 +828,7 @@ fn resolve_camera(request: Option<&CameraRequest>) -> Result<RenderCamera, Strin
                 position: position.to_array(),
                 target: target.to_array(),
                 up: up.to_array(),
-                projection: resolve_fixed_projection(projection.as_ref())?,
+                projection: resolve_fixed_projection(projection.as_ref(), world)?,
                 clipping,
             })
         }
@@ -756,7 +873,10 @@ fn resolve_format(name: &str, quality: Option<f32>) -> Result<ImageFormat, Strin
 /// `'studio'`, omitted, and the studio values spelled out all resolve to the
 /// same rig. An explicit `lights` array replaces the studio lights entirely;
 /// every other field inherits the preset.
-fn resolve_lighting(request: Option<&LightingRequest>) -> Result<ResolvedLighting, RenderError> {
+fn resolve_lighting(
+    request: Option<&LightingRequest>,
+    world: WorldTransform,
+) -> Result<ResolvedLighting, RenderError> {
     let studio = ResolvedLighting::studio();
     let rig = match request {
         None => return Ok(studio),
@@ -796,7 +916,13 @@ fn resolve_lighting(request: Option<&LightingRequest>) -> Result<ResolvedLightin
             )));
         }
         lights.push(ResolvedLight {
-            direction: light.direction,
+            direction: if matches!(rig.space.as_deref(), Some("world")) {
+                world
+                    .direction(glam::Vec3::from(light.direction))
+                    .to_array()
+            } else {
+                light.direction
+            },
             color: light.color,
         });
     }
@@ -881,6 +1007,13 @@ fn valid_view_id(id: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn assert_vec3_near(actual: glam::Vec3, expected: glam::Vec3) {
+        assert!(
+            actual.abs_diff_eq(expected, 1e-6),
+            "expected {expected:?}, got {actual:?}"
+        );
+    }
+
     #[test]
     fn singular_defaults_annotations_off() {
         let (options, format) = RenderRequest::from_json(r#"{"format":"png"}"#)
@@ -893,6 +1026,93 @@ mod tests {
         assert!(options.label.is_none());
         assert!(!options.scale_bar);
         assert_eq!(format, ImageFormat::Png);
+    }
+
+    #[test]
+    fn world_basis_is_proper_and_tau_world_matches_the_canonical_mapping() {
+        let default = resolve_world(None).expect("default world");
+        assert_eq!(default.rotation, glam::Mat3::IDENTITY);
+        assert_eq!(default.axes, RenderOptions::default().world_axes);
+
+        let tau = resolve_world(Some(&WorldRequest {
+            up: Some("+z".into()),
+            forward: Some("-y".into()),
+            unit: Some("millimeter".into()),
+        }))
+        .expect("Tau world");
+        assert!((tau.rotation.determinant() - 1.0).abs() < 1e-6);
+        assert!(
+            (tau.rotation.transpose() * tau.rotation - glam::Mat3::IDENTITY)
+                .to_cols_array()
+                .iter()
+                .all(|value| value.abs() < 1e-6)
+        );
+        assert_eq!(
+            tau.axes,
+            [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]]
+        );
+        assert_vec3_near(
+            tau.point(glam::Vec3::new(1000.0, 2000.0, 3000.0)),
+            glam::Vec3::new(1.0, 3.0, -2.0),
+        );
+
+        for request in [
+            WorldRequest {
+                up: Some("+z".into()),
+                forward: Some("+y".into()),
+                unit: None,
+            },
+            WorldRequest {
+                up: Some("+z".into()),
+                forward: None,
+                unit: None,
+            },
+        ] {
+            assert!(resolve_world(Some(&request)).is_err());
+        }
+    }
+
+    #[test]
+    fn caller_world_converts_every_spatial_request_value_once() {
+        let options = RenderRequest::from_json(
+            r#"{
+                "format":"png",
+                "world":{"up":"+z","forward":"-y","unit":"millimeter"},
+                "camera":{"framing":"fixed","position":[1000,2000,3000],"target":[0,0,0],"up":[0,0,1],"projection":{"kind":"orthographic","verticalSpan":5000},"clipping":{"near":100,"far":100000}},
+                "sections":{"planes":[{"point":[1000,2000,3000],"normal":[0,0,1]}]},
+                "lighting":{"lights":[{"direction":[0,1,0],"color":[1,1,1]}],"space":"world"}
+            }"#,
+        )
+        .expect("parse")
+        .resolve_options()
+        .expect("resolve");
+        let RenderCamera::Fixed {
+            position,
+            target,
+            up,
+            projection,
+            clipping,
+        } = options.camera
+        else {
+            panic!("fixed camera");
+        };
+        assert_vec3_near(position.into(), glam::Vec3::new(1.0, 3.0, -2.0));
+        assert_eq!(target, [0.0; 3]);
+        assert_eq!(up, [0.0, 1.0, 0.0]);
+        assert_eq!(
+            projection,
+            CameraProjection::Orthographic {
+                vertical_span: Some(5.0),
+                zoom: 1.0,
+            }
+        );
+        let clipping = clipping.expect("explicit clipping");
+        assert!((clipping.near - 0.1).abs() < 1e-6);
+        assert!((clipping.far - 100.0).abs() < 1e-4);
+        let section = &options.sections.expect("sections").planes[0];
+        assert_vec3_near(section.point.into(), glam::Vec3::new(1.0, 3.0, -2.0));
+        assert_eq!(section.normal, [0.0, 1.0, 0.0]);
+        assert_eq!(options.lighting.lights[0].direction, [0.0, 0.0, -1.0]);
     }
 
     #[test]

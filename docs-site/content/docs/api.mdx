@@ -21,6 +21,7 @@ const image = await renderImage(glb, {
   lines: true, // default
   visiblePrimitives: undefined, // default (all reachable primitives)
   sections: undefined, // default (no section view)
+  world: undefined, // default (glTF +Y up, +Z forward, metres)
   background: undefined, // default (transparent)
   axes: false, // default
   scaleBar: false, // default
@@ -201,9 +202,26 @@ show these fields in use.
 export type RenderVector3 = readonly [x: number, y: number, z: number];
 ```
 
-A Cartesian vector in the submitted GLB's world coordinate frame. Camera
-direction and up vectors accept any finite non-zero magnitude and are
-normalized internally.
+A Cartesian vector in the request's caller-world frame. That frame is glTF
+world space when `world` is omitted. Direction and up vectors accept any finite
+non-zero magnitude and are normalized internally.
+
+### `RenderWorld`
+
+```typescript
+export type RenderWorldAxis = '+x' | '-x' | '+y' | '-y' | '+z' | '-z';
+
+export type RenderWorld = {
+  readonly up?: RenderWorldAxis;
+  readonly forward?: RenderWorldAxis;
+  readonly unit?: 'meter' | 'millimeter';
+};
+```
+
+Declares the coordinate frame used by camera, section, world-light, axes, and
+scale-bar values without changing the submitted GLB. Defaults are glTF `+Y`
+up, `+Z` forward, and metres. Up and forward must name distinct axes and form a
+right-handed frame. The setting is shared by every view in a batch.
 
 ### `RenderPrimitiveReference`
 
@@ -288,7 +306,7 @@ the referenced subject is tightened without changing visible geometry.
 export type RenderImageOptions = RenderImageSharedOptions & RenderCameraOptions;
 ```
 
-`RenderImageSharedOptions` and `RenderLabelOptions` are internal composition
+`RenderImageSharedOptions` and `RenderCameraOptions` are internal composition
 types; the table is the complete consumer-visible shape.
 
 <auto-type-table path="./props.ts" name="RenderImageOptions" caption="RenderImageOptions properties" />
@@ -363,7 +381,7 @@ field in use.
 
 A rig replaces the studio lights outright and inherits every other studio
 value it leaves out. Directions are view-space by default (`+x` right, `+y` up,
-`+z` toward the viewer); `space: 'world'` authors them in glTF coordinates.
+`+z` toward the viewer); `space: 'world'` uses the declared caller world.
 
 <auto-type-table path="./props.ts" name="RenderLightingRig" caption="RenderLightingRig properties" />
 

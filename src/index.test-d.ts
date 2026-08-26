@@ -42,6 +42,14 @@ const glb = new Uint8Array([1, 2, 3]);
 
 const vector: renderModule.RenderVector3 = [1, 2, 3];
 expectTypeOf(vector).toEqualTypeOf<readonly [number, number, number]>();
+const world = {
+  up: '+z',
+  forward: '-y',
+  unit: 'millimeter',
+} as const satisfies renderModule.RenderWorld;
+expectTypeOf(world.up).toEqualTypeOf<'+z'>();
+expectTypeOf<renderModule.RenderWorldAxis>().toEqualTypeOf<'+x' | '-x' | '+y' | '-y' | '+z' | '-z'>();
+void renderImage(glb, { format: 'png', world });
 // @ts-expect-error the unreleased camera-specific tuple name was consolidated
 expectTypeOf<renderModule.CameraVector>();
 
@@ -181,6 +189,21 @@ void renderImages(glb, {
       id: 'front',
       // @ts-expect-error axes is shared, not per view
       axes: true,
+    },
+  ],
+});
+void renderImages(glb, {
+  format: 'png',
+  world,
+  views: [{ id: 'front' }],
+});
+void renderImages(glb, {
+  format: 'png',
+  views: [
+    {
+      id: 'front',
+      // @ts-expect-error world is shared, not per view
+      world,
     },
   ],
 });

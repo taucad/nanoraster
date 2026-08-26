@@ -135,6 +135,76 @@ const explicitPresentationDefaults = await native.renderImage(
 if (!presented.equals(explicitPresentationDefaults)) {
   throw new Error('omitted presentation options differ from their explicit defaults');
 }
+const explicitGlTfWorld = await native.renderImage(
+  cubeGlb,
+  JSON.stringify({ ...presentationCommon, world: { up: '+y', forward: '+z', unit: 'meter' } }),
+);
+if (!presented.equals(explicitGlTfWorld)) {
+  throw new Error('omitted world differs from explicit glTF defaults');
+}
+
+const worldParityCommon = {
+  width: 192,
+  height: 192,
+  format: 'raw',
+  background: [0.1411764705882353, 0.1411764705882353, 0.1411764705882353, 1],
+  camera: {
+    framing: 'fixed',
+    position: [0, 4, 0],
+    target: [0, 0, 0],
+    up: [0, 0, -1],
+    projection: { kind: 'orthographic', verticalSpan: 2 },
+    clipping: { near: 0.1, far: 100 },
+  },
+  sections: { planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }] },
+  lighting: {
+    lights: [{ direction: [0, 1, 0], color: [3, 3, 3] }],
+    space: 'world',
+  },
+};
+const tauWorldParityCommon = {
+  ...worldParityCommon,
+  world: { up: '+z', forward: '-y', unit: 'millimeter' },
+  camera: {
+    framing: 'fixed',
+    position: [0, 0, 4000],
+    target: [0, 0, 0],
+    up: [0, 1, 0],
+    projection: { kind: 'orthographic', verticalSpan: 2000 },
+    clipping: { near: 100, far: 100_000 },
+  },
+  sections: { planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }] },
+  lighting: {
+    lights: [{ direction: [0, 0, 1], color: [3, 3, 3] }],
+    space: 'world',
+  },
+};
+const glTfWorldFrame = await native.renderImage(cubeGlb, JSON.stringify(worldParityCommon));
+const tauWorldFrame = await native.renderImage(cubeGlb, JSON.stringify(tauWorldParityCommon));
+if (!glTfWorldFrame.equals(tauWorldFrame)) {
+  throw new Error('Tau caller-world request differs from hand-converted glTF-space pixels');
+}
+
+const glTfAxesFrame = await native.renderImage(cubeGlb, JSON.stringify({ ...worldParityCommon, axes: true }));
+const tauAxesFrame = await native.renderImage(
+  cubeGlb,
+  JSON.stringify({ ...tauWorldParityCommon, axes: true }),
+);
+if (glTfAxesFrame.equals(tauAxesFrame)) {
+  throw new Error('caller-world axes presentation did not change');
+}
+const axesInset = Math.max(Math.round(Math.min(worldParityCommon.width, worldParityCommon.height) * 0.03), 1);
+const axesSide = Math.max(Math.round(Math.min(worldParityCommon.width, worldParityCommon.height) * 0.18), 16);
+const axesStart = worldParityCommon.width - axesInset - axesSide;
+for (let y = 0; y < worldParityCommon.height; y += 1) {
+  for (let x = 0; x < worldParityCommon.width; x += 1) {
+    if (x >= axesStart && y >= axesStart) continue;
+    const offset = (y * worldParityCommon.width + x) * 4;
+    if (!glTfAxesFrame.subarray(offset, offset + 4).equals(tauAxesFrame.subarray(offset, offset + 4))) {
+      throw new Error(`caller-world axes changed a pixel outside the axes overlay at ${x},${y}`);
+    }
+  }
+}
 const noSurfaces = await native.renderImage(
   cubeGlb,
   JSON.stringify({ ...presentationCommon, surfaces: false }),

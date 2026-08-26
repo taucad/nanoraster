@@ -69,6 +69,38 @@ describe('image request serialization', () => {
     });
   });
 
+  it('should validate and serialize one shared caller world', () => {
+    const world = { up: '+z', forward: '-y', unit: 'millimeter' } as const;
+    expect(parse(toImageRequestJson({ format: 'png', world }))).toEqual({ format: 'png', world });
+    expect(parse(toImagesRequestJson({ format: 'png', world, views: [{ id: 'front' }] }))).toEqual({
+      format: 'png',
+      world,
+      views: [{ id: 'front' }],
+    });
+  });
+
+  it('should reject invalid, left-handed, and per-view worlds', () => {
+    const invalid: readonly (readonly [unknown, string])[] = [
+      [null, 'world must be an object'],
+      [{ north: '+z' }, 'world contains unknown property "north"'],
+      [{ up: 'z' }, 'world.up must be +x or -x or +y or -y or +z or -z'],
+      [{ forward: '+x', unit: 'inch' }, 'world.unit must be meter or millimeter'],
+      [{ up: '+z' }, 'world.up and world.forward must name different axes'],
+      [{ up: '+z', forward: '+y' }, 'world.up and world.forward must define a right-handed frame'],
+    ];
+    for (const [world, message] of invalid) {
+      expect(() => toImageRequestJson({ format: 'png', world } as unknown as RenderImageOptions)).toThrow(
+        message,
+      );
+    }
+    expect(() =>
+      toImagesRequestJson({
+        format: 'png',
+        views: [{ id: 'front', world: { up: '+y', forward: '+z' } }],
+      } as unknown as RenderImagesOptions),
+    ).toThrow('views[0].world is not allowed; world is shared by every view');
+  });
+
   it('should reject invalid presentation state at its exact path', () => {
     const invalid: readonly (readonly [Record<string, unknown>, string])[] = [
       [{ surfaces: 'yes' }, 'surfaces must be a boolean'],

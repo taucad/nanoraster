@@ -25,7 +25,7 @@ pub use bench::{bench_encodes, bench_multi_view, codec_conformance};
 pub use encode::{ImageFormat, encode, encode_jpeg, encode_png, encode_webp};
 pub use options::{
     CameraRequest, CreateRendererRequest, LightRequest, LightingRequest, LightingRigRequest,
-    RenderImagesRequest, RenderRequest, RenderView,
+    RenderImagesRequest, RenderRequest, RenderView, WorldRequest,
 };
 pub use render::{Rendered, Renderer};
 
@@ -257,6 +257,8 @@ pub struct RenderOptions {
     /// Direct lights, ambient, environment and exposure. Defaults to
     /// [`ResolvedLighting::studio`].
     pub lighting: ResolvedLighting,
+    /// Caller +X/+Y/+Z basis vectors expressed in glTF world coordinates.
+    pub world_axes: [[f32; 3]; 3],
 }
 
 impl Default for RenderOptions {
@@ -275,6 +277,7 @@ impl Default for RenderOptions {
             axes: false,
             scale_bar: false,
             lighting: ResolvedLighting::studio(),
+            world_axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         }
     }
 }
@@ -999,6 +1002,10 @@ mod tests {
         assert_eq!(options.lighting.exposure, 1.0);
         assert!(options.lighting.environment);
         assert_eq!(options.lighting.space, LightingSpace::View);
+        assert_eq!(
+            options.world_axes,
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        );
         assert_eq!(LightingSpace::default(), LightingSpace::View);
         assert_eq!(Projection::default(), Projection::Perspective);
     }

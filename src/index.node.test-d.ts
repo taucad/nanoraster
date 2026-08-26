@@ -13,6 +13,7 @@ expectTypeOf(nodeModule.describeAdapter).toEqualTypeOf<typeof universalModule.de
 expectTypeOf(nodeModule.RenderError).toEqualTypeOf<typeof universalModule.RenderError>();
 expectTypeOf<nodeModule.RenderImageOptions>().toEqualTypeOf<universalModule.RenderImageOptions>();
 expectTypeOf<nodeModule.RenderImagesOptions>().toEqualTypeOf<universalModule.RenderImagesOptions>();
+expectTypeOf<nodeModule.RenderWorld>().toEqualTypeOf<universalModule.RenderWorld>();
 expectTypeOf<nodeModule.RenderedImageFile>().toEqualTypeOf<universalModule.RenderedImageFile>();
 expectTypeOf<nodeModule.AdapterInfo>().toEqualTypeOf<universalModule.AdapterInfo>();
 expectTypeOf<nodeModule.Renderer>().toEqualTypeOf<universalModule.Renderer>();
