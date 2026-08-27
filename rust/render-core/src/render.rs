@@ -347,10 +347,8 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
                 } => fitted_perspective_pose(
                     scene,
                     center,
-                    direction,
-                    up,
-                    vertical_field_of_view_deg.to_radians(),
-                    aspect,
+                    (direction, up),
+                    (vertical_field_of_view_deg.to_radians(), aspect),
                     *padding_factor,
                     radius,
                 ),
@@ -462,10 +460,8 @@ fn camera_basis(direction: Vec3, up: Vec3) -> (Vec3, Vec3) {
 fn fitted_perspective_pose(
     scene: &glb::Scene,
     center: Vec3,
-    direction: Vec3,
-    requested_up: Vec3,
-    fov: f32,
-    aspect: f32,
+    (direction, requested_up): (Vec3, Vec3),
+    (fov, aspect): (f32, f32),
     padding: f32,
     radius: f32,
 ) -> (Vec3, Vec3) {
