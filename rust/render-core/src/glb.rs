@@ -126,15 +126,14 @@ fn decode_mesh(mesh: gltf::Mesh<'_>, bin: &[u8]) -> Result<MeshAsset, String> {
         } else if mode == MODE_TRIANGLES {
             return Err("TRIANGLES primitive missing NORMAL".into());
         }
-        if let Some(accessor) = primitive.indices() {
-            if accessor.dimensions() != Dimensions::Scalar
+        if let Some(accessor) = primitive.indices()
+            && (accessor.dimensions() != Dimensions::Scalar
                 || !matches!(
                     accessor.data_type(),
                     DataType::U8 | DataType::U16 | DataType::U32
-                )
-            {
-                return Err("indices must be unsigned SCALAR values".into());
-            }
+                ))
+        {
+            return Err("indices must be unsigned SCALAR values".into());
         }
 
         let reader = primitive.reader(|buffer| (buffer.index() == 0).then_some(bin));
@@ -163,7 +162,7 @@ fn decode_mesh(mesh: gltf::Mesh<'_>, bin: &[u8]) -> Result<MeshAsset, String> {
             |values| values.into_u32().collect(),
         );
         let cardinality = if mode == MODE_TRIANGLES { 3 } else { 2 };
-        if indices.len() % cardinality != 0 {
+        if !indices.len().is_multiple_of(cardinality) {
             return Err(format!(
                 "{} index count must be divisible by {cardinality}",
                 if mode == MODE_TRIANGLES {
@@ -336,7 +335,7 @@ mod tests {
         let offset = bin.len();
         bin.extend_from_slice(bytes);
         let length = bytes.len();
-        while bin.len() % 4 != 0 {
+        while !bin.len().is_multiple_of(4) {
             bin.push(0);
         }
         (offset, length)

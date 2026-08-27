@@ -2,9 +2,10 @@
 // `scripts/inspect-native.mjs` without a sixteen-target build.
 //
 // Every constant below is REAL output captured on 2026-08-22 from the tool
-// versions the repository pins (rustup 1.88.0 `llvm-tools-preview`, LLVM
-// 20.1.5). Only the leading `File:` path was rewritten to the assembly-time
-// path so the fixtures read like an inspection run.
+// versions the repository pinned when the fixture was captured (rustup 1.88.0
+// `llvm-tools-preview`, LLVM 20.1.5). Only the leading `File:` path was
+// rewritten to the assembly-time path so the fixtures read like an inspection
+// run.
 //
 // Provenance of the inspected binaries:
 //   - Mach-O arm64: the real addon from `pnpm run build:napi` on this host.

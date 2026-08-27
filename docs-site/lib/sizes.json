@@ -1,18 +1,31 @@
 {
-  "version": "0.3.0",
-  "measuredAt": "2026-08-21T22:47:51.725Z",
+  "version": "0.4.1",
+  "measuredAt": "2026-08-27T02:12:17.639Z",
   "wasm": {
-    "raw": 857495,
-    "gzip": 344892,
-    "brotli": 276011
+    "raw": 751242,
+    "gzip": 307368,
+    "brotli": 248959
   },
   "js": {
     "raw": 1193,
-    "gzip": 385
+    "gzip": 387
   },
   "native": {
-    "darwin-arm64": 4445413,
-    "linux-x64-gnu": 5456214,
-    "win32-x64-msvc": 7046994
+    "android-arm-eabi": 3571292,
+    "android-arm64": 4967788,
+    "darwin-arm64": 4629206,
+    "darwin-x64": 4921899,
+    "freebsd-x64": 5620171,
+    "linux-arm-gnueabihf": 4983816,
+    "linux-arm-musleabihf": 5011093,
+    "linux-arm64-gnu": 4956851,
+    "linux-arm64-musl": 4965071,
+    "linux-ppc64-gnu": 6046383,
+    "linux-s390x-gnu": 6247097,
+    "linux-x64-gnu": 5649192,
+    "linux-x64-musl": 5666044,
+    "win32-arm64-msvc": 6272456,
+    "win32-ia32-msvc": 6708160,
+    "win32-x64-msvc": 7246269
   }
 }

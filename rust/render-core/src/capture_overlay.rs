@@ -938,11 +938,9 @@ fn composite_coverage(rendered: &mut Rendered, coverage: &[u8], rect: Rect, colo
                     * destination_alpha
                     * (255 - source_alpha)
                     / 255;
-                rendered.rgba[index + channel] = if output_alpha == 0 {
-                    0
-                } else {
-                    ((source + destination + output_alpha / 2) / output_alpha) as u8
-                };
+                rendered.rgba[index + channel] = (source + destination + output_alpha / 2)
+                    .checked_div(output_alpha)
+                    .unwrap_or_default() as u8;
             }
             rendered.rgba[index + 3] = output_alpha as u8;
         }
@@ -1487,7 +1485,9 @@ mod tests {
         );
         assert!(
             text.rgba
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .any(|pixel| pixel[3] > 0 && pixel[3] < 255)
         );
         assert_eq!(hash(&first.rgba), 2_172_587_291_750_748_294);

@@ -259,7 +259,9 @@ mod tests {
         let mut pixels = vec![0u8; decoder.output_buffer_size().expect("size")];
         decoder.read_image(&mut pixels).expect("decode");
         let worst_drift = pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|pixel| {
                 pixel[..3]
                     .iter()
