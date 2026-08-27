@@ -1,18 +1,20 @@
 ---
 title: Frame the model
-description: Choose a fitted camera direction, screen-up vector, projection, and margin while nanoraster solves placement from the model bounds.
+description: Choose a fitted camera direction, screen-up vector, projection, and margin while nanoraster solves placement from referenced geometry.
 ---
 
-A fitted camera chooses an orientation while nanoraster solves the target,
-distance, magnification, and clip planes from the model bounds. Use it for
-thumbnails, contact sheets, and any capture that must keep the whole subject in
-frame.
+A fitted camera chooses an orientation while nanoraster solves the optical
+target, distance, and clip planes from indexed geometry that can be drawn. Use
+it for thumbnails, contact sheets, and any capture that must keep the whole
+subject in frame.
 
 ## Set direction and screen up
 
-`direction` points from the bounds centre toward the camera. `up` establishes
-screen vertical and preserves roll. Both are Cartesian vectors in the GLB's
-world frame; their magnitudes are ignored, and they must not be collinear.
+`direction` points from the subject toward the camera. `up` establishes screen
+vertical and preserves roll. Both are Cartesian vectors in the GLB's world
+frame; their magnitudes are ignored, and they must not be collinear. Fitting
+may translate the camera and optical target together to balance the subject's
+angular envelope without changing that orientation.
 
 <RenderDemo>
 
@@ -36,8 +38,9 @@ screen-up such as `[0, 0, 1]`.
 
 ## Choose the fitted projection
 
-Perspective is the default. Its `verticalFieldOfView` is in degrees. An
-orthographic fit uses the same bounds and margin but removes depth scaling.
+Perspective is the default. Its `verticalFieldOfView` is the exact rectilinear
+angle in degrees. An orthographic fit uses the same referenced geometry and
+margin but removes depth scaling.
 
 ```typescript
 const perspective = {
@@ -59,8 +62,8 @@ Use a [fixed camera](place-the-camera) when a caller must own magnification.
 
 ## Set the empty border
 
-`camera.margin` is the empty fraction around the fitted subject, from `0` to
-`0.5`; the default is `0.1`.
+`camera.margin` is the minimum empty fraction around contained fitted geometry,
+from `0` to `0.5`; the default is `0.1`.
 
 ```typescript
 const image = await renderImage(glb, {
@@ -71,7 +74,18 @@ const image = await renderImage(glb, {
 
 Fitting uses `width / height`, so set the output size before tuning the margin.
 Annotations may loosen a fitted camera to keep the model clear of their fixed
-screen-space slots. A fixed camera is never changed by annotations.
+screen-space slots, and the non-limiting image axis may have more whitespace.
+A fixed camera is never changed by annotations.
+
+### Very wide perspective
+
+The supported `1..179` degree range is rectilinear: 90 degrees is ordinary,
+while values approaching 180 compress most forward rays toward the image
+centre. Nanoraster keeps every referenced point in front of the eye and inside
+the frame, so a deep subject may gain extra whitespace once positive front
+clearance becomes stricter than the requested minimum margin. Use a narrower
+field of view for photographic framing; a fisheye would be a different
+projection model.
 
 ## Batch views
 

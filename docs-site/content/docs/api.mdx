@@ -204,8 +204,9 @@ normalized internally.
 ### `RenderCamera`
 
 The tagged camera contract. A fit camera supplies orientation and lets
-nanoraster solve framing; a fixed camera preserves caller-owned pose and
-projection.
+nanoraster solve a geometry-tight optical target, distance, and clipping; a
+fixed camera preserves caller-owned pose and projection. Perspective is a
+rectilinear projection whose requested field of view is preserved exactly.
 
 ```typescript
 export type RenderCamera =
@@ -231,9 +232,11 @@ export type RenderCamera =
 ```
 
 Defaults are fit direction `[0.6123724357, 0.5, 0.6123724357]`, up `[0, 1, 0]`,
-margin `0.1`, and perspective field of view `45` with zoom `1`. A fixed camera
+minimum margin `0.1`, and perspective field of view `45` with zoom `1`.
+`direction` fixes orientation from the subject toward the camera; fitting may
+translate the optical axis to balance the projected geometry. A fixed camera
 requires non-coincident position/target and a non-collinear up vector. Omitted
-clipping derives safe planes from the bounds.
+clipping derives safe planes from referenced geometry.
 
 ### `RenderImageOptions`
 
@@ -496,7 +499,7 @@ import them rather than restating them, so caller-side checks cannot drift.
 | ------------------------------------- | ----------------------------------------- | --------------------------- | --------------------------- |
 | `renderImageDimensionRange`           | `readonly [16, 4096]`                     | pixels                      | `width`, `height`           |
 | `renderImageQualityRange`             | `readonly [0, 1]`                         | normalised encoder quality  | `quality`                   |
-| `renderImageMarginRange`              | `readonly [0, 0.5]`                       | fraction of fitted extent   | `camera.margin`             |
+| `renderImageMarginRange`              | `readonly [0, 0.5]`                       | minimum empty fraction      | `camera.margin`             |
 | `renderImageVerticalFieldOfViewRange` | `readonly [1, 179]`                       | degrees                     | `verticalFieldOfView`       |
 | `renderImageZoomRange`                | `readonly [0.01, 100]`                    | magnification               | `zoom`                      |
 | `renderImageLineWidthRange`           | `readonly [0.25, 16]`                     | output pixels               | `lineWidth`                 |
@@ -524,7 +527,7 @@ Inclusive pixel bounds for both image dimensions.
 
 ### `renderImageMarginRange`
 
-Inclusive corner-fit margin bounds.
+Inclusive minimum fitted-margin bounds.
 
 ### `renderImageVerticalFieldOfViewRange`
 

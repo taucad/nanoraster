@@ -62,9 +62,9 @@ test('wasm shell renders a deterministic 192x192 PNG', async () => {
   expect(png.byteLength).toBeGreaterThan(1_000);
 });
 
-test('fitted perspective keeps field of view effective above sixty degrees', async () => {
-  const renderAt = (verticalFieldOfView) =>
-    render_image(
+test('fitted perspective keeps the gear contained and legible through wide fields of view', async () => {
+  const boundsAt = async (verticalFieldOfView) => {
+    const bytes = await render_image(
       glb,
       JSON.stringify({
         width: 192,
@@ -72,13 +72,63 @@ test('fitted perspective keeps field of view effective above sixty degrees', asy
         format: 'raw',
         camera: {
           framing: 'fit',
-          direction: [0.6123724357, 0.5, 0.6123724357],
+          direction: [1.2, -1.7, 4.2],
+          margin: 0.1,
           projection: { kind: 'perspective', verticalFieldOfView },
         },
       }),
     );
+    let minX = 192;
+    let minY = 192;
+    let maxX = -1;
+    let maxY = -1;
+    for (let pixel = 0; pixel < 192 * 192; pixel += 1) {
+      if (bytes[pixel * 4 + 3] === 0) continue;
+      const x = pixel % 192;
+      const y = Math.floor(pixel / 192);
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+    expect(maxX, `${verticalFieldOfView}° must contain subject pixels`).toBeGreaterThanOrEqual(0);
+    return {
+      minX,
+      minY,
+      maxX,
+      maxY,
+      width: maxX - minX + 1,
+      height: maxY - minY + 1,
+    };
+  };
 
-  expect(await renderAt(120)).not.toEqual(await renderAt(60));
+  const bounds = new Map();
+  for (const fieldOfView of [22, 79, 90, 120, 143, 160, 179]) {
+    bounds.set(fieldOfView, await boundsAt(fieldOfView));
+  }
+
+  expect(Math.max(bounds.get(143).width, bounds.get(143).height)).toBeGreaterThanOrEqual(
+    Math.max(bounds.get(79).width, bounds.get(79).height) * 0.85,
+  );
+  for (const fieldOfView of [22, 79, 90, 120, 143, 160]) {
+    const frame = bounds.get(fieldOfView);
+    const longest = Math.max(frame.width, frame.height) / 192;
+    const shortest = Math.min(frame.width, frame.height) / 192;
+    expect(longest, `${fieldOfView}° longest alpha span`).toBeGreaterThanOrEqual(0.82);
+    expect(longest, `${fieldOfView}° longest alpha span`).toBeLessThanOrEqual(0.96);
+    expect(shortest, `${fieldOfView}° shortest alpha span`).toBeGreaterThanOrEqual(0.6);
+    expect(frame.minX, `${fieldOfView}° left border`).toBeGreaterThan(0);
+    expect(frame.minY, `${fieldOfView}° top border`).toBeGreaterThan(0);
+    expect(frame.maxX, `${fieldOfView}° right border`).toBeLessThan(191);
+    expect(frame.maxY, `${fieldOfView}° bottom border`).toBeLessThan(191);
+    expect(Math.abs((frame.minX + frame.maxX) / 2 - 95.5)).toBeLessThanOrEqual(192 * 0.06);
+    expect(Math.abs((frame.minY + frame.maxY) / 2 - 95.5)).toBeLessThanOrEqual(192 * 0.06);
+  }
+  const extreme = bounds.get(179);
+  expect(extreme.minX).toBeGreaterThan(0);
+  expect(extreme.minY).toBeGreaterThan(0);
+  expect(extreme.maxX).toBeLessThan(191);
+  expect(extreme.maxY).toBeLessThan(191);
 });
 
 test('a warm renderer produces byte-identical output and disposes cleanly', async () => {

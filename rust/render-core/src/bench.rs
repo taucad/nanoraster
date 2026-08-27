@@ -82,9 +82,31 @@ pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
         width,
         height,
     };
+    // Keep codec fingerprints independent of fitted-camera changes: a centred
+    // horizontal line preserves the established centre-plane scale without
+    // intersecting any annotation slot.
+    let horizontal_tangent = 22.5_f32.to_radians().tan() * 0.9 * width as f32 / height as f32;
+    let extent = 4.944_608_7 * horizontal_tangent;
+    let axis = std::f32::consts::FRAC_1_SQRT_2 * extent;
     let scene = crate::glb::Scene {
-        meshes: Vec::new(),
-        instances: Vec::new(),
+        meshes: vec![crate::glb::MeshAsset {
+            primitives: vec![crate::glb::Primitive {
+                mode: crate::glb::MODE_LINES,
+                positions: vec![-axis, 0.0, axis, axis, 0.0, -axis],
+                normals: Vec::new(),
+                indices: vec![0, 1],
+                material: crate::glb::Material {
+                    base_color: [0.0, 0.0, 0.0, 1.0],
+                    metallic: 0.0,
+                    roughness: 1.0,
+                },
+            }],
+        }],
+        instances: vec![crate::glb::MeshInstance {
+            mesh_index: 0,
+            model: glam::Mat4::IDENTITY,
+            normal_matrix: glam::Mat4::IDENTITY,
+        }],
         bounds: None,
     };
     let mut report = serde_json::json!({

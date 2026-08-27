@@ -61,7 +61,7 @@ export type RenderLighting = 'studio' | RenderLightingRig;
 export type RenderVector3 = readonly [x: number, y: number, z: number];
 
 type RenderPerspectiveProjection = {
-  /** Perspective projection. */
+  /** Rectilinear perspective projection. */
   readonly kind: 'perspective';
   /** Vertical field of view in degrees, from 1 to 179. @default 45 */
   readonly verticalFieldOfView?: number;
@@ -72,7 +72,7 @@ type RenderPerspectiveProjection = {
 type RenderFitProjection =
   | Omit<RenderPerspectiveProjection, 'zoom'>
   | {
-      /** Orthographic projection fitted to the subject bounds. */
+      /** Orthographic projection fitted to referenced subject geometry. */
       readonly kind: 'orthographic';
     };
 
@@ -90,21 +90,21 @@ type RenderFixedProjection =
 /**
  * Camera framing for one image.
  *
- * Fitted framing points a camera at the subject bounds and solves distance,
- * clipping, and magnification. Fixed framing preserves the supplied pose and
- * projection exactly; annotations never reframe it.
+ * Fitted framing orients a camera toward referenced subject geometry and
+ * solves its optical target, distance, and clipping. Fixed framing preserves
+ * the supplied pose and projection exactly; annotations never reframe it.
  *
  * @public
  */
 export type RenderCamera =
   | {
-      /** Let nanoraster frame the subject bounds. */
+      /** Let nanoraster frame referenced subject geometry. */
       readonly framing: 'fit';
-      /** Direction from the bounds centre toward the camera. Magnitude is ignored. @default [0.6123724357, 0.5, 0.6123724357] */
+      /** Direction from the subject toward the camera; fit may translate the optical axis. Magnitude is ignored. @default [0.6123724357, 0.5, 0.6123724357] */
       readonly direction?: RenderVector3;
       /** Camera screen-up direction. Magnitude is ignored. @default [0, 1, 0] */
       readonly up?: RenderVector3;
-      /** Empty fraction around the fitted subject, from 0 to 0.5. @default 0.1 */
+      /** Minimum empty fraction around contained fitted geometry, from 0 to 0.5. Aspect, front clearance, or annotations may add whitespace. @default 0.1 */
       readonly margin?: number;
       /** Fitted perspective or orthographic projection. @default perspective with a 45° vertical field of view */
       readonly projection?: RenderFitProjection;
@@ -120,7 +120,7 @@ export type RenderCamera =
       readonly up: RenderVector3;
       /** Perspective or orthographic projection. @default perspective with a 45° vertical field of view and zoom 1 */
       readonly projection?: RenderFixedProjection;
-      /** Explicit positive clip distances. Omit to derive safe planes from the subject bounds. */
+      /** Explicit positive clip distances. Omit to derive safe planes from referenced subject geometry. */
       readonly clipping?: {
         readonly near: number;
         readonly far: number;
@@ -419,7 +419,7 @@ export const renderImageDimensionRange = [16, 4096] as const;
 /** Inclusive encoder-quality bounds. @public */
 export const renderImageQualityRange = [0, 1] as const;
 
-/** Inclusive corner-fit margin bounds. @public */
+/** Inclusive minimum fitted-margin bounds. @public */
 export const renderImageMarginRange = [0, 0.5] as const;
 
 /** Inclusive vertical field-of-view bounds in degrees. @public */

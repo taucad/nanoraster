@@ -1,7 +1,7 @@
 //! Deterministic screen-space capture annotations stamped into readback RGBA.
 
 use crate::glb::Scene;
-use crate::render::{CameraState, Rendered, aabb_corners, camera_state};
+use crate::render::{CameraState, Rendered, camera_state};
 use crate::{Projection, RenderError, RenderOptions};
 use glam::{Vec2, Vec3, Vec4};
 
@@ -296,16 +296,7 @@ fn overlay_safe_camera(
     if overlays.is_empty() {
         return Ok(camera);
     }
-    let Some((min, max)) = scene.bounds else {
-        return Ok(camera);
-    };
-    let envelope = projected_envelope(
-        camera,
-        min.into(),
-        max.into(),
-        options.width,
-        options.height,
-    )?;
+    let envelope = projected_envelope(scene, camera, options.width, options.height)?;
     let center = Vec2::new(options.width as f32 * 0.5, options.height as f32 * 0.5);
     // Keep one device pixel beyond the declared guard so floating-point
     // projection at the exact analytical boundary cannot fail the final
@@ -371,9 +362,8 @@ fn ratio(numerator: f32, denominator: f32) -> f32 {
 }
 
 fn projected_envelope(
+    scene: &Scene,
     camera: CameraState,
-    min: Vec3,
-    max: Vec3,
     width: u32,
     height: u32,
 ) -> Result<(f32, f32, f32, f32), RenderError> {
@@ -384,28 +374,42 @@ fn projected_envelope(
         f32::NEG_INFINITY,
         f32::NEG_INFINITY,
     );
-    for corner in aabb_corners(min, max) {
-        let clip = matrix * Vec4::new(corner.x, corner.y, corner.z, 1.0);
-        // Homogeneous W scales with world units; a small but normal value is
-        // valid for sub-millimetre scenes. Only zero/subnormal W cannot be
-        // divided safely.
-        if !clip.is_finite() || clip.w.abs() < f32::MIN_POSITIVE {
-            return Err(RenderError::Parse(
-                "non-finite projected scene bounds".into(),
-            ));
-        }
-        let ndc = clip.truncate() / clip.w;
-        if !ndc.is_finite() {
-            return Err(RenderError::Parse(
-                "non-finite projected scene bounds".into(),
-            ));
-        }
-        let x = (ndc.x * 0.5 + 0.5) * width as f32;
-        let y = (0.5 - ndc.y * 0.5) * height as f32;
-        bounds.0 = bounds.0.min(x);
-        bounds.1 = bounds.1.min(y);
-        bounds.2 = bounds.2.max(x);
-        bounds.3 = bounds.3.max(y);
+    let mut error = None;
+    let any = scene
+        .for_each_position(&mut |position| {
+            if error.is_some() {
+                return;
+            }
+            let clip = matrix * Vec4::new(position.x, position.y, position.z, 1.0);
+            // Homogeneous W scales with world units; a small but normal value is
+            // valid for sub-millimetre scenes. Only zero/subnormal W cannot be
+            // divided safely.
+            if !clip.is_finite() || clip.w.abs() < f32::MIN_POSITIVE {
+                error = Some(RenderError::Parse(
+                    "non-finite projected scene bounds".into(),
+                ));
+                return;
+            }
+            let ndc = clip.truncate() / clip.w;
+            if !ndc.is_finite() {
+                error = Some(RenderError::Parse(
+                    "non-finite projected scene bounds".into(),
+                ));
+                return;
+            }
+            let x = (ndc.x * 0.5 + 0.5) * width as f32;
+            let y = (0.5 - ndc.y * 0.5) * height as f32;
+            bounds.0 = bounds.0.min(x);
+            bounds.1 = bounds.1.min(y);
+            bounds.2 = bounds.2.max(x);
+            bounds.3 = bounds.3.max(y);
+        })
+        .map_err(RenderError::Parse)?;
+    if let Some(error) = error {
+        return Err(error);
+    }
+    if !any {
+        return Err(RenderError::Parse("scene has no projected geometry".into()));
     }
     Ok(bounds)
 }
@@ -966,9 +970,34 @@ mod tests {
     }
 
     fn bounded_scene(min: [f32; 3], max: [f32; 3]) -> Scene {
+        let positions = (0..8)
+            .flat_map(|index| {
+                [
+                    if index & 1 != 0 { max[0] } else { min[0] },
+                    if index & 2 != 0 { max[1] } else { min[1] },
+                    if index & 4 != 0 { max[2] } else { min[2] },
+                ]
+            })
+            .collect();
         Scene {
-            meshes: Vec::new(),
-            instances: Vec::new(),
+            meshes: vec![crate::glb::MeshAsset {
+                primitives: vec![crate::glb::Primitive {
+                    mode: crate::glb::MODE_LINES,
+                    positions,
+                    normals: Vec::new(),
+                    indices: (0..8).collect(),
+                    material: crate::glb::Material {
+                        base_color: [0.0, 0.0, 0.0, 1.0],
+                        metallic: 0.0,
+                        roughness: 1.0,
+                    },
+                }],
+            }],
+            instances: vec![crate::glb::MeshInstance {
+                mesh_index: 0,
+                model: Mat4::IDENTITY,
+                normal_matrix: Mat4::IDENTITY,
+            }],
             bounds: Some((min, max)),
         }
     }
@@ -1316,9 +1345,8 @@ mod tests {
         };
         let annotated = prepare_view(&scene(), &annotated_options).expect("annotated view");
         let envelope = projected_envelope(
+            &scene(),
             annotated.camera,
-            Vec3::splat(-1.0),
-            Vec3::splat(1.0),
             annotated_options.width,
             annotated_options.height,
         )
@@ -1333,6 +1361,25 @@ mod tests {
         {
             assert!(!intersects(envelope, rect, annotated.layout.guard as f32));
         }
+    }
+
+    #[test]
+    fn unreferenced_accessor_values_do_not_change_annotation_avoidance() {
+        let base = scene();
+        let mut with_unreferenced_outlier = scene();
+        with_unreferenced_outlier.meshes[0].primitives[0]
+            .positions
+            .extend_from_slice(&[10_000.0, 10_000.0, 10_000.0]);
+        let options = RenderOptions {
+            label: Some("Exact geometry".into()),
+            axes: true,
+            scale_bar: true,
+            ..fit_options([1.0, 2.0, 3.0], [0.0, 1.0, 0.0], Projection::Perspective)
+        };
+        let expected = prepare_view(&base, &options).expect("base view");
+        let actual = prepare_view(&with_unreferenced_outlier, &options).expect("outlier view");
+        assert_eq!(actual.camera.view, expected.camera.view);
+        assert_eq!(actual.camera.projection, expected.camera.projection);
     }
 
     #[test]
@@ -1396,15 +1443,9 @@ mod tests {
                         ..RenderOptions::default()
                     };
                     let prepared = prepare_view(&scene, &options).expect("canonical view");
-                    let (min, max) = scene.bounds.expect("fixture bounds");
-                    let envelope = projected_envelope(
-                        prepared.camera,
-                        min.into(),
-                        max.into(),
-                        options.width,
-                        options.height,
-                    )
-                    .expect("finite envelope");
+                    let envelope =
+                        projected_envelope(&scene, prepared.camera, options.width, options.height)
+                            .expect("finite envelope");
                     for rect in [
                         prepared.layout.label,
                         prepared.layout.scale,
@@ -1576,15 +1617,21 @@ mod tests {
         );
         assert!(
             prepare_view(
-                &Scene {
-                    meshes: Vec::new(),
-                    instances: Vec::new(),
-                    bounds: None,
-                },
+                &scene(),
                 &RenderOptions {
                     width: 16,
                     height: 16,
                     scale_bar: true,
+                    camera: RenderCamera::Fixed {
+                        position: [4.0, 3.0, 2.0],
+                        target: [0.0; 3],
+                        up: [0.0, 1.0, 0.0],
+                        projection: CameraProjection::Perspective {
+                            vertical_field_of_view_deg: 45.0,
+                            zoom: 1.0,
+                        },
+                        clipping: None,
+                    },
                     ..Default::default()
                 }
             )
@@ -1600,9 +1647,13 @@ mod tests {
             forward: Vec3::NEG_Z,
             target_depth: 0.0,
         };
-        assert!(
-            projected_envelope(zero_camera, Vec3::splat(-1.0), Vec3::splat(1.0), 100, 100).is_err()
-        );
+        let empty_scene = Scene {
+            meshes: Vec::new(),
+            instances: Vec::new(),
+            bounds: None,
+        };
+        assert!(projected_envelope(&empty_scene, zero_camera, 100, 100).is_err());
+        assert!(projected_envelope(&scene(), zero_camera, 100, 100).is_err());
         let overflow_camera = CameraState {
             projection: Mat4::from_cols(
                 Vec4::new(f32::MAX, 0.0, 0.0, 0.0),
@@ -1612,16 +1663,7 @@ mod tests {
             ),
             ..zero_camera
         };
-        assert!(
-            projected_envelope(
-                overflow_camera,
-                Vec3::splat(-1.0),
-                Vec3::splat(1.0),
-                100,
-                100,
-            )
-            .is_err()
-        );
+        assert!(projected_envelope(&scene(), overflow_camera, 100, 100,).is_err());
         assert!(
             meters_per_pixel(
                 zero_camera,

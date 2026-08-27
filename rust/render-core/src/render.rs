@@ -340,43 +340,33 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
         } => {
             let direction = Vec3::from(*direction).normalize();
             let up = Vec3::from(*up).normalize();
-            let distance = match projection {
+            let (eye, target) = match projection {
                 CameraProjection::Perspective {
                     vertical_field_of_view_deg,
                     ..
-                } => {
-                    let fov = vertical_field_of_view_deg.to_radians();
-                    let standard_fov = 60f32.to_radians();
-                    let model_distance =
-                        radius * 2.0 * ((standard_fov / 2.0).tan() / (fov / 2.0).tan());
-                    // Preserve established framing until a wide FoV needs the
-                    // exact outside-the-bounds distance to remain effective.
-                    model_distance.max(fitted_perspective_distance(FitDistanceInput {
-                        direction,
-                        up,
-                        center,
-                        min,
-                        max,
-                        fov,
-                        aspect,
-                        padding: *padding_factor,
-                        minimum: radius * 0.001,
-                    }))
-                }
+                } => fitted_perspective_pose(
+                    scene,
+                    center,
+                    direction,
+                    up,
+                    vertical_field_of_view_deg.to_radians(),
+                    aspect,
+                    *padding_factor,
+                    radius,
+                ),
                 CameraProjection::Orthographic { .. } => {
                     let fov = 45f32.to_radians();
                     let standard_fov = 60f32.to_radians();
-                    radius * 2.0 * ((standard_fov / 2.0).tan() / (fov / 2.0).tan())
+                    let distance = radius * 2.0 * ((standard_fov / 2.0).tan() / (fov / 2.0).tan());
+                    fitted_orthographic_pose(scene, center, direction, up, distance)
                 }
             };
-            let offset = direction * distance;
-            let eye = center + offset;
-            let view = glam::camera::rh::view::look_at_mat4(eye, center, up);
-            let (near, far) = bounds_clip_planes(view, min, max, distance);
+            let view = glam::camera::rh::view::look_at_mat4(eye, target, up);
+            let (near, far) = position_clip_planes(scene, view, (eye - target).length());
             let projection = match projection {
                 CameraProjection::Orthographic { .. } => {
                     let (half_width, half_height) =
-                        orthographic_half_extents(view, min, max, aspect, *padding_factor);
+                        orthographic_half_extents(scene, view, aspect, *padding_factor, radius);
                     glam::camera::rh::proj::directx::orthographic(
                         -half_width,
                         half_width,
@@ -389,29 +379,17 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
                 CameraProjection::Perspective {
                     vertical_field_of_view_deg,
                     ..
-                } => {
-                    let fov = vertical_field_of_view_deg.to_radians();
-                    let mut projection =
-                        glam::camera::rh::proj::directx::perspective(fov, aspect, near, far);
-                    let zoom = fit_zoom(FitZoomInput {
-                        eye,
-                        target: center,
-                        min,
-                        max,
-                        fov,
-                        aspect,
-                        padding: *padding_factor,
-                        up,
-                    });
-                    projection.x_axis.x *= zoom;
-                    projection.y_axis.y *= zoom;
-                    projection
-                }
+                } => glam::camera::rh::proj::directx::perspective(
+                    vertical_field_of_view_deg.to_radians(),
+                    aspect,
+                    near,
+                    far,
+                ),
             };
             CameraState {
                 projection,
                 view,
-                forward: (center - eye).normalize_or_zero(),
+                forward: (target - eye).normalize_or_zero(),
                 target_depth: -view.transform_point3(center).z,
             }
         }
@@ -426,7 +404,7 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
             let target = Vec3::from(*target);
             let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::from(*up));
             let (near, far) = clipping.map_or_else(
-                || bounds_clip_planes(view, min, max, (eye - target).length()),
+                || position_clip_planes(scene, view, (eye - target).length()),
                 |planes| (planes.near, planes.far),
             );
             let projection = match projection {
@@ -468,16 +446,94 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
     }
 }
 
-fn bounds_clip_planes(view: Mat4, min: Vec3, max: Vec3, fallback_depth: f32) -> (f32, f32) {
+fn for_each_camera_position(scene: &glb::Scene, mut visit: impl FnMut(Vec3)) {
+    let any = scene
+        .for_each_position(&mut visit)
+        .expect("parsed draw positions remain finite");
+    debug_assert!(any, "camera preparation requires validated draw geometry");
+}
+
+fn camera_basis(direction: Vec3, up: Vec3) -> (Vec3, Vec3) {
+    let forward = -direction;
+    let right = forward.cross(up).normalize();
+    (right, right.cross(forward).normalize())
+}
+
+fn fitted_perspective_pose(
+    scene: &glb::Scene,
+    center: Vec3,
+    direction: Vec3,
+    requested_up: Vec3,
+    fov: f32,
+    aspect: f32,
+    padding: f32,
+    radius: f32,
+) -> (Vec3, Vec3) {
+    let (right, up) = camera_basis(direction, requested_up);
+    let vertical_tangent = (fov * 0.5).tan() * padding.max(0.001);
+    let horizontal_tangent = vertical_tangent * aspect;
+    let mut max_x_plus = f32::NEG_INFINITY;
+    let mut min_x_minus = f32::INFINITY;
+    let mut max_y_plus = f32::NEG_INFINITY;
+    let mut min_y_minus = f32::INFINITY;
+    let mut max_z = f32::NEG_INFINITY;
+    for_each_camera_position(scene, |position| {
+        let offset = position - center;
+        let x = offset.dot(right);
+        let y = offset.dot(up);
+        let z = offset.dot(direction);
+        max_x_plus = max_x_plus.max(x + horizontal_tangent * z);
+        min_x_minus = min_x_minus.min(x - horizontal_tangent * z);
+        max_y_plus = max_y_plus.max(y + vertical_tangent * z);
+        min_y_minus = min_y_minus.min(y - vertical_tangent * z);
+        max_z = max_z.max(z);
+    });
+    let distance_x = (max_x_plus - min_x_minus) / (2.0 * horizontal_tangent);
+    let distance_y = (max_y_plus - min_y_minus) / (2.0 * vertical_tangent);
+    let distance = distance_x
+        .max(distance_y)
+        .max(max_z + (radius * 0.001).max(f32::MIN_POSITIVE));
+    let shift_x = (max_x_plus + min_x_minus) * 0.5;
+    let shift_y = (max_y_plus + min_y_minus) * 0.5;
+    let target = center + right * shift_x + up * shift_y;
+    (target + direction * distance, target)
+}
+
+fn fitted_orthographic_pose(
+    scene: &glb::Scene,
+    center: Vec3,
+    direction: Vec3,
+    requested_up: Vec3,
+    distance: f32,
+) -> (Vec3, Vec3) {
+    let (right, up) = camera_basis(direction, requested_up);
+    let mut min_x = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for_each_camera_position(scene, |position| {
+        let offset = position - center;
+        let x = offset.dot(right);
+        let y = offset.dot(up);
+        min_x = min_x.min(x);
+        max_x = max_x.max(x);
+        min_y = min_y.min(y);
+        max_y = max_y.max(y);
+    });
+    let target = center + right * ((min_x + max_x) * 0.5) + up * ((min_y + max_y) * 0.5);
+    (target + direction * distance, target)
+}
+
+fn position_clip_planes(scene: &glb::Scene, view: Mat4, fallback_depth: f32) -> (f32, f32) {
     let mut nearest = f32::INFINITY;
     let mut farthest = 0.0_f32;
-    for corner in aabb_corners(min, max) {
-        let depth = -view.transform_point3(corner).z;
+    for_each_camera_position(scene, |position| {
+        let depth = -view.transform_point3(position).z;
         if depth > 0.0 {
             nearest = nearest.min(depth);
             farthest = farthest.max(depth);
         }
-    }
+    });
     if farthest <= 0.0 {
         let depth = fallback_depth.max(1.0);
         return (depth * 0.001, depth * 2.0);
@@ -487,112 +543,29 @@ fn bounds_clip_planes(view: Mat4, min: Vec3, max: Vec3, fallback_depth: f32) -> 
 }
 
 fn orthographic_half_extents(
+    scene: &glb::Scene,
     view: Mat4,
-    min: Vec3,
-    max: Vec3,
     aspect: f32,
     padding: f32,
+    radius: f32,
 ) -> (f32, f32) {
     let mut max_x = 0.0_f32;
     let mut max_y = 0.0_f32;
-    for corner in aabb_corners(min, max) {
-        let camera = view.transform_point3(corner);
+    for_each_camera_position(scene, |position| {
+        let camera = view.transform_point3(position);
         max_x = max_x.max(camera.x.abs());
         max_y = max_y.max(camera.y.abs());
-    }
+    });
     let safe_padding = padding.max(0.001);
-    let mut half_width = (max_x / safe_padding).max(0.001);
-    let mut half_height = (max_y / safe_padding).max(0.001);
+    let minimum = (radius * 0.001).max(f32::MIN_POSITIVE);
+    let mut half_width = (max_x / safe_padding).max(minimum);
+    let mut half_height = (max_y / safe_padding).max(minimum);
     if half_width / half_height < aspect {
         half_width = half_height * aspect;
     } else {
         half_height = half_width / aspect;
     }
     (half_width, half_height)
-}
-
-pub(crate) fn aabb_corners(min: Vec3, max: Vec3) -> [Vec3; 8] {
-    std::array::from_fn(|index| {
-        Vec3::new(
-            if index & 1 != 0 { max.x } else { min.x },
-            if index & 2 != 0 { max.y } else { min.y },
-            if index & 4 != 0 { max.z } else { min.z },
-        )
-    })
-}
-
-#[derive(Clone, Copy)]
-struct FitDistanceInput {
-    direction: Vec3,
-    up: Vec3,
-    center: Vec3,
-    min: Vec3,
-    max: Vec3,
-    fov: f32,
-    aspect: f32,
-    padding: f32,
-    minimum: f32,
-}
-
-fn fitted_perspective_distance(input: FitDistanceInput) -> f32 {
-    let FitDistanceInput {
-        direction,
-        up,
-        center,
-        min,
-        max,
-        fov,
-        aspect,
-        padding,
-        minimum,
-    } = input;
-    let forward = -direction;
-    let right = forward.cross(up).normalize();
-    let up = right.cross(forward).normalize();
-    let vertical_tangent = (fov * 0.5).tan() * padding;
-    let horizontal_tangent = vertical_tangent * aspect;
-    let mut distance = minimum;
-    for corner in aabb_corners(min, max) {
-        let offset = corner - center;
-        let axial = offset.dot(direction);
-        distance = distance.max(axial + offset.dot(right).abs() / horizontal_tangent);
-        distance = distance.max(axial + offset.dot(up).abs() / vertical_tangent);
-        distance = distance.max(axial + minimum);
-    }
-    distance
-}
-
-#[derive(Clone, Copy)]
-struct FitZoomInput {
-    eye: Vec3,
-    target: Vec3,
-    min: Vec3,
-    max: Vec3,
-    fov: f32,
-    aspect: f32,
-    padding: f32,
-    up: Vec3,
-}
-
-fn fit_zoom(input: FitZoomInput) -> f32 {
-    let forward = (input.target - input.eye).normalize();
-    let right = forward.cross(input.up).normalize();
-    let up = right.cross(forward).normalize();
-    let mut max_right_tangent = 0.0_f32;
-    let mut max_up_tangent = 0.0_f32;
-    for corner in aabb_corners(input.min, input.max) {
-        let offset = corner - input.eye;
-        let depth = offset.dot(forward);
-        max_right_tangent = max_right_tangent.max((offset.dot(right) / depth).abs());
-        max_up_tangent = max_up_tangent.max((offset.dot(up) / depth).abs());
-    }
-    if max_right_tangent == 0.0 && max_up_tangent == 0.0 {
-        return 1.0;
-    }
-    let tangent = (input.fov * 0.5).tan();
-    let vertical = tangent / max_up_tangent;
-    let horizontal = input.aspect * tangent / max_right_tangent;
-    vertical.min(horizontal) * input.padding
 }
 
 // The one definition of the `Frame` uniform (see `shader.wgsl`): two mat4 and
@@ -1633,13 +1606,16 @@ fn encode_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Vec2;
 
     fn scene() -> glb::Scene {
-        glb::Scene {
-            meshes: Vec::new(),
-            instances: Vec::new(),
-            bounds: Some(([-1.0; 3], [1.0; 3])),
-        }
+        let segments = [
+            [[-1.0, -1.0, -1.0], [1.0, -1.0, -1.0]],
+            [[-1.0, 1.0, -1.0], [1.0, 1.0, -1.0]],
+            [[-1.0, -1.0, 1.0], [1.0, -1.0, 1.0]],
+            [[-1.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
+        ];
+        line_scene(&segments)
     }
 
     fn assert_close(actual: Vec3, expected: Vec3) {
@@ -1656,6 +1632,14 @@ mod tests {
         }
     }
 
+    fn referenced_positions(scene: &glb::Scene) -> Vec<Vec3> {
+        let mut positions = Vec::new();
+        scene
+            .for_each_position(&mut |position| positions.push(position))
+            .expect("positions");
+        positions
+    }
+
     fn fixed_camera(projection: CameraProjection) -> RenderCamera {
         RenderCamera::Fixed {
             position: [0.0, 0.0, 10.0],
@@ -1670,6 +1654,13 @@ mod tests {
     }
 
     fn line_scene(segments: &[[[f32; 3]; 2]]) -> glb::Scene {
+        let (min, max) = segments.iter().flatten().fold(
+            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(min, max), point| {
+                let point = Vec3::from(*point);
+                (min.min(point), max.max(point))
+            },
+        );
         let positions = segments
             .iter()
             .flat_map(|segment| segment.iter().flat_map(|point| point.iter().copied()))
@@ -1694,7 +1685,34 @@ mod tests {
                 model: Mat4::IDENTITY,
                 normal_matrix: Mat4::IDENTITY,
             }],
-            bounds: Some(([-1.0, -1.0, -1.0], [1.0, 1.0, 2.0])),
+            bounds: Some((min.to_array(), max.to_array())),
+        }
+    }
+
+    fn asymmetric_scene() -> glb::Scene {
+        let positions = vec![
+            -3.0, -1.0, -2.0, 2.0, 4.0, 1.0, 5.0, 0.0, -1.0, -1.0, 2.0, 3.0, 100.0, 100.0, 100.0,
+        ];
+        glb::Scene {
+            meshes: vec![glb::MeshAsset {
+                primitives: vec![glb::Primitive {
+                    mode: glb::MODE_LINES,
+                    positions,
+                    normals: Vec::new(),
+                    indices: vec![0, 1, 2, 3],
+                    material: glb::Material {
+                        base_color: [0.0, 0.0, 0.0, 1.0],
+                        metallic: 0.0,
+                        roughness: 1.0,
+                    },
+                }],
+            }],
+            instances: vec![glb::MeshInstance {
+                mesh_index: 0,
+                model: Mat4::IDENTITY,
+                normal_matrix: Mat4::IDENTITY,
+            }],
+            bounds: Some(([-3.0, -1.0, -2.0], [5.0, 4.0, 3.0])),
         }
     }
 
@@ -1819,29 +1837,38 @@ mod tests {
                     zoom: 1.0,
                 },
             ] {
-                let camera = camera_state(
-                    &scene(),
-                    &RenderOptions {
-                        camera: RenderCamera::Fit {
-                            direction,
-                            up,
-                            padding_factor: 0.9,
-                            projection,
+                for (width, height) in [(800, 800), (400, 800), (800, 400)] {
+                    let camera = camera_state(
+                        &scene(),
+                        &RenderOptions {
+                            width,
+                            height,
+                            camera: RenderCamera::Fit {
+                                direction,
+                                up,
+                                padding_factor: 0.9,
+                                projection,
+                            },
+                            ..RenderOptions::default()
                         },
-                        ..RenderOptions::default()
-                    },
-                );
-                assert_close(camera.forward, -Vec3::from(direction));
-                assert_close(camera.view.transform_vector3(Vec3::from(up)), Vec3::Y);
+                    );
+                    assert_close(camera.forward, -Vec3::from(direction));
+                    assert_close(camera.view.transform_vector3(Vec3::from(up)), Vec3::Y);
+                }
             }
         }
     }
 
     #[test]
-    fn fitted_perspective_keeps_every_corner_in_front_and_inside_the_margin() {
-        let scene = scene();
-        let (min, max) = scene.bounds.expect("fixture bounds");
-        for field_of_view in [1.0, 45.0, 120.0, 179.0] {
+    fn fitted_perspective_uses_the_exact_requested_frustum_and_contains_referenced_geometry() {
+        let scene = asymmetric_scene();
+        let points = referenced_positions(&scene);
+        assert_eq!(
+            points.len(),
+            4,
+            "unreferenced accessor values are not fit geometry"
+        );
+        for field_of_view in [1.0, 22.0, 45.0, 79.0, 90.0, 120.0, 143.0, 160.0, 179.0] {
             let camera = camera_state(
                 &scene,
                 &RenderOptions {
@@ -1859,16 +1886,169 @@ mod tests {
                     ..RenderOptions::default()
                 },
             );
+            let expected_scale = 1.0 / (field_of_view.to_radians() * 0.5).tan();
+            assert!(
+                (camera.projection.y_axis.y - expected_scale).abs() <= expected_scale.abs() * 2e-4,
+                "{field_of_view}° projection contains a hidden fitted zoom"
+            );
             let view_projection = camera.projection * camera.view;
-            for corner in aabb_corners(Vec3::from(min), Vec3::from(max)) {
-                let view = camera.view.transform_point3(corner);
-                assert!(view.z < 0.0, "{field_of_view}° put a corner behind the eye");
-                let clip = view_projection * corner.extend(1.0);
+            let mut ndc_min = Vec2::splat(f32::INFINITY);
+            let mut ndc_max = Vec2::splat(f32::NEG_INFINITY);
+            for &point in &points {
+                let view = camera.view.transform_point3(point);
+                assert!(
+                    view.z < 0.0,
+                    "{field_of_view}° put a referenced point behind the eye"
+                );
+                let clip = view_projection * point.extend(1.0);
                 assert!(clip.w > 0.0);
                 let ndc = clip.truncate() / clip.w;
                 assert!(ndc.x.abs() <= 0.9001);
                 assert!(ndc.y.abs() <= 0.9001);
                 assert!((0.0..=1.0).contains(&ndc.z));
+                ndc_min = ndc_min.min(ndc.truncate());
+                ndc_max = ndc_max.max(ndc.truncate());
+            }
+            if field_of_view == 143.0 {
+                let minimum = ndc_min.min_element();
+                let maximum = ndc_max.max_element();
+                assert!((minimum + 0.9).abs() < 2e-4);
+                assert!((maximum - 0.9).abs() < 2e-4);
+
+                let (min, max) = scene.bounds.expect("bounds");
+                let center = (Vec3::from(min) + Vec3::from(max)) * 0.5;
+                let direction = Vec3::new(0.612_372_46, 0.5, 0.612_372_46).normalize();
+                let eye = camera.view.inverse().transform_point3(Vec3::ZERO);
+                let center_to_eye = eye - center;
+                let lateral = center_to_eye - direction * center_to_eye.dot(direction);
+                assert!(
+                    lateral.length() > 0.01,
+                    "asymmetric geometry must translate the optical axis"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fitted_gear_stays_contained_after_the_old_wide_fov_crossover() {
+        let scene = glb::parse_glb(include_bytes!("../../../tests/fixtures/gear-12.glb"))
+            .expect("gear fixture");
+        for field_of_view in [143.0, 160.0, 179.0] {
+            let camera = camera_state(
+                &scene,
+                &RenderOptions {
+                    width: 192,
+                    height: 192,
+                    camera: RenderCamera::Fit {
+                        direction: [1.2, -1.7, 4.2],
+                        up: [0.0, 1.0, 0.0],
+                        padding_factor: 0.9,
+                        projection: CameraProjection::Perspective {
+                            vertical_field_of_view_deg: field_of_view,
+                            zoom: 1.0,
+                        },
+                    },
+                    ..RenderOptions::default()
+                },
+            );
+            let view_projection = camera.projection * camera.view;
+            assert!(
+                scene
+                    .for_each_position(&mut |position| {
+                        let depth = -camera.view.transform_point3(position).z;
+                        let clip = view_projection * position.extend(1.0);
+                        let ndc = clip.truncate() / clip.w;
+                        assert!(depth > 0.0, "{field_of_view}° point behind fitted eye");
+                        assert!(ndc.is_finite());
+                        assert!(ndc.x.abs() <= 0.9005);
+                        assert!(ndc.y.abs() <= 0.9005);
+                        assert!((0.0..=1.0).contains(&ndc.z));
+                    })
+                    .expect("gear positions")
+            );
+        }
+    }
+
+    #[test]
+    fn orthographic_fit_centres_exact_referenced_intervals() {
+        let scene = asymmetric_scene();
+        let camera = camera_state(
+            &scene,
+            &RenderOptions {
+                width: 400,
+                height: 800,
+                camera: RenderCamera::Fit {
+                    direction: [1.0, 2.0, 3.0],
+                    up: [0.0, 0.0, 1.0],
+                    padding_factor: 0.9,
+                    projection: CameraProjection::Orthographic {
+                        vertical_span: None,
+                        zoom: 1.0,
+                    },
+                },
+                ..RenderOptions::default()
+            },
+        );
+        let matrix = camera.projection * camera.view;
+        let mut min = Vec2::splat(f32::INFINITY);
+        let mut max = Vec2::splat(f32::NEG_INFINITY);
+        for position in referenced_positions(&scene) {
+            let ndc = (matrix * position.extend(1.0)).truncate();
+            assert!(ndc.x.abs() <= 0.9001);
+            assert!(ndc.y.abs() <= 0.9001);
+            min = min.min(ndc.truncate());
+            max = max.max(ndc.truncate());
+        }
+        let limiting = (min.min_element(), max.max_element());
+        assert!((limiting.0 + 0.9).abs() < 2e-4);
+        assert!((limiting.1 - 0.9).abs() < 2e-4);
+    }
+
+    #[test]
+    fn exact_depths_drive_derived_clipping() {
+        let scene = asymmetric_scene();
+        let eye = Vec3::new(8.0, 6.0, 10.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
+        let (near, far) = position_clip_planes(&scene, view, eye.length());
+        let depths = referenced_positions(&scene)
+            .into_iter()
+            .map(|position| -view.transform_point3(position).z)
+            .filter(|depth| *depth > 0.0)
+            .collect::<Vec<_>>();
+        let nearest = depths.iter().copied().reduce(f32::min).expect("nearest");
+        let farthest = depths.iter().copied().reduce(f32::max).expect("farthest");
+        assert!((near - nearest * 0.5).abs() < 1e-5);
+        assert!((far - farthest * 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn degenerate_and_extreme_finite_geometry_produces_finite_fit_matrices() {
+        for scale in [0.0, 1e-9, 1e9] {
+            let scene = line_scene(&[[[-scale, 0.0, 0.0], [scale, 0.0, 0.0]]]);
+            for projection in [
+                CameraProjection::Perspective {
+                    vertical_field_of_view_deg: 179.0,
+                    zoom: 1.0,
+                },
+                CameraProjection::Orthographic {
+                    vertical_span: None,
+                    zoom: 1.0,
+                },
+            ] {
+                let camera = camera_state(
+                    &scene,
+                    &RenderOptions {
+                        camera: RenderCamera::Fit {
+                            direction: [1.0, 2.0, 3.0],
+                            up: [0.0, 1.0, 0.0],
+                            padding_factor: 0.9,
+                            projection,
+                        },
+                        ..RenderOptions::default()
+                    },
+                );
+                assert!(camera.view.is_finite());
+                assert!(camera.projection.is_finite());
             }
         }
     }
@@ -1898,23 +2078,6 @@ mod tests {
 
         assert!(wide.target_depth < sixty.target_depth);
         assert_ne!(wide.projection, sixty.projection);
-    }
-
-    #[test]
-    fn fitted_zoom_leaves_point_bounds_unscaled() {
-        assert_eq!(
-            fit_zoom(FitZoomInput {
-                eye: Vec3::Z,
-                target: Vec3::ZERO,
-                min: Vec3::ZERO,
-                max: Vec3::ZERO,
-                fov: 45f32.to_radians(),
-                aspect: 1.0,
-                padding: 0.9,
-                up: Vec3::Y,
-            }),
-            1.0
-        );
     }
 
     #[test]
@@ -2068,12 +2231,8 @@ mod tests {
 
     #[test]
     fn derived_clipping_handles_bounds_behind_the_camera() {
-        let (near, far) = bounds_clip_planes(
-            Mat4::IDENTITY,
-            Vec3::new(-1.0, -1.0, 1.0),
-            Vec3::new(1.0, 1.0, 2.0),
-            10.0,
-        );
+        let scene = line_scene(&[[[-1.0, -1.0, 1.0], [1.0, 1.0, 2.0]]]);
+        let (near, far) = position_clip_planes(&scene, Mat4::IDENTITY, 10.0);
         assert!((near - 0.01).abs() < f32::EPSILON);
         assert_eq!(far, 20.0);
     }

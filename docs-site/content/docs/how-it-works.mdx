@@ -33,9 +33,9 @@ input; a failure here is classified `parse`. An out-of-profile _material_ is
 not rejected — it degrades instead, as the [material model](#material-model)
 describes.
 
-**Resolve and upload** either fit the model bounds from a direction and margin
-or preserve a fixed position, target, up vector, projection, and clipping
-request, then move the geometry to the device once; see [Frame the model](guides/frame-the-model)
+**Resolve and upload** either fit referenced indexed geometry from a direction
+and margin or preserve a fixed position, target, up vector, projection, and
+clipping request, then move the geometry to the device once; see [Frame the model](guides/frame-the-model)
 and [Place the camera](guides/place-the-camera).
 
 **Rasterise** draws the model under the studio preset or the rig you supply,
@@ -90,8 +90,8 @@ screenshot an agent compares across a tool loop. Evidence that varies for
 reasons unrelated to the subject invites false conclusions, so nanoraster
 removes inputs rather than seeding them. Lighting is the studio preset unless
 the request carries a [rig](guides/light-the-subject); tone map and gamma are
-fixed; camera distance is derived from the model's bounds; angles, format,
-size, background and annotations are yours.
+fixed; fitted placement is derived from referenced indexed geometry; camera
+angles, format, size, background and annotations are yours.
 
 What is guaranteed:
 
@@ -99,7 +99,7 @@ What is guaranteed:
   process or a different one.
 - Lighting is identical for every render that states the same `lighting`, or
   none.
-- The camera fit is identical for identical bounds and angles.
+- The camera fit is identical for identical referenced geometry and camera inputs.
 - Input failures reproduce exactly.
 
 What is not guaranteed:
