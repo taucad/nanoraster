@@ -40,6 +40,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: 4.1.10
         version: 4.1.10(@vitest/browser@4.1.10)(vitest@4.1.10)
+      binaryen:
+        specifier: 132.0.0
+        version: 132.0.0
       eslint:
         specifier: 9.32.0
         version: 9.32.0(jiti@2.7.0)(supports-color@7.2.0)
@@ -3554,6 +3557,10 @@ packages:
 
   before-after-hook@4.0.0:
     resolution: {integrity: sha512-q6tR3RPqIB1pMiTRMFcZwuG5T8vwp+vUvEG0vuI6B+Rikh5BfPp2fQ82c925FOs+b0lcFQ8CFrL+KbilfZFhOQ==}
+
+  binaryen@132.0.0:
+    resolution: {integrity: sha512-4Usg7yEvwO3FMso3Oov6qkOOHSod1IEv+boKkh77kTljM+eNBouqCTbqWswGzbG+vDNO/b/v2C4gfEh1WgB9Lg==}
+    hasBin: true
 
   bl@4.1.0:
     resolution: {integrity: sha512-1W07cM9gS6DcLperZfFSj+bWLtaPGSOHWhPiGzXmvVJbRLdG82sH/Kn8EtW1VqWVA54AKf2h5k5BbnIbwF3h6w==}
@@ -9304,6 +9311,8 @@ snapshots:
   baseline-browser-mapping@2.11.14: {}
 
   before-after-hook@4.0.0: {}
+
+  binaryen@132.0.0: {}
 
   bl@4.1.0:
     dependencies:

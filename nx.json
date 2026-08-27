@@ -15,6 +15,9 @@
       },
       {
         "runtime": "wasm-pack --version"
+      },
+      {
+        "runtime": "pnpm exec wasm-opt --version"
       }
     ]
   },
