@@ -1055,6 +1055,11 @@ mod tests {
             tau.point(glam::Vec3::new(1000.0, 2000.0, 3000.0)),
             glam::Vec3::new(1.0, 3.0, -2.0),
         );
+        assert_eq!(
+            signed_axis("-z", "axis").expect("negative Z").1,
+            glam::Vec3::NEG_Z
+        );
+        assert!(signed_axis("sideways", "axis").is_err());
 
         for request in [
             WorldRequest {
@@ -1066,6 +1071,11 @@ mod tests {
                 up: Some("+z".into()),
                 forward: None,
                 unit: None,
+            },
+            WorldRequest {
+                up: None,
+                forward: None,
+                unit: Some("inch".into()),
             },
         ] {
             assert!(resolve_world(Some(&request)).is_err());
@@ -1086,29 +1096,22 @@ mod tests {
         .expect("parse")
         .resolve_options()
         .expect("resolve");
-        let RenderCamera::Fixed {
-            position,
-            target,
-            up,
-            projection,
-            clipping,
-        } = options.camera
-        else {
-            panic!("fixed camera");
-        };
-        assert_vec3_near(position.into(), glam::Vec3::new(1.0, 3.0, -2.0));
-        assert_eq!(target, [0.0; 3]);
-        assert_eq!(up, [0.0, 1.0, 0.0]);
         assert_eq!(
-            projection,
-            CameraProjection::Orthographic {
-                vertical_span: Some(5.0),
-                zoom: 1.0,
+            options.camera,
+            RenderCamera::Fixed {
+                position: [1.0, 3.000_000_2, -2.0],
+                target: [0.0; 3],
+                up: [0.0, 1.0, 0.0],
+                projection: CameraProjection::Orthographic {
+                    vertical_span: Some(5.0),
+                    zoom: 1.0,
+                },
+                clipping: Some(crate::ClipPlanes {
+                    near: 0.1,
+                    far: 100.000_01,
+                }),
             }
         );
-        let clipping = clipping.expect("explicit clipping");
-        assert!((clipping.near - 0.1).abs() < 1e-6);
-        assert!((clipping.far - 100.0).abs() < 1e-4);
         let section = &options.sections.expect("sections").planes[0];
         assert_vec3_near(section.point.into(), glam::Vec3::new(1.0, 3.0, -2.0));
         assert_eq!(section.normal, [0.0, 1.0, 0.0]);

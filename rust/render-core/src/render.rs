@@ -387,15 +387,14 @@ pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> Camer
             let (near, far) = position_clip_planes(scene, options, view, (eye - target).length());
             let projection = match projection {
                 CameraProjection::Orthographic { .. } => {
-                    let (half_width, half_height) =
-                        orthographic_half_extents(
-                            scene,
-                            options,
-                            view,
-                            aspect,
-                            *padding_factor,
-                            radius,
-                        );
+                    let (half_width, half_height) = orthographic_half_extents(
+                        scene,
+                        options,
+                        view,
+                        aspect,
+                        *padding_factor,
+                        radius,
+                    );
                     glam::camera::rh::proj::directx::orthographic(
                         -half_width,
                         half_width,
@@ -2584,12 +2583,8 @@ mod tests {
     #[test]
     fn derived_clipping_handles_bounds_behind_the_camera() {
         let scene = line_scene(&[[[-1.0, -1.0, 1.0], [1.0, 1.0, 2.0]]]);
-        let (near, far) = position_clip_planes(
-            &scene,
-            &RenderOptions::default(),
-            Mat4::IDENTITY,
-            10.0,
-        );
+        let (near, far) =
+            position_clip_planes(&scene, &RenderOptions::default(), Mat4::IDENTITY, 10.0);
         assert!((near - 0.01).abs() < f32::EPSILON);
         assert_eq!(far, 20.0);
     }
@@ -2764,7 +2759,13 @@ mod tests {
             ..RenderOptions::default()
         };
         let cut = render_test_scene(&mut renderer, cube_scene(), options.clone());
-        assert!(cut.rgba.chunks_exact(4).any(|pixel| pixel[0] < 240));
+        assert!(
+            cut.rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[0] < 240)
+        );
 
         let blank = render_test_scene(
             &mut renderer,
@@ -2775,7 +2776,14 @@ mod tests {
                 ..options.clone()
             },
         );
-        assert!(blank.rgba.chunks_exact(4).all(|pixel| pixel == [255; 4]));
+        assert!(
+            blank
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| pixel == &[255; 4])
+        );
 
         let hidden_surface = render_test_scene(
             &mut renderer,
@@ -2860,8 +2868,10 @@ mod tests {
         assert!(
             hidden_line
                 .rgba
-                .chunks_exact(4)
-                .all(|pixel| pixel == [255; 4])
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| pixel == &[255; 4])
         );
         renderer.destroy();
     }

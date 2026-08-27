@@ -187,7 +187,7 @@ fn triangle_segments(
     plane_index: usize,
 ) -> Result<Vec<Segment>, RenderError> {
     let mut segments = BTreeSet::new();
-    for triangle in primitive.indices.chunks_exact(3) {
+    for triangle in primitive.indices.as_chunks::<3>().0 {
         let vertices: [Vec3; 3] = std::array::from_fn(|index| {
             let offset = triangle[index] as usize * 3;
             model.transform_point3(Vec3::from_slice(&primitive.positions[offset..offset + 3]))
@@ -363,7 +363,7 @@ fn append_segment(output: &mut CapGeometry, basis: Basis, a: Point, b: Point) {
 
 fn clip_boundaries(boundaries: &mut Vec<f32>, planes: &[SectionPlane]) {
     let mut clipped = Vec::with_capacity(boundaries.len());
-    for segment in boundaries.chunks_exact(6) {
+    for segment in boundaries.as_chunks::<6>().0 {
         let mut start = Vec3::from_slice(&segment[..3]);
         let mut end = Vec3::from_slice(&segment[3..]);
         let mut visible = true;
@@ -507,7 +507,7 @@ mod tests {
             -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0,
             1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0,
         ];
-        for position in positions.chunks_exact_mut(3) {
+        for position in positions.as_chunks_mut::<3>().0 {
             position[0] = position[0] * half_extent + center.x;
             position[1] = position[1] * half_extent + center.y;
             position[2] = position[2] * half_extent + center.z;
@@ -585,7 +585,9 @@ mod tests {
     fn cap_area(geometry: &CapGeometry) -> f32 {
         geometry
             .indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|triangle| {
                 let point = |index: u32| {
                     Vec3::from_slice(&geometry.vertices[index as usize * CAP_VERTEX_FLOATS..][..3])
@@ -639,7 +641,7 @@ mod tests {
     fn coincident_sources_are_colored_as_one_overlap_region() {
         let geometry = build(&cube_scene(2), &section_options()).expect("overlap cap");
         let expected = srgb_hex(0xb9_1c_1c);
-        for vertex in geometry.vertices.chunks_exact(CAP_VERTEX_FLOATS) {
+        for vertex in geometry.vertices.as_chunks::<CAP_VERTEX_FLOATS>().0 {
             assert_eq!(&vertex[5..9], &expected);
         }
         assert_eq!(geometry.boundaries.len() / 6, 4);
@@ -672,7 +674,9 @@ mod tests {
         assert!(
             transformed_cap
                 .vertices
-                .chunks_exact(CAP_VERTEX_FLOATS)
+                .as_chunks::<CAP_VERTEX_FLOATS>()
+                .0
+                .iter()
                 .all(|vertex| (vertex[0] - 5.0).abs() < 1.0e-6)
         );
 
@@ -689,13 +693,17 @@ mod tests {
         assert!(
             split_cap
                 .vertices
-                .chunks_exact(CAP_VERTEX_FLOATS)
+                .as_chunks::<CAP_VERTEX_FLOATS>()
+                .0
+                .iter()
                 .any(|vertex| vertex[5..9] == first_base)
         );
         assert!(
             split_cap
                 .vertices
-                .chunks_exact(CAP_VERTEX_FLOATS)
+                .as_chunks::<CAP_VERTEX_FLOATS>()
+                .0
+                .iter()
                 .any(|vertex| vertex[5..9] == second_base)
         );
     }

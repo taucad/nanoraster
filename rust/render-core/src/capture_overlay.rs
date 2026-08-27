@@ -1442,6 +1442,41 @@ mod tests {
     }
 
     #[test]
+    fn hidden_primitives_do_not_change_annotation_avoidance() {
+        let base = scene();
+        let mut with_hidden_outlier = scene();
+        with_hidden_outlier.meshes[0]
+            .primitives
+            .push(crate::glb::Primitive {
+                source_index: 1,
+                mode: crate::glb::MODE_LINES,
+                positions: vec![10_000.0, 10_000.0, 10_000.0, 10_001.0, 10_000.0, 10_000.0],
+                normals: Vec::new(),
+                indices: vec![0, 1],
+                material: crate::glb::Material {
+                    base_color: [0.0, 0.0, 0.0, 1.0],
+                    metallic: 0.0,
+                    roughness: 1.0,
+                },
+            });
+        let options = RenderOptions {
+            visible_primitives: Some(vec![crate::PrimitiveRef {
+                node_index: 0,
+                mesh_index: 0,
+                primitive_index: 0,
+            }]),
+            label: Some("Selected geometry".into()),
+            axes: true,
+            scale_bar: true,
+            ..fit_options([1.0, 2.0, 3.0], [0.0, 1.0, 0.0], Projection::Perspective)
+        };
+        let expected = prepare_view(&base, &options).expect("selected primitive");
+        let actual = prepare_view(&with_hidden_outlier, &options).expect("hidden outlier");
+        assert_eq!(actual.camera.view, expected.camera.view);
+        assert_eq!(actual.camera.projection, expected.camera.projection);
+    }
+
+    #[test]
     fn fixed_camera_annotations_never_reframe_the_requested_pose() {
         let options = RenderOptions {
             camera: RenderCamera::Fixed {
@@ -1509,7 +1544,7 @@ mod tests {
                         options.width,
                         options.height,
                     )
-                            .expect("finite envelope");
+                    .expect("finite envelope");
                     for rect in [
                         prepared.layout.label,
                         prepared.layout.scale,
