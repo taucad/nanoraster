@@ -24,8 +24,9 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 //
 // Presentation adds three option types, one limit, and two task guides. The
 // API and site ceilings account only for that new public surface.
+// Caller-world coordinates add the axis and world contracts to that API page.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 2_780,
+  'api.mdx': 2_920,
   'guides/choose-visible-geometry.mdx': 340,
   'guides/render-section-views.mdx': 340,
   'guides/format-and-annotate.mdx': 830,
@@ -43,7 +44,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'install.mdx': 740,
   'tutorial.mdx': 690,
 };
-const siteCeiling = 12_600;
+const siteCeiling = 12_690;
 
 const pages = globSync('**/*.mdx', { cwd: docsDir })
   .toSorted()

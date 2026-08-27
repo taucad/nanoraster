@@ -206,11 +206,17 @@ A Cartesian vector in the request's caller-world frame. That frame is glTF
 world space when `world` is omitted. Direction and up vectors accept any finite
 non-zero magnitude and are normalized internally.
 
-### `RenderWorld`
+### `RenderWorldAxis`
 
 ```typescript
 export type RenderWorldAxis = '+x' | '-x' | '+y' | '-y' | '+z' | '-z';
+```
 
+One signed principal axis in the caller-world frame.
+
+### `RenderWorld`
+
+```typescript
 export type RenderWorld = {
   readonly up?: RenderWorldAxis;
   readonly forward?: RenderWorldAxis;

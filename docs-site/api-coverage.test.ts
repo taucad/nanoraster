@@ -48,6 +48,7 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'width',
     'height',
     'quality',
+    'world',
     'lineWidth',
     'surfaces',
     'lines',
@@ -65,6 +66,7 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'width',
     'height',
     'quality',
+    'world',
     'lineWidth',
     'surfaces',
     'lines',
@@ -102,6 +104,7 @@ const defaults = {
   width: '768',
   height: '432',
   quality: '0.92 (jpeg), 1 (webp)',
+  world: 'glTF world',
   lineWidth: '3',
   surfaces: 'true',
   lines: 'true',
@@ -252,7 +255,7 @@ describe('static agent documentation', () => {
     }
 
     const apiHtml = resolve(output, 'docs/api.html');
-    expect(statSync(apiHtml).size).toBeLessThan(725_000);
+    expect(statSync(apiHtml).size).toBeLessThan(750_000);
 
     const optionsHtml = readFileSync(apiHtml, 'utf8');
     expect(optionsHtml).toContain('aria-label="RenderImageOptions properties"');

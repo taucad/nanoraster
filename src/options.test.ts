@@ -77,6 +77,15 @@ describe('image request serialization', () => {
       world,
       views: [{ id: 'front' }],
     });
+
+    for (const frame of [
+      { up: '+x', forward: '+y' },
+      { up: '-x', forward: '+z' },
+      { up: '+z', forward: '-y' },
+      { up: '-z', forward: '+y' },
+    ] as const) {
+      expect(parse(toImageRequestJson({ format: 'png', world: frame }))).toMatchObject({ world: frame });
+    }
   });
 
   it('should reject invalid, left-handed, and per-view worlds', () => {
