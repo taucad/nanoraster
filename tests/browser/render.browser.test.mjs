@@ -2,13 +2,23 @@ import { beforeAll, expect, test } from 'vitest';
 import * as candidate from 'nanoraster-wasm-candidate';
 import init, { Renderer, render_image } from 'nanoraster-wasm-candidate';
 import initBench, { codec_conformance, render_image as renderImageBench } from 'nanoraster-wasm-bench';
-import { RenderError, renderImage } from 'nanoraster';
+import { createRenderer, RenderError, renderImage } from 'nanoraster';
 
 import { describeAdapter } from '../../src/describe-adapter.ts';
 import { withPbrFactors } from '../pbr-fixture.mjs';
 
 let glb;
 let cubeGlb;
+let overlappingCubesGlb;
+let racingDroneGlb;
+
+const countPixels = (bytes, matches) => {
+  let count = 0;
+  for (let index = 0; index < bytes.length; index += 4) {
+    if (matches(bytes[index], bytes[index + 1], bytes[index + 2])) count += 1;
+  }
+  return count;
+};
 
 beforeAll(async () => {
   expect(navigator.gpu, 'WebGPU must be enabled for every supported browser').toBeDefined();
@@ -20,6 +30,14 @@ beforeAll(async () => {
   const cubeResponse = await fetch(new URL('../fixtures/cube.glb', import.meta.url));
   expect(cubeResponse.ok).toBe(true);
   cubeGlb = new Uint8Array(await cubeResponse.arrayBuffer());
+  const overlappingCubesResponse = await fetch(new URL('../fixtures/overlapping-cubes.glb', import.meta.url));
+  expect(overlappingCubesResponse.ok).toBe(true);
+  overlappingCubesGlb = new Uint8Array(await overlappingCubesResponse.arrayBuffer());
+  const racingDroneResponse = await fetch(
+    new URL('../fixtures/racing-drone-section-repro.glb', import.meta.url),
+  );
+  expect(racingDroneResponse.ok).toBe(true);
+  racingDroneGlb = new Uint8Array(await racingDroneResponse.arrayBuffer());
 });
 
 test('the façade describes the adapter without loading the wasm', async () => {
@@ -270,6 +288,70 @@ test('the packed façade preserves visibility, sections, and rolled camera data'
 
   const rolled = await renderImage(cubeGlb, { ...common, camera: { ...camera, up: [0, 0, 1] } });
   expect(rolled.bytes).not.toEqual(all.bytes);
+});
+
+test('the packed warm renderer preserves section overlap evidence across camera views', async () => {
+  const camera = { framing: 'fit', direction: [0.6123724357, 0.5, 0.6123724357] };
+  const common = {
+    width: 256,
+    height: 256,
+    format: 'raw',
+    background: '#242424',
+    sections: { planes: [{ point: [0, 0, 0], normal: [-1, 0, 0] }] },
+  };
+  const oneShot = await renderImage(overlappingCubesGlb, { ...common, camera });
+  const renderer = await createRenderer();
+  await renderer.renderImage(overlappingCubesGlb, { ...common, camera, sections: undefined });
+  const warm = await renderer.renderImage(overlappingCubesGlb, { ...common, camera });
+  const sheet = await renderer.renderImages(overlappingCubesGlb, {
+    ...common,
+    timings: true,
+    views: [
+      { id: 'same', camera },
+      { id: 'higher', camera: { framing: 'fit', direction: [0.8, 0.2, 0.5] } },
+    ],
+  });
+  renderer.dispose();
+
+  expect(warm.bytes).toEqual(oneShot.bytes);
+  expect(sheet[0].file.bytes).toEqual(oneShot.bytes);
+  expect(sheet.timings.presentationBuilds).toBe(1);
+  for (const image of [oneShot, ...sheet.map(({ file }) => file)]) {
+    expect(
+      countPixels(image.bytes, (red, green, blue) => red > 120 && red > green * 2 && red > blue * 2),
+    ).toBeGreaterThan(100);
+    expect(
+      countPixels(image.bytes, (red, green, blue) => red > 180 && green > 140 && blue < 120),
+    ).toBeGreaterThan(10);
+  }
+});
+
+test('a true cut through the racing-drone canopy always produces a section image', async () => {
+  const common = {
+    width: 64,
+    height: 64,
+    format: 'raw',
+    world: { up: '+z', forward: '-y', unit: 'meter' },
+  };
+  const planes = [
+    { point: [0, 0, 0], normal: [1, 0, 0] },
+    { point: [0, 0, 0], normal: [0, 1, 0] },
+    { point: [0, 0, 0], normal: [0, 0, 1] },
+  ];
+  const renderer = await createRenderer();
+  try {
+    const ordinary = await renderer.renderImage(racingDroneGlb, common);
+    for (let count = 1; count <= planes.length; count += 1) {
+      const options = { ...common, sections: { planes: planes.slice(0, count) } };
+      const first = await renderer.renderImage(racingDroneGlb, options);
+      const second = await renderer.renderImage(racingDroneGlb, options);
+      expect(first).toMatchObject({ width: 64, height: 64, mimeType: 'application/octet-stream' });
+      expect(first.bytes).toEqual(second.bytes);
+      if (count === 1) expect(first.bytes).not.toEqual(ordinary.bytes);
+    }
+  } finally {
+    renderer.dispose();
+  }
 });
 
 test('should reject a malformed GLB with a parse error through the packed public façade', async () => {

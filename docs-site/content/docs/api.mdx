@@ -266,7 +266,8 @@ export type RenderSections = {
 
 One to `renderImageMaxSections` planes shared by the request. Both clip flags
 default to `true`; [Cut section views](guides/render-section-views) covers caps,
-outlines, and multiple retained half-spaces.
+outlines, and multiple retained half-spaces. Successful closed-surface cuts
+contain every cap; failures return `parse`.
 
 ### `RenderCamera`
 

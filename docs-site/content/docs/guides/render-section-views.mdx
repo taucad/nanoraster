@@ -12,7 +12,7 @@ Use `sections.planes` for one to six simultaneous cuts. The retained subject is
 the intersection of every half-space, so changing plane order does not change
 the image.
 
-<RenderDemo>
+<RenderDemo model="/demo/overlapping-cubes.glb">
 
 ```typescript
 import { renderImage } from 'nanoraster';
@@ -21,7 +21,7 @@ const image = await renderImage(glb, {
   format: 'webp',
   sections: {
     planes: [
-      { point: [0, 0, 0], normal: [1, 0, 0] },
+      { point: [0, 0, 0], normal: [-1, 0, 0] },
       { point: [0, 0, 0], normal: [0, 0, 1] },
     ],
     clipSurfaces: true,
@@ -44,16 +44,16 @@ unchanged while surfaces, caps, and cap outlines still follow the planes.
 
 ## Read the cap
 
-Closed solid cuts receive an unlit striped cap derived from each primitive's
-material colour. Positive-area overlaps between primitive caps use a red field
-with yellow cross-stripes. Black outlines preserve the cut boundary. Open or
-non-manifold intersections remain outlines instead of being filled as a false
-solid.
+Closed, orientable triangle surfaces receive striped material-colour caps and
+black outlines. Overlapping caps are red with yellow cross-stripes; touching
+regions retain their material style.
 
-Cap geometry is computed from the original GLB at fixed precision, then
-clipped with the visible geometry on the GPU. A fixed-precision overflow or
-invalid contour fails with a named `parse` error; nanoraster does not silently
-drop a cap.
+A successful render contains every true cap. Open or non-manifold topology and
+fixed-precision overflow return a source-and-plane `parse` error. Tangent planes
+may yield an outline without a cap. nanoraster pairs duplicated glTF seams but
+does not repair meshes.
+
+Hatch direction follows the section plane; spacing follows the camera.
 
 Fitted framing follows the visible primitive set but does not refit after a
 plane moves. The cut therefore reveals the interior without making the camera

@@ -69,11 +69,12 @@ const sizes = {
 // code. The public facade remains below 0.5 KB Brotli; the WASM stays below
 // 400 KB Brotli. Native, WASM, section degeneracy, and route gates cover the
 // admitted dependency before this ratchet moves.
-// Ceilings are the measured figure plus ~1%. The gate runs on Linux CI, whose
-// figure has not been re-measured since the PBR build (315,196 gzip-9 there
-// against 312,881 on macOS) — gzip9 carries extra slack until a CI run
-// re-anchors it.
-const ceilings = { raw: 1_384_000, gzip9: 516_000, brotli11: 400_100 };
+// Presentation base after the wide-FOV follow-ups: raw 1,253,048, gzip-9
+// 473,792, brotli-11 366,020. Paired-halfedge traversal plus browser-only
+// render-core size optimisation: 1,136,902 / 454,642 / 361,654 (-116,146 raw,
+// -19,150 gzip-9, -4,366 brotli-11). The Brotli ceiling is the base plus the
+// accepted 5 KB P0 budget.
+const ceilings = { raw: 1_270_000, gzip9: 480_000, brotli11: 371_020 };
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {
