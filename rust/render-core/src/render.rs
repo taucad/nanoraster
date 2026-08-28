@@ -1916,6 +1916,7 @@ mod tests {
         glb::Scene {
             meshes: vec![glb::MeshAsset {
                 source_index: 0,
+                manifold: None,
                 primitives: vec![glb::Primitive {
                     source_index: 0,
                     mode: glb::MODE_LINES,
@@ -1946,6 +1947,7 @@ mod tests {
         glb::Scene {
             meshes: vec![glb::MeshAsset {
                 source_index: 0,
+                manifold: None,
                 primitives: vec![glb::Primitive {
                     source_index: 0,
                     mode: glb::MODE_LINES,
@@ -2001,6 +2003,7 @@ mod tests {
         glb::Scene {
             meshes: vec![glb::MeshAsset {
                 source_index: 0,
+                manifold: None,
                 primitives,
             }],
             instances: vec![glb::MeshInstance {
@@ -2021,6 +2024,7 @@ mod tests {
         glb::Scene {
             meshes: vec![glb::MeshAsset {
                 source_index: 0,
+                manifold: None,
                 primitives: vec![glb::Primitive {
                     source_index: 0,
                     mode: glb::MODE_TRIANGLES,

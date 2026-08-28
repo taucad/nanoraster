@@ -993,6 +993,7 @@ mod tests {
         Scene {
             meshes: vec![crate::glb::MeshAsset {
                 source_index: 0,
+                manifold: None,
                 primitives: vec![crate::glb::Primitive {
                     source_index: 0,
                     mode: crate::glb::MODE_LINES,

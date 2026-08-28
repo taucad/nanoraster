@@ -173,16 +173,22 @@ fn build_topology(
     let mut next_owner = 0;
     for instance in &scene.instances {
         let mesh = &scene.meshes[instance.mesh_index];
-        let mut vertex_count = 0;
+        let mut fallback_vertex_count = 0;
         let primitive_bases = mesh
             .primitives
             .iter()
             .map(|primitive| {
-                let base = vertex_count;
-                vertex_count += primitive.positions.len() / 3;
+                let base = fallback_vertex_count;
+                fallback_vertex_count += primitive.positions.len() / 3;
                 base
             })
             .collect::<Vec<_>>();
+        let vertex_count = mesh
+            .manifold
+            .as_ref()
+            .map_or(fallback_vertex_count, |manifold| {
+                manifold.positions.len() / 3
+            });
         let mut positions = vec![Vec3::ZERO; vertex_count];
         let mut triangles = Vec::new();
         let mut half_edges = Vec::new();
@@ -195,15 +201,25 @@ fn build_topology(
                 continue;
             }
             let source = scene.primitive_ref(instance, primitive);
-            if !primitive.indices.len().is_multiple_of(3) {
+            let (indices, local_positions, vertex_base) = match &mesh.manifold {
+                Some(manifold) => {
+                    let range = manifold.primitive_ranges[primitive_slot].clone();
+                    (&manifold.indices[range], &manifold.positions, 0)
+                }
+                None => (
+                    primitive.indices.as_slice(),
+                    &primitive.positions,
+                    primitive_bases[primitive_slot],
+                ),
+            };
+            if !indices.len().is_multiple_of(3) {
                 return Err(topology_error(
                     source,
                     "has an incomplete triangle index list",
                 ));
             }
-            for indices in primitive.indices.as_chunks::<3>().0 {
-                let vertices =
-                    indices.map(|vertex| primitive_bases[primitive_slot] + vertex as usize);
+            for indices in indices.as_chunks::<3>().0 {
+                let vertices = indices.map(|vertex| vertex_base + vertex as usize);
                 if vertices[0] == vertices[1]
                     || vertices[1] == vertices[2]
                     || vertices[2] == vertices[0]
@@ -213,7 +229,7 @@ fn build_topology(
                 let mut world = [Vec3::ZERO; 3];
                 for index in 0..3 {
                     let offset = indices[index] as usize * 3;
-                    let Some(position) = primitive.positions.get(offset..offset + 3) else {
+                    let Some(position) = local_positions.get(offset..offset + 3) else {
                         return Err(topology_error(source, "references a missing vertex"));
                     };
                     world[index] = instance.model.transform_point3(Vec3::from_slice(position));
@@ -1620,6 +1636,7 @@ mod tests {
         glb::Scene {
             meshes: vec![glb::MeshAsset {
                 source_index: 0,
+                manifold: None,
                 primitives: vec![cube_primitive(0, Vec3::ZERO, 1.0, [0.5, 0.5, 0.5, 1.0])],
             }],
             instances: (0..instance_count)
@@ -1665,6 +1682,7 @@ mod tests {
         glb::Scene {
             meshes: vec![glb::MeshAsset {
                 source_index: 0,
+                manifold: None,
                 primitives: vec![first, second],
             }],
             instances: vec![glb::MeshInstance {
@@ -2085,6 +2103,7 @@ mod tests {
         let duplicate_triangles = |count: usize, reverse: bool| glb::Scene {
             meshes: vec![glb::MeshAsset {
                 source_index: 0,
+                manifold: None,
                 primitives: (0..count)
                     .map(|source_index| {
                         triangle_primitive(

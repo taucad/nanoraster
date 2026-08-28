@@ -74,7 +74,11 @@ const sizes = {
 // render-core size optimisation: 1,136,902 / 454,642 / 361,654 (-116,146 raw,
 // -19,150 gzip-9, -4,366 brotli-11). The Brotli ceiling is the base plus the
 // accepted 5 KB P0 budget.
-const ceilings = { raw: 1_270_000, gzip9: 480_000, brotli11: 371_020 };
+// EXT_mesh_manifold trust-boundary validation: 1,203,046 / 474,602 / 375,135,
+// against a paired P0 worktree at 1,136,364 / 454,313 / 361,588 — +66,682 raw,
+// +20,289 gzip-9, +13,547 brotli-11. The Brotli ceiling enforces the accepted
+// 15 KB P1 budget over that exact base.
+const ceilings = { raw: 1_270_000, gzip9: 480_000, brotli11: 376_588 };
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {

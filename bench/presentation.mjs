@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { closedCubeGlb, withReusableManifoldTopology } from '../tests/pbr-fixture.mjs';
 
 const native = await import('../tests/out/native-bench/index.js');
 
@@ -96,6 +97,24 @@ for (const [name, glb] of Object.entries(fixtures)) {
   };
 }
 
+// 192 triangles: slightly larger than the committed 178-triangle Racing Drone reproduction.
+const topologyFixture = withReusableManifoldTopology(closedCubeGlb(16));
+const topologySamples = [];
+for (let index = 0; index < 6; index += 1) {
+  const result = await renderMany(topologyFixture, {
+    format: 'raw',
+    width: 16,
+    height: 16,
+    timings: true,
+    views: [{ id: 'isometric' }],
+  });
+  if (index > 0) topologySamples.push(result.timings.parse);
+}
+const topologyParse = median(topologySamples);
+if (topologyParse > 0.5) {
+  throw new Error(`EXT_mesh_manifold parse median ${topologyParse}ms exceeds 0.5ms`);
+}
+
 const repeated = fixtures['heavy-instanced-planetary'];
 const repeatOptions = {
   format: 'raw',
@@ -120,4 +139,6 @@ if (rssGrowth > 128 * 1024 * 1024) {
 }
 renderer.dispose();
 
-process.stdout.write(`${JSON.stringify({ cases, repeat: { calls: rss.length, rssGrowth } }, null, 2)}\n`);
+process.stdout.write(
+  `${JSON.stringify({ cases, extension: { parse: topologyParse }, repeat: { calls: rss.length, rssGrowth } }, null, 2)}\n`,
+);

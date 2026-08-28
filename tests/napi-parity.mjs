@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 // else here calls the addon directly, on purpose.
 import { renderImage } from '#index.node.js';
 
-import { withPbrFactors } from './pbr-fixture.mjs';
+import { closedCubeGlb, withPbrFactors, withReusableManifoldTopology } from './pbr-fixture.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ISOMETRIC = [0.6123724357, 0.5, 0.6123724357];
@@ -227,6 +227,15 @@ const reorderedSection = await native.renderImage(
 );
 if (section.equals(presented) || !section.equals(reorderedSection)) {
   throw new Error('multi-plane section output is absent or depends on plane order');
+}
+const closedCube = Buffer.from(closedCubeGlb());
+const closedCubeSection = await native.renderImage(closedCube, JSON.stringify(sectionRequest));
+const manifoldSection = await native.renderImage(
+  Buffer.from(withReusableManifoldTopology(closedCube)),
+  JSON.stringify(sectionRequest),
+);
+if (!manifoldSection.equals(closedCubeSection)) {
+  throw new Error('EXT_mesh_manifold and fallback section bytes differ');
 }
 const { camera: sectionCamera, ...sectionBatchCommon } = sectionRequest;
 const sectionBatch = (

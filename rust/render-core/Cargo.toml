@@ -17,7 +17,7 @@ bench = []
 bytemuck = "1.25.1"
 futures-channel = "0.3.32"
 glam = "0.33.2"
-gltf = { version = "=1.4.1", default-features = false, features = ["utils"] }
+gltf = { version = "=1.4.1", default-features = false, features = ["extensions", "utils"] }
 image-webp = { path = "../vendor/image-webp" }
 i_triangle = "=0.48.0"
 # Exactly pinned like `gltf` and `fontdue`: these two decide the bytes every

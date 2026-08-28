@@ -130,8 +130,11 @@ arm64 and armv7 hardware.
 | glTF 2.0 feature                                                   | Supported |
 | ------------------------------------------------------------------ | --------- |
 | Factor-only `baseColorFactor`, `metallicFactor`, `roughnessFactor` | Yes       |
+| Valid `EXT_mesh_manifold` topology                                 | Yes       |
 | All texture-backed PBR materials                                   | No        |
 | Surface-less WebGPU rendering                                      | Yes       |
 
 Factor-only metallic-roughness materials use deterministic analytic studio
-lighting. Texture-backed materials return a parse error.
+lighting. `EXT_mesh_manifold` supplies exact section topology while the base
+primitives remain authoritative for rendering. Texture-backed materials return
+a parse error.

@@ -5,7 +5,7 @@ import initBench, { codec_conformance, render_image as renderImageBench } from '
 import { createRenderer, RenderError, renderImage } from 'nanoraster';
 
 import { describeAdapter } from '../../src/describe-adapter.ts';
-import { withPbrFactors } from '../pbr-fixture.mjs';
+import { closedCubeGlb, withPbrFactors, withReusableManifoldTopology } from '../pbr-fixture.mjs';
 
 let glb;
 let cubeGlb;
@@ -288,6 +288,32 @@ test('the packed façade preserves visibility, sections, and rolled camera data'
 
   const rolled = await renderImage(cubeGlb, { ...common, camera: { ...camera, up: [0, 0, 1] } });
   expect(rolled.bytes).not.toEqual(all.bytes);
+});
+
+test('EXT_mesh_manifold and fallback topology render byte-identical views and caps', async () => {
+  const fallbackGlb = closedCubeGlb();
+  const manifoldGlb = withReusableManifoldTopology(fallbackGlb);
+  const options = {
+    width: 128,
+    height: 128,
+    format: 'raw',
+    background: '#242424',
+    sections: { planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }] },
+    views: [
+      { id: 'front', camera: { framing: 'fit', direction: [1, 0, 0] } },
+      { id: 'oblique', camera: { framing: 'fit', direction: [1, 1, 1] } },
+    ],
+  };
+  const fallback = await createRenderer();
+  const exact = await createRenderer();
+  try {
+    const fallbackImages = await fallback.renderImages(fallbackGlb, options);
+    const exactImages = await exact.renderImages(manifoldGlb, options);
+    expect(exactImages.map(({ file }) => file.bytes)).toEqual(fallbackImages.map(({ file }) => file.bytes));
+  } finally {
+    fallback.dispose();
+    exact.dispose();
+  }
 });
 
 test('the packed warm renderer preserves section overlap evidence across camera views', async () => {
