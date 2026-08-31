@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 // else here calls the addon directly, on purpose.
 import { renderImage } from '#index.node.js';
 
-import { closedCubeGlb, withPbrFactors, withReusableManifoldTopology } from './pbr-fixture.mjs';
+import { countDefaultMaterialCapPixels, sparseManifoldCubeGlb, withPbrFactors } from './pbr-fixture.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ISOMETRIC = [0.6123724357, 0.5, 0.6123724357];
@@ -228,13 +228,15 @@ const reorderedSection = await native.renderImage(
 if (section.equals(presented) || !section.equals(reorderedSection)) {
   throw new Error('multi-plane section output is absent or depends on plane order');
 }
-const closedCube = Buffer.from(closedCubeGlb());
-const closedCubeSection = await native.renderImage(closedCube, JSON.stringify(sectionRequest));
-const manifoldSection = await native.renderImage(
-  Buffer.from(withReusableManifoldTopology(closedCube)),
+const fallbackSection = await native.renderImage(
+  Buffer.from(sparseManifoldCubeGlb(false)),
   JSON.stringify(sectionRequest),
 );
-if (!manifoldSection.equals(closedCubeSection)) {
+const manifoldSection = await native.renderImage(
+  Buffer.from(sparseManifoldCubeGlb()),
+  JSON.stringify(sectionRequest),
+);
+if (!manifoldSection.equals(fallbackSection)) {
   throw new Error('EXT_mesh_manifold and fallback section bytes differ');
 }
 const { camera: sectionCamera, ...sectionBatchCommon } = sectionRequest;
@@ -253,6 +255,9 @@ const racingDroneCommon = {
   height: 192,
   format: 'raw',
   world: { up: '+z', forward: '-y', unit: 'meter' },
+  // Caps are single-sided: view from the removed octant so every cut face
+  // presents its front, or the palette count reads zero from the kept side.
+  camera: { framing: 'fit', direction: [-1, -1, -0.6], up: [0, 0, 1] },
 };
 const racingDronePlanes = [
   { point: [0, 0, 0], normal: [1, 0, 0] },
@@ -260,6 +265,7 @@ const racingDronePlanes = [
   { point: [0, 0, 0], normal: [0, 0, 1] },
 ];
 const racingDroneOrdinary = await native.renderImage(racingDroneGlb, JSON.stringify(racingDroneCommon));
+const racingDroneOrdinaryCapPalette = countDefaultMaterialCapPixels(racingDroneOrdinary);
 for (let count = 1; count <= racingDronePlanes.length; count += 1) {
   const options = JSON.stringify({
     ...racingDroneCommon,
@@ -269,6 +275,9 @@ for (let count = 1; count <= racingDronePlanes.length; count += 1) {
   const second = await native.renderImage(racingDroneGlb, options);
   if (!first.equals(second)) {
     throw new Error(`Racing Drone ${count}-plane section is not deterministic`);
+  }
+  if (countDefaultMaterialCapPixels(first) <= racingDroneOrdinaryCapPalette + 4) {
+    throw new Error(`Racing Drone ${count}-plane section has no default-material cap pixels`);
   }
   if (count === 1 && first.equals(racingDroneOrdinary)) {
     throw new Error('Racing Drone section did not change the frame');

@@ -18,11 +18,16 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 const PRECISION: f64 = 100_000_000.0;
 const SAFE_COORDINATE: i64 = 1_i64 << 61;
-const CAP_VERTEX_FLOATS: usize = 17;
+const CAP_VERTEX_FLOATS: usize = 15;
+const MAX_QUADRATIC_SECTION_WORK: usize = 16_000_000;
+
+fn bounded_section_work(work: Option<usize>) -> Option<usize> {
+    work.filter(|work| *work <= MAX_QUADRATIC_SECTION_WORK)
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct CapGeometry {
-    /// position(3), plane uv(2), base rgba(4), stripe rgba(4), axis/spacing/width(4)
+    /// position(3), plane uv(2), base rgba(4), stripe rgba(4), stripe axis(2)
     pub(crate) vertices: Vec<f32>,
     pub(crate) indices: Vec<u32>,
     /// De-indexed world-space segment endpoint pairs for the fat-line path.
@@ -92,35 +97,47 @@ struct PendingEdge {
 
 struct DisjointSet {
     parents: Vec<usize>,
+    ranks: Vec<u8>,
 }
 
 impl DisjointSet {
     fn new(size: usize) -> Self {
         Self {
             parents: (0..size).collect(),
+            ranks: vec![0; size],
         }
     }
 
     fn find(&mut self, value: usize) -> usize {
-        let parent = self.parents[value];
-        if parent != value {
-            self.parents[value] = self.find(parent);
+        let mut root = value;
+        while self.parents[root] != root {
+            root = self.parents[root];
         }
-        self.parents[value]
+        let mut current = value;
+        while self.parents[current] != current {
+            let parent = self.parents[current];
+            self.parents[current] = root;
+            current = parent;
+        }
+        root
     }
 
-    fn union(&mut self, left: usize, right: usize) {
-        let left = self.find(left);
-        let right = self.find(right);
+    fn union(&mut self, left: usize, right: usize) -> usize {
+        let mut left = self.find(left);
+        let mut right = self.find(right);
         if left == right {
-            return;
+            return left;
         }
-        let (first, second) = if left < right {
-            (left, right)
-        } else {
-            (right, left)
-        };
-        self.parents[second] = first;
+        if self.ranks[left] < self.ranks[right]
+            || (self.ranks[left] == self.ranks[right] && left > right)
+        {
+            std::mem::swap(&mut left, &mut right);
+        }
+        self.parents[right] = left;
+        if self.ranks[left] == self.ranks[right] {
+            self.ranks[left] += 1;
+        }
+        left
     }
 }
 
@@ -150,9 +167,18 @@ pub(crate) fn build(
         return Ok(CapGeometry::default());
     }
 
-    let epsilon = scene
-        .bounds
-        .map(|(min, max)| (Vec3::from(max) - Vec3::from(min)).length() * 1.0e-6)
+    let mut bounds: Option<(Vec3, Vec3)> = None;
+    scene
+        .for_each_surface_position(options, &mut |position| match &mut bounds {
+            Some((minimum, maximum)) => {
+                *minimum = minimum.min(position);
+                *maximum = maximum.max(position);
+            }
+            None => bounds = Some((position, position)),
+        })
+        .map_err(RenderError::Parse)?;
+    let epsilon = bounds
+        .map(|(min, max)| (max - min).length() * 1.0e-6)
         .unwrap_or(1.0e-6)
         .max(1.0e-7);
     let topology = build_topology(scene, options, epsilon)?;
@@ -183,16 +209,14 @@ fn build_topology(
                 base
             })
             .collect::<Vec<_>>();
-        let vertex_count = mesh
-            .manifold
-            .as_ref()
-            .map_or(fallback_vertex_count, |manifold| {
-                manifold.positions.len() / 3
-            });
+        let vertex_count = mesh.manifold.as_ref().map_or(fallback_vertex_count, |_| {
+            mesh.primitives
+                .first()
+                .map_or(0, |primitive| primitive.positions.len() / 3)
+        });
         let mut positions = vec![Vec3::ZERO; vertex_count];
         let mut triangles = Vec::new();
         let mut half_edges = Vec::new();
-        let mut first_degenerate = None;
 
         for (primitive_slot, primitive) in mesh.primitives.iter().enumerate() {
             if primitive.mode != MODE_TRIANGLES
@@ -204,7 +228,7 @@ fn build_topology(
             let (indices, local_positions, vertex_base) = match &mesh.manifold {
                 Some(manifold) => {
                     let range = manifold.primitive_ranges[primitive_slot].clone();
-                    (&manifold.indices[range], &manifold.positions, 0)
+                    (&manifold.indices[range], &mesh.primitives[0].positions, 0)
                 }
                 None => (
                     primitive.indices.as_slice(),
@@ -243,8 +267,7 @@ fn build_topology(
                     .length_squared()
                     <= epsilon.powi(4)
                 {
-                    first_degenerate.get_or_insert(source);
-                    continue;
+                    return Err(topology_error(source, "contains a degenerate triangle"));
                 }
                 let triangle = triangles.len();
                 triangles.push(Triangle {
@@ -266,9 +289,6 @@ fn build_topology(
             }
         }
         if triangles.is_empty() {
-            if let Some(source) = first_degenerate {
-                return Err(topology_error(source, "contains a degenerate triangle"));
-            }
             continue;
         }
 
@@ -331,34 +351,6 @@ fn build_topology(
             seams.push((key, edges.to_vec()));
         }
 
-        let mut patch_sets = DisjointSet::new(triangles.len());
-        for pair in &pairs {
-            patch_sets.union(
-                half_edges[pair.first].triangle,
-                half_edges[pair.second].triangle,
-            );
-        }
-        let patches = (0..triangles.len())
-            .map(|triangle| patch_sets.find(triangle))
-            .collect::<Vec<_>>();
-        let mut affinity_samples = Vec::new();
-        for (key, edges) in &seams {
-            let (forward, reverse) = split_directions(edges, *key, &half_edges, &clusters);
-            for first in &forward {
-                for second in &reverse {
-                    affinity_samples.push(ordered_pair(
-                        patches[half_edges[*first].triangle],
-                        patches[half_edges[*second].triangle],
-                    ));
-                }
-            }
-        }
-        affinity_samples.sort_unstable();
-        let mut affinities = Vec::new();
-        for samples in affinity_samples.chunk_by(|left, right| left == right) {
-            affinities.push((samples[0], samples.len()));
-        }
-
         for (key, edges) in &seams {
             if edges.len() == 1 {
                 return Err(topology_error(
@@ -373,20 +365,16 @@ fn build_topology(
                     "has an inconsistently oriented material seam",
                 ));
             }
-            let resolved = if forward.len() == 1 {
-                vec![(forward[0], reverse[0])]
-            } else {
-                uniquely_pair_seams(&forward, &reverse, &half_edges, &patches, &affinities)
-                    .ok_or_else(|| {
-                        topology_error(
-                            half_edges[edges[0]].source,
-                            "has an ambiguous material seam",
-                        )
-                    })?
-            };
-            for (first, second) in resolved {
-                pairs.push(PendingEdge { first, second });
+            if forward.len() != 1 {
+                return Err(topology_error(
+                    half_edges[edges[0]].source,
+                    "has an ambiguous material seam",
+                ));
             }
+            pairs.push(PendingEdge {
+                first: forward[0],
+                second: reverse[0],
+            });
         }
 
         let representative_positions = cluster_positions(&seam_vertices, &positions, &clusters);
@@ -436,6 +424,16 @@ fn build_topology(
             .iter()
             .map(|component| component_stats(component, &triangles))
             .collect::<Vec<_>>();
+        let source = triangles[components[0][0]].source;
+        let component_scan_work = bounded_section_work(
+            components.len().checked_mul(components.len()),
+        )
+        .ok_or_else(|| {
+            topology_error(
+                source,
+                format!("exceeds multi-shell work ceiling {MAX_QUADRATIC_SECTION_WORK}"),
+            )
+        })?;
         let mut order = (0..components.len()).collect::<Vec<_>>();
         order.sort_by(|left, right| {
             stats[*right]
@@ -444,22 +442,52 @@ fn build_topology(
                 .then(left.cmp(right))
         });
         let mut component_owners = vec![usize::MAX; components.len()];
+        let mut containment_work = component_scan_work;
         for &component in &order {
-            let container = order
-                .iter()
-                .copied()
-                .filter(|candidate| {
-                    component_owners[*candidate] != usize::MAX
-                        && stats[*candidate].3 * stats[component].3 < 0.0
-                        && contains_bounds(
-                            stats[*candidate].0,
-                            stats[*candidate].1,
-                            stats[component].0,
-                            stats[component].1,
-                            epsilon,
+            let mut container: Option<usize> = None;
+            for candidate in order.iter().copied().filter(|candidate| {
+                component_owners[*candidate] != usize::MAX
+                    && stats[*candidate].3 * stats[component].3 < 0.0
+                    && contains_bounds(
+                        stats[*candidate].0,
+                        stats[*candidate].1,
+                        stats[component].0,
+                        stats[component].1,
+                        epsilon,
+                    )
+            }) {
+                let work = components[candidate]
+                    .len()
+                    .checked_mul(components[component].len())
+                    .and_then(|work| work.checked_mul(4))
+                    .ok_or_else(|| topology_error(source, "exceeds multi-shell work ceiling"))?;
+                containment_work = bounded_section_work(containment_work.checked_add(work))
+                    .ok_or_else(|| {
+                        topology_error(
+                            source,
+                            format!(
+                                "exceeds multi-shell work ceiling {MAX_QUADRATIC_SECTION_WORK}"
+                            ),
                         )
-                })
-                .min_by(|left, right| stats[*left].2.total_cmp(&stats[*right].2));
+                    })?;
+                let contained = component_is_contained(
+                    &components[component],
+                    &components[candidate],
+                    &triangles,
+                    epsilon,
+                )
+                .ok_or_else(|| {
+                    topology_error(
+                        triangles[components[component][0]].source,
+                        "has ambiguous touching or intersecting shell ownership",
+                    )
+                })?;
+                if contained
+                    && container.is_none_or(|current| stats[candidate].2 < stats[current].2)
+                {
+                    container = Some(candidate);
+                }
+            }
             component_owners[component] = container.map_or_else(
                 || {
                     let owner = next_owner;
@@ -470,10 +498,6 @@ fn build_topology(
             );
         }
         for (component, triangle_indices) in components.into_iter().enumerate() {
-            let mut local_triangles = vec![usize::MAX; triangles.len()];
-            for (local, global) in triangle_indices.iter().copied().enumerate() {
-                local_triangles[global] = local;
-            }
             let mut used_edges = triangle_indices
                 .iter()
                 .flat_map(|index| triangles[*index].edges)
@@ -481,7 +505,8 @@ fn build_topology(
             used_edges.sort_unstable();
             used_edges.dedup();
             let group_triangles = triangle_indices
-                .into_iter()
+                .iter()
+                .copied()
                 .map(|index| {
                     let mut triangle = triangles[index].clone();
                     triangle.edges = triangle
@@ -497,9 +522,9 @@ fn build_topology(
                     .map(|edge| {
                         let mut edge = edges[edge];
                         edge.triangles = edge.triangles.map(|triangle| {
-                            let local = local_triangles[triangle];
-                            debug_assert_ne!(local, usize::MAX);
-                            local
+                            triangle_indices
+                                .binary_search(&triangle)
+                                .expect("component contains edge triangle")
                         });
                         edge
                     })
@@ -549,6 +574,73 @@ fn contains_bounds(
             || (outer_maximum - inner_maximum).abs().max_element() > epsilon)
 }
 
+fn component_is_contained(
+    inner: &[usize],
+    outer: &[usize],
+    triangles: &[Triangle],
+    epsilon: f32,
+) -> Option<bool> {
+    let mut classification = None;
+    for triangle in inner.iter().map(|index| &triangles[*index]) {
+        let centroid = (triangle.points[0] + triangle.points[1] + triangle.points[2]) / 3.0;
+        for point in triangle.points.into_iter().chain(std::iter::once(centroid)) {
+            let inside = point_in_component(point, outer, triangles, epsilon)?;
+            if classification.is_some_and(|classification| classification != inside) {
+                return None;
+            }
+            classification = Some(inside);
+        }
+    }
+    classification
+}
+
+fn point_in_component(
+    point: Vec3,
+    component: &[usize],
+    triangles: &[Triangle],
+    epsilon: f32,
+) -> Option<bool> {
+    let point = point.as_dvec3();
+    let epsilon = f64::from(epsilon);
+    let ray = glam::DVec3::new(0.785_436_249, 0.291_680_651, 0.545_674_831);
+    let mut intersections = 0_usize;
+    for triangle in component.iter().map(|index| &triangles[*index]) {
+        let [a, b, c] = triangle.points.map(|vertex| vertex.as_dvec3());
+        let edge_1 = b - a;
+        let edge_2 = c - a;
+        let from_a = point - a;
+        let normal = edge_1.cross(edge_2);
+        let crossed = ray.cross(edge_2);
+        let determinant = edge_1.dot(crossed);
+        if determinant * determinant
+            <= f64::EPSILON * f64::EPSILON * edge_1.length_squared() * edge_2.length_squared()
+        {
+            let plane_distance = from_a.dot(normal);
+            if plane_distance * plane_distance <= epsilon * epsilon * normal.length_squared() {
+                return None;
+            }
+            continue;
+        }
+        let inverse = determinant.recip();
+        let u = from_a.dot(crossed) * inverse;
+        let q = from_a.cross(edge_1);
+        let v = ray.dot(q) * inverse;
+        let distance = edge_2.dot(q) * inverse;
+        if u >= -1.0e-10 && v >= -1.0e-10 && u + v <= 1.0 + 1.0e-10 {
+            if distance.abs() <= epsilon {
+                return None;
+            }
+            if distance > 0.0 {
+                if u.min(v).min(1.0 - u - v) <= 1.0e-10 {
+                    return None;
+                }
+                intersections += 1;
+            }
+        }
+    }
+    Some(!intersections.is_multiple_of(2))
+}
+
 fn split_directions(
     edges: &[usize],
     key: (usize, usize),
@@ -567,55 +659,6 @@ fn ordered_pair(left: usize, right: usize) -> (usize, usize) {
     } else {
         (right, left)
     }
-}
-
-fn uniquely_pair_seams(
-    forward: &[usize],
-    reverse: &[usize],
-    half_edges: &[HalfEdge],
-    patches: &[usize],
-    affinities: &[((usize, usize), usize)],
-) -> Option<Vec<(usize, usize)>> {
-    let score = |left: usize, right: usize| {
-        let pair = ordered_pair(
-            patches[half_edges[left].triangle],
-            patches[half_edges[right].triangle],
-        );
-        affinities
-            .binary_search_by_key(&pair, |entry| entry.0)
-            .ok()
-            .map_or(0, |index| affinities[index].1)
-    };
-    let unique_best = |edge: usize, candidates: &[usize]| {
-        let best = candidates
-            .iter()
-            .copied()
-            .map(|candidate| (score(edge, candidate), candidate))
-            .max_by_key(|value| value.0)?;
-        (candidates
-            .iter()
-            .filter(|candidate| score(edge, **candidate) == best.0)
-            .count()
-            == 1)
-            .then_some(best.1)
-    };
-    let mut forward = forward.to_vec();
-    let mut reverse = reverse.to_vec();
-    let mut result = Vec::with_capacity(forward.len());
-    while !forward.is_empty() {
-        if forward.len() == 1 {
-            result.push((forward[0], reverse[0]));
-            break;
-        }
-        let pair = forward.iter().copied().find_map(|first| {
-            let second = unique_best(first, &reverse)?;
-            (unique_best(second, &forward)? == first).then_some((first, second))
-        })?;
-        forward.retain(|edge| *edge != pair.0);
-        reverse.retain(|edge| *edge != pair.1);
-        result.push(pair);
-    }
-    Some(result)
 }
 
 fn validate_vertex_links(
@@ -693,6 +736,11 @@ fn spatial_clusters(vertices: &[usize], positions: &[Vec3], epsilon: f32) -> Vec
         compare_position(positions[*left], positions[*right]).then(left.cmp(right))
     });
     let mut sets = DisjointSet::new(sorted.len());
+    let mut minimum = sorted
+        .iter()
+        .map(|vertex| positions[*vertex])
+        .collect::<Vec<_>>();
+    let mut maximum = minimum.clone();
     let mut cells = BTreeMap::<(i64, i64, i64), Vec<usize>>::new();
     for (index, vertex) in sorted.iter().enumerate() {
         let position = positions[*vertex];
@@ -701,10 +749,19 @@ fn spatial_clusters(vertices: &[usize], positions: &[Vec3], epsilon: f32) -> Vec
             for y in cell.1 - 1..=cell.1 + 1 {
                 for z in cell.2 - 1..=cell.2 + 1 {
                     for candidate in cells.get(&(x, y, z)).into_iter().flatten() {
-                        if position.distance_squared(positions[sorted[*candidate]])
+                        let left = sets.find(index);
+                        let right = sets.find(*candidate);
+                        if left == right {
+                            continue;
+                        }
+                        let combined_minimum = minimum[left].min(minimum[right]);
+                        let combined_maximum = maximum[left].max(maximum[right]);
+                        if (combined_maximum - combined_minimum).length_squared()
                             <= epsilon * epsilon
                         {
-                            sets.union(index, *candidate);
+                            let root = sets.union(left, right);
+                            minimum[root] = combined_minimum;
+                            maximum[root] = combined_maximum;
                         }
                     }
                 }
@@ -769,7 +826,13 @@ fn build_plane(
             continue;
         }
         let graph = segments.iter().map(|entry| entry.0).collect::<Vec<_>>();
-        let (graph_rings, open) = closed_rings(&graph);
+        let (graph_rings, open) = closed_rings(&graph).map_err(|()| {
+            cap_error(
+                plane_index,
+                group.triangles[0].source,
+                "fixed-point winding overflow",
+            )
+        })?;
         open_boundaries.extend(
             graph_rings
                 .iter()
@@ -809,13 +872,13 @@ fn build_plane(
     }
 
     let mut merged = Vec::<SourceRegion>::new();
+    let mut owner_regions = BTreeMap::<usize, usize>::new();
     for source in sources {
-        if let Some(region) = merged
-            .iter_mut()
-            .find(|region| region.owner == source.owner)
-        {
+        if let Some(&index) = owner_regions.get(&source.owner) {
+            let region = &mut merged[index];
             region.shapes = boolean(&region.shapes, &source.shapes, OverlayRule::Xor);
         } else {
+            owner_regions.insert(source.owner, merged.len());
             merged.push(source);
         }
     }
@@ -826,10 +889,29 @@ fn build_plane(
         return Ok(());
     }
 
+    let pair_work = bounded_section_work(
+        sources
+            .len()
+            .checked_mul(sources.len().saturating_sub(1))
+            .map(|work| work / 2),
+    )
+    .ok_or_else(|| {
+        cap_error(
+            plane_index,
+            topology.groups[0].triangles[0].source,
+            format!("exceeds multi-shell work ceiling {MAX_QUADRATIC_SECTION_WORK}"),
+        )
+    })?;
+    debug_assert!(pair_work <= MAX_QUADRATIC_SECTION_WORK);
+    let source_bounds = sources
+        .iter()
+        .map(|source| shape_bounds(&source.shapes))
+        .collect::<Vec<_>>();
+
     let mut overlap = IntShapes::new();
     for left in 0..sources.len() {
         for right in left + 1..sources.len() {
-            if !bounds_overlap(&sources[left].shapes, &sources[right].shapes) {
+            if !bounds_overlap(source_bounds[left], source_bounds[right]) {
                 continue;
             }
             let intersection = boolean(
@@ -850,7 +932,6 @@ fn build_plane(
             source.base,
             source.stripe,
             [std::f32::consts::FRAC_1_SQRT_2; 2],
-            1.0,
         );
         appended?;
     }
@@ -864,7 +945,6 @@ fn build_plane(
             -std::f32::consts::FRAC_1_SQRT_2,
             std::f32::consts::FRAC_1_SQRT_2,
         ],
-        1.0,
     );
     appended?;
 
@@ -881,27 +961,30 @@ fn build_plane(
     Ok(())
 }
 
-fn bounds_overlap(left: &IntShapes<i64>, right: &IntShapes<i64>) -> bool {
-    let bounds = |shapes: &IntShapes<i64>| {
-        shapes
-            .iter()
-            .flatten()
-            .flatten()
-            .fold(None, |bounds, point| {
-                Some(bounds.map_or(
-                    (point.x, point.y, point.x, point.y),
-                    |(min_x, min_y, max_x, max_y): (i64, i64, i64, i64)| {
-                        (
-                            min_x.min(point.x),
-                            min_y.min(point.y),
-                            max_x.max(point.x),
-                            max_y.max(point.y),
-                        )
-                    },
-                ))
-            })
-    };
-    let (Some(left), Some(right)) = (bounds(left), bounds(right)) else {
+type ShapeBounds = Option<(i64, i64, i64, i64)>;
+
+fn shape_bounds(shapes: &IntShapes<i64>) -> ShapeBounds {
+    shapes
+        .iter()
+        .flatten()
+        .flatten()
+        .fold(None, |bounds, point| {
+            Some(bounds.map_or(
+                (point.x, point.y, point.x, point.y),
+                |(min_x, min_y, max_x, max_y): (i64, i64, i64, i64)| {
+                    (
+                        min_x.min(point.x),
+                        min_y.min(point.y),
+                        max_x.max(point.x),
+                        max_y.max(point.y),
+                    )
+                },
+            ))
+        })
+}
+
+fn bounds_overlap(left: ShapeBounds, right: ShapeBounds) -> bool {
+    let (Some(left), Some(right)) = (left, right) else {
         return false;
     };
     left.0 < right.2 && right.0 < left.2 && left.1 < right.3 && right.1 < left.3
@@ -978,7 +1061,23 @@ fn slice_group(
     for values in contributions.chunk_by(|left, right| left.0 == right.0) {
         segments.push((values[0].0, values.iter().map(|entry| entry.1).collect()));
     }
-    let rings = trace_cut_rings(group, basis, normal, plane_index)?;
+    let has_retained = group.triangles.iter().any(|triangle| {
+        triangle
+            .points
+            .iter()
+            .any(|point| (*point - basis.origin).dot(normal) > epsilon)
+    });
+    let has_removed = group.triangles.iter().any(|triangle| {
+        triangle
+            .points
+            .iter()
+            .any(|point| (*point - basis.origin).dot(normal) < -epsilon)
+    });
+    let rings = if has_retained && has_removed {
+        trace_cut_rings(group, basis, normal, plane_index)?
+    } else {
+        Vec::new()
+    };
     Ok((segments, rings, fallback.base_color))
 }
 
@@ -1020,6 +1119,7 @@ fn trace_cut_rings(
         .collect::<BTreeSet<_>>();
     let mut rings = Vec::<IntContour<i64>>::new();
     while let Some(start) = unseen.pop_first() {
+        let source = group.triangles[start].source;
         let [mut incoming, _] = cut_edges[start].expect("cut triangle has two edges");
         let mut triangle = start;
         let mut ring = Vec::new();
@@ -1068,9 +1168,16 @@ fn trace_cut_rings(
             ring.pop();
         }
         if ring.len() < 3 {
-            continue;
+            return Err(cap_error(
+                plane_index,
+                source,
+                "true cut ring collapsed below three quantized points",
+            ));
         }
-        if signed_area_points(&ring) < 0 {
+        if signed_area_points(&ring)
+            .map_err(|()| cap_error(plane_index, source, "fixed-point winding overflow"))?
+            < 0
+        {
             ring.reverse();
         }
         rings.push(
@@ -1179,7 +1286,7 @@ fn dominant_color(shape: &[IntContour<i64>], segments: &SegmentContributions) ->
         .map(|(_, color, _)| color)
 }
 
-fn closed_rings(segments: &[Segment]) -> (Vec<IntContour<i64>>, Vec<Segment>) {
+fn closed_rings(segments: &[Segment]) -> Result<(Vec<IntContour<i64>>, Vec<Segment>), ()> {
     let mut adjacency = BTreeMap::<Point, BTreeSet<Point>>::new();
     for &(a, b) in segments {
         adjacency.entry(a).or_default().insert(b);
@@ -1200,7 +1307,7 @@ fn closed_rings(segments: &[Segment]) -> (Vec<IntContour<i64>>, Vec<Segment>) {
             }
         }
         if component.iter().any(|point| adjacency[point].len() != 2) {
-            rings.extend(bounded_faces(&component, &adjacency));
+            rings.extend(bounded_faces(&component, &adjacency)?);
             open.extend(
                 segments
                     .iter()
@@ -1225,18 +1332,18 @@ fn closed_rings(segments: &[Segment]) -> (Vec<IntContour<i64>>, Vec<Segment>) {
                 break;
             }
         }
-        if signed_area(&ring) < 0 {
+        if signed_area(&ring)? < 0 {
             ring.reverse();
         }
         rings.push(ring);
     }
-    (rings, open)
+    Ok((rings, open))
 }
 
 fn bounded_faces(
     component: &BTreeSet<Point>,
     adjacency: &BTreeMap<Point, BTreeSet<Point>>,
-) -> Vec<IntContour<i64>> {
+) -> Result<Vec<IntContour<i64>>, ()> {
     let mut visited = Vec::<(Point, Point)>::new();
     let mut faces = Vec::<Vec<Point>>::new();
     for &start in component {
@@ -1270,7 +1377,7 @@ fn bounded_faces(
             if unique.len() != face.len() {
                 continue;
             }
-            if !closed || face.len() < 3 || signed_area_points(&face) <= 0 {
+            if !closed || face.len() < 3 || signed_area_points(&face)? <= 0 {
                 continue;
             }
             faces.push(canonical_ring(face));
@@ -1278,14 +1385,14 @@ fn bounded_faces(
     }
     faces.sort();
     faces.dedup();
-    faces
+    Ok(faces
         .into_iter()
         .map(|face| {
             face.into_iter()
                 .map(|point| IntPoint::new(point.0, point.1))
                 .collect()
         })
-        .collect()
+        .collect())
 }
 
 fn polar_cmp(origin: Point, left: Point, right: Point) -> Ordering {
@@ -1317,17 +1424,21 @@ fn canonical_ring(mut ring: Vec<Point>) -> Vec<Point> {
     ring
 }
 
-fn signed_area(contour: &IntContour<i64>) -> i128 {
+fn signed_area(contour: &IntContour<i64>) -> Result<i128, ()> {
     signed_area_points(&contour.iter().copied().map(point).collect::<Vec<_>>())
 }
 
-fn signed_area_points(points: &[Point]) -> i128 {
+fn signed_area_points(points: &[Point]) -> Result<i128, ()> {
     points
         .iter()
         .zip(points.iter().cycle().skip(1))
         .take(points.len())
-        .map(|(left, right)| left.0 as i128 * right.1 as i128 - right.0 as i128 * left.1 as i128)
-        .sum()
+        .try_fold(0_i128, |area, (left, right)| {
+            let positive = (left.0 as i128).checked_mul(right.1 as i128)?;
+            let negative = (right.0 as i128).checked_mul(left.1 as i128)?;
+            area.checked_add(positive.checked_sub(negative)?)
+        })
+        .ok_or(())
 }
 
 fn contour_segments(contour: &IntContour<i64>) -> impl Iterator<Item = Segment> + '_ {
@@ -1398,7 +1509,6 @@ fn append_region(
     base: [f32; 4],
     stripe: [f32; 4],
     axis: [f32; 2],
-    spacing: f32,
 ) -> Result<(), RenderError> {
     if shapes.is_empty() {
         return Ok(());
@@ -1415,9 +1525,7 @@ fn append_region(
         output.vertices.extend_from_slice(&uv);
         output.vertices.extend_from_slice(&base);
         output.vertices.extend_from_slice(&stripe);
-        output
-            .vertices
-            .extend_from_slice(&[axis[0], axis[1], spacing, spacing * 0.2]);
+        output.vertices.extend_from_slice(&axis);
     }
     output.indices.extend(
         triangulation
@@ -1647,6 +1755,7 @@ mod tests {
                     normal_matrix: Mat4::IDENTITY,
                 })
                 .collect(),
+            topology_diagnostics: Vec::new(),
             bounds: Some(([-1.0; 3], [1.0; 3])),
         }
     }
@@ -1691,6 +1800,7 @@ mod tests {
                 model: Mat4::IDENTITY,
                 normal_matrix: Mat4::IDENTITY,
             }],
+            topology_diagnostics: Vec::new(),
             bounds: Some(([-0.01; 3], [0.01; 3])),
         }
     }
@@ -1801,13 +1911,13 @@ mod tests {
             ((0, 10), (10, 10)),
             ((0, 0), (0, 10)),
         ];
-        let (rings, open) = closed_rings(&square);
+        let (rings, open) = closed_rings(&square).expect("square winding");
         assert_eq!(rings.len(), 1);
         assert!(open.is_empty());
 
         let mut branch = square;
         branch.push(((10, 10), (20, 10)));
-        let (rings, open) = closed_rings(&branch);
+        let (rings, open) = closed_rings(&branch).expect("branch winding");
         assert_eq!(rings.len(), 1);
         assert_eq!(open.len(), 5);
 
@@ -1822,7 +1932,7 @@ mod tests {
             ((20, 10), (30, 10)),
             ((20, 0), (20, 10)),
         ];
-        let (rings, open) = closed_rings(&dumbbell);
+        let (rings, open) = closed_rings(&dumbbell).expect("dumbbell winding");
         assert_eq!(rings.len(), 2);
         assert_eq!(open.len(), dumbbell.len());
     }
@@ -1866,6 +1976,36 @@ mod tests {
         assert_eq!(geometry.indices.len() % 3, 0);
         assert_eq!(geometry.vertices.len() % CAP_VERTEX_FLOATS, 0);
         assert_eq!(geometry.boundaries.len() / 6, 4);
+    }
+
+    #[test]
+    fn racing_drone_section_request_certifies_nonzero_cap_triangles() {
+        let (options, _) = crate::options::RenderRequest::from_json(
+            r#"{
+                "width":64,
+                "height":64,
+                "format":"raw",
+                "world":{"up":"+z","forward":"-y","unit":"meter"},
+                "sections":{"planes":[{"point":[0,0,0],"normal":[1,0,0]}]}
+            }"#,
+        )
+        .and_then(|request| request.resolve())
+        .expect("racing drone section request");
+        let scene = glb::parse_glb_for_sections(include_bytes!(
+            "../../../tests/fixtures/racing-drone-section-repro.glb"
+        ))
+        .expect("racing drone fixture");
+        for diagnostic in &scene.topology_diagnostics {
+            eprintln!(
+                "{} mesh {}: {}",
+                diagnostic.code, diagnostic.mesh_index, diagnostic.detail
+            );
+        }
+        assert!(scene.topology_diagnostics.is_empty());
+
+        let geometry = build(&scene, &options).expect("certified racing drone section");
+        assert!(geometry.indices.len() / 3 > 0);
+        assert_eq!(geometry.indices.len() % 3, 0);
     }
 
     #[test]
@@ -2061,6 +2201,88 @@ mod tests {
     }
 
     #[test]
+    fn touching_shell_ownership_is_rejected_as_ambiguous() {
+        let mut scene = cube_scene(1);
+        let mut touching = cube_primitive(0, Vec3::X * 0.7, 0.3, [0.5; 4]);
+        for triangle in touching.indices.as_chunks_mut::<3>().0 {
+            triangle.swap(1, 2);
+        }
+        let primitive = &mut scene.meshes[0].primitives[0];
+        let offset = u32::try_from(primitive.positions.len() / 3).expect("small fixture");
+        primitive.positions.extend_from_slice(&touching.positions);
+        primitive.normals.extend_from_slice(&touching.normals);
+        primitive
+            .indices
+            .extend(touching.indices.into_iter().map(|index| index + offset));
+
+        assert!(
+            build(&scene, &section_options())
+                .expect_err("touching cavity")
+                .to_string()
+                .contains("ambiguous touching or intersecting shell ownership")
+        );
+    }
+
+    #[test]
+    fn section_tolerance_uses_only_eligible_surfaces() {
+        let mut hidden = cube_scene(1);
+        hidden.meshes[0]
+            .primitives
+            .push(cube_primitive(1, Vec3::splat(1.0e9), 1.0, [0.5; 4]));
+        hidden.bounds = Some(([-1.0; 3], [1.0e9; 3]));
+        let mut selected = section_options();
+        selected.visible_primitives = Some(vec![PrimitiveRef {
+            node_index: 0,
+            mesh_index: 0,
+            primitive_index: 0,
+        }]);
+        assert!(
+            !build(&hidden, &selected)
+                .expect("selected solid")
+                .indices
+                .is_empty()
+        );
+
+        let mut with_line = cube_scene(1);
+        with_line.meshes[0].primitives.push(glb::Primitive {
+            source_index: 1,
+            mode: glb::MODE_LINES,
+            positions: vec![1.0e9, 0.0, 0.0, 1.0e9, 1.0, 0.0],
+            normals: Vec::new(),
+            indices: vec![0, 1],
+            material: glb::Material {
+                base_color: [0.5; 4],
+                metallic: 0.0,
+                roughness: 1.0,
+            },
+        });
+        with_line.bounds = Some(([-1.0; 3], [1.0e9, 1.0, 1.0]));
+        assert!(
+            !build(&with_line, &section_options())
+                .expect("line bounds excluded")
+                .indices
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn one_degenerate_triangle_rejects_an_otherwise_valid_surface() {
+        let mut scene = cube_scene(1);
+        let mut degenerate = triangle_primitive(
+            vec![2.0, 0.0, 0.0, 2.0, 1.0, 0.0, 2.0, 2.0, 0.0],
+            vec![0, 1, 2],
+        );
+        degenerate.source_index = 1;
+        scene.meshes[0].primitives.push(degenerate);
+        assert_eq!(
+            build(&scene, &section_options())
+                .expect_err("mixed valid and degenerate")
+                .to_string(),
+            "parse: sections: topology: source node 0/mesh 0/primitive 1 contains a degenerate triangle"
+        );
+    }
+
+    #[test]
     fn a_material_split_solid_uses_one_certified_cut_with_stable_provenance() {
         let scene = split_cube_scene(Vec3::new(0.0, 1.0e-8, 1.0e-8));
         let first = build(&scene, &section_options()).expect("material seam cap");
@@ -2076,9 +2298,12 @@ mod tests {
     fn tangent_touching_and_overlapping_sections_are_classified_exactly() {
         let mut tangent_options = section_options();
         tangent_options.sections.as_mut().expect("sections").planes[0].point = [1.0, 0.0, 0.0];
-        let tangent = build(&cube_scene(1), &tangent_options).expect("tangent outline");
-        assert!(tangent.indices.is_empty());
-        assert_eq!(tangent.boundaries.len() / 6, 4);
+        for normal in [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]] {
+            tangent_options.sections.as_mut().expect("sections").planes[0].normal = normal;
+            let tangent = build(&cube_scene(1), &tangent_options).expect("tangent outline");
+            assert!(tangent.indices.is_empty(), "normal {normal:?}");
+            assert_eq!(tangent.boundaries.len() / 6, 4, "normal {normal:?}");
+        }
 
         let mut overlap_scene = cube_scene(2);
         overlap_scene.instances[1].model = Mat4::from_translation(Vec3::Y * 0.5);
@@ -2128,6 +2353,7 @@ mod tests {
                 model: Mat4::IDENTITY,
                 normal_matrix: Mat4::IDENTITY,
             }],
+            topology_diagnostics: Vec::new(),
             bounds: Some(([0.0; 3], [1.0; 3])),
         };
 
@@ -2226,7 +2452,17 @@ mod tests {
     }
 
     #[test]
-    fn topology_helpers_cover_pairing_clustering_and_regions() {
+    fn topology_helpers_bound_clustering_and_regions() {
+        assert_eq!(
+            bounded_section_work(Some(MAX_QUADRATIC_SECTION_WORK)),
+            Some(MAX_QUADRATIC_SECTION_WORK)
+        );
+        assert_eq!(
+            bounded_section_work(Some(MAX_QUADRATIC_SECTION_WORK + 1)),
+            None
+        );
+        assert_eq!(bounded_section_work(usize::MAX.checked_add(1)), None);
+
         assert!(contains_bounds(
             Vec3::ZERO,
             Vec3::splat(2.0),
@@ -2235,55 +2471,20 @@ mod tests {
             0.1,
         ));
 
-        let half_edges = [
-            HalfEdge {
-                triangle: 0,
-                slot: 0,
-                start: 0,
-                end: 1,
-                source: TEST_SOURCE,
-            },
-            HalfEdge {
-                triangle: 1,
-                slot: 0,
-                start: 1,
-                end: 0,
-                source: TEST_SOURCE,
-            },
-            HalfEdge {
-                triangle: 2,
-                slot: 0,
-                start: 0,
-                end: 1,
-                source: TEST_SOURCE,
-            },
-            HalfEdge {
-                triangle: 3,
-                slot: 0,
-                start: 1,
-                end: 0,
-                source: TEST_SOURCE,
-            },
-        ];
-        assert_eq!(
-            uniquely_pair_seams(
-                &[0, 2],
-                &[1, 3],
-                &half_edges,
-                &[0, 1, 2, 3],
-                &[((0, 1), 2), ((2, 3), 2)],
-            ),
-            Some(vec![(0, 1), (2, 3)])
-        );
-        assert_eq!(
-            uniquely_pair_seams(&[0, 2], &[], &half_edges, &[0, 1, 2, 3], &[]),
-            None
-        );
-
         let positions = [Vec3::ZERO, Vec3::splat(0.01), Vec3::ONE];
         let clusters = spatial_clusters(&[0, 1, 2], &positions, 0.1);
         assert_eq!(clusters[0], clusters[1]);
         assert_ne!(clusters[0], clusters[2]);
+        let chain = [Vec3::ZERO, Vec3::X * 0.09, Vec3::X * 0.18];
+        let clusters = spatial_clusters(&[0, 1, 2], &chain, 0.1);
+        assert_eq!(clusters[0], clusters[1]);
+        assert_ne!(clusters[0], clusters[2]);
+
+        let mut sets = DisjointSet::new(100_000);
+        for index in (1..100_000).rev() {
+            sets.union(index, index - 1);
+        }
+        assert_eq!(sets.find(99_999), sets.find(0));
 
         let triangle = test_triangle([0, 1, 2]);
         assert_eq!(
@@ -2300,7 +2501,7 @@ mod tests {
             IntPoint::new(0, 10),
         ]]];
         let empty = IntShapes::new();
-        assert!(!bounds_overlap(&empty, &square));
+        assert!(!bounds_overlap(shape_bounds(&empty), shape_bounds(&square)));
         assert_eq!(boolean(&square, &empty, OverlayRule::Union), square);
         assert_eq!(boolean(&empty, &square, OverlayRule::Xor), square);
         assert_eq!(boolean(&square, &empty, OverlayRule::Xor), square);
@@ -2333,6 +2534,15 @@ mod tests {
         ];
         assert!(dominant_color(&square[0], &segments).is_some());
         assert_eq!(polar_cmp((0, 0), (1, 0), (2, 0)), Ordering::Less);
+        assert!(
+            signed_area_points(&[
+                (i64::MAX, i64::MAX),
+                (i64::MIN, i64::MAX),
+                (i64::MIN, i64::MIN),
+                (i64::MAX, i64::MIN),
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -2433,8 +2643,15 @@ mod tests {
         };
         assert!(
             trace_cut_rings(&short_ring, basis, normal, 0)
-                .expect("short quantized ring")
-                .is_empty()
+                .expect_err("short quantized ring")
+                .to_string()
+                .contains("sections: cap: sections.planes[0]")
+        );
+        assert!(
+            trace_cut_rings(&short_ring, basis, normal, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("true cut ring collapsed below three quantized points")
         );
 
         let invalid_slice = SurfaceGroup {

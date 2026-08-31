@@ -5,7 +5,7 @@ import initBench, { codec_conformance, render_image as renderImageBench } from '
 import { createRenderer, RenderError, renderImage } from 'nanoraster';
 
 import { describeAdapter } from '../../src/describe-adapter.ts';
-import { closedCubeGlb, withPbrFactors, withReusableManifoldTopology } from '../pbr-fixture.mjs';
+import { countDefaultMaterialCapPixels, sparseManifoldCubeGlb, withPbrFactors } from '../pbr-fixture.mjs';
 
 let glb;
 let cubeGlb;
@@ -291,8 +291,8 @@ test('the packed façade preserves visibility, sections, and rolled camera data'
 });
 
 test('EXT_mesh_manifold and fallback topology render byte-identical views and caps', async () => {
-  const fallbackGlb = closedCubeGlb();
-  const manifoldGlb = withReusableManifoldTopology(fallbackGlb);
+  const fallbackGlb = sparseManifoldCubeGlb(false);
+  const manifoldGlb = sparseManifoldCubeGlb();
   const options = {
     width: 128,
     height: 128,
@@ -354,10 +354,13 @@ test('the packed warm renderer preserves section overlap evidence across camera 
 
 test('a true cut through the racing-drone canopy always produces a section image', async () => {
   const common = {
-    width: 64,
-    height: 64,
+    width: 192,
+    height: 192,
     format: 'raw',
     world: { up: '+z', forward: '-y', unit: 'meter' },
+    // Caps are single-sided: view from the removed octant so every cut face
+    // presents its front, or the palette count reads zero from the kept side.
+    camera: { framing: 'fit', direction: [-1, -1, -0.6], up: [0, 0, 1] },
   };
   const planes = [
     { point: [0, 0, 0], normal: [1, 0, 0] },
@@ -367,12 +370,16 @@ test('a true cut through the racing-drone canopy always produces a section image
   const renderer = await createRenderer();
   try {
     const ordinary = await renderer.renderImage(racingDroneGlb, common);
+    const ordinaryCapPalette = countDefaultMaterialCapPixels(ordinary.bytes);
     for (let count = 1; count <= planes.length; count += 1) {
       const options = { ...common, sections: { planes: planes.slice(0, count) } };
       const first = await renderer.renderImage(racingDroneGlb, options);
       const second = await renderer.renderImage(racingDroneGlb, options);
-      expect(first).toMatchObject({ width: 64, height: 64, mimeType: 'application/octet-stream' });
+      expect(first).toMatchObject({ width: 192, height: 192, mimeType: 'application/octet-stream' });
       expect(first.bytes).toEqual(second.bytes);
+      expect(countDefaultMaterialCapPixels(first.bytes), 'default-material cap pixels').toBeGreaterThan(
+        ordinaryCapPalette + 4,
+      );
       if (count === 1) expect(first.bytes).not.toEqual(ordinary.bytes);
     }
   } finally {

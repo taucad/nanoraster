@@ -182,7 +182,7 @@ struct DeviceState {
     prim_layout: wgpu::BindGroupLayout,
     object_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
-    /// Keyed on `line_width_px` bits (depth-bias slope scale bakes it).
+    /// Keyed on `line_width_px` bits and whether wireframe bias is needed.
     pipelines: Vec<(u32, PipelinePair)>,
     /// Last-used target set, keyed on (width, height).
     targets: Option<SizedTargets>,
@@ -340,10 +340,17 @@ fn mapped_range_error(error: wgpu::MapRangeError) -> RenderError {
 }
 
 /// Resolve fitted or fixed camera framing into WebGPU view/projection matrices.
+#[cfg(test)]
 pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> CameraState {
-    let (min, max) = scene
-        .presented_bounds(options)
-        .unwrap_or(([-1.0; 3], [1.0; 3]));
+    camera_state_with_bounds(scene, options, scene.presented_bounds(options))
+}
+
+pub(crate) fn camera_state_with_bounds(
+    scene: &glb::Scene,
+    options: &RenderOptions,
+    bounds: Option<([f32; 3], [f32; 3])>,
+) -> CameraState {
+    let (min, max) = bounds.unwrap_or(([-1.0; 3], [1.0; 3]));
     let min = Vec3::from(min);
     let max = Vec3::from(max);
     let center = (min + max) * 0.5;
@@ -720,6 +727,7 @@ fn create_pipeline_pair(
     shader: &wgpu::ShaderModule,
     pipeline_layout: &wgpu::PipelineLayout,
     line_width_px: f32,
+    wireframe: bool,
 ) -> PipelinePair {
     let position_layout = wgpu::VertexBufferLayout {
         array_stride: 12,
@@ -753,7 +761,7 @@ fn create_pipeline_pair(
         stencil: wgpu::StencilState::default(),
         bias: wgpu::DepthBiasState::default(),
     });
-    // Surfaces take a slope-scaled polygon offset (the classic CAD
+    // Wireframe surfaces take a slope-scaled polygon offset (the classic CAD
     // shaded+wireframe move) instead of lines being pulled forward: the edge
     // quad is expanded in screen space at the segment's depth, so wherever it
     // overhangs a nearer surface — grazing walls near silhouettes, bores,
@@ -762,16 +770,20 @@ fn create_pipeline_pair(
     // surface back by its own screen-space depth slope times the stroke's
     // half-width covers exactly that overhang at any resolution; `clamp`
     // bounds the push on near-tangent surfaces so hidden edges behind them
-    // stay hidden.
+    // stay hidden. Surface-only renders use the unbiased state.
     let mesh_depth_state = Some(wgpu::DepthStencilState {
         format: DEPTH_FORMAT,
         depth_write_enabled: Some(true),
         depth_compare: Some(wgpu::CompareFunction::Less),
         stencil: wgpu::StencilState::default(),
-        bias: wgpu::DepthBiasState {
-            constant: 2,
-            slope_scale: line_width_px * 0.5 + 1.0,
-            clamp: 0.01,
+        bias: if wireframe {
+            wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: line_width_px * 0.5 + 1.0,
+                clamp: 0.01,
+            }
+        } else {
+            wgpu::DepthBiasState::default()
         },
     });
     let multisample = wgpu::MultisampleState {
@@ -836,14 +848,14 @@ fn create_pipeline_pair(
     });
 
     let cap_layout = wgpu::VertexBufferLayout {
-        array_stride: 68,
+        array_stride: 60,
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &wgpu::vertex_attr_array![
             0 => Float32x3,
             1 => Float32x2,
             2 => Float32x4,
             3 => Float32x4,
-            4 => Float32x4
+            4 => Float32x2
         ],
     };
     let cap = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1306,8 +1318,8 @@ impl Renderer {
 
     /// Index of the pipeline pair for this stroke width, creating and caching
     /// it on first sight.
-    fn ensure_pipelines(&mut self, line_width_px: f32) -> usize {
-        let key = line_width_px.to_bits();
+    fn ensure_pipelines(&mut self, line_width_px: f32, wireframe: bool) -> usize {
+        let key = line_width_px.to_bits() << 1 | u32::from(wireframe);
         if let Some(index) = self
             .state
             .pipelines
@@ -1327,6 +1339,7 @@ impl Renderer {
             &self.state.shader,
             &self.state.pipeline_layout,
             line_width_px,
+            wireframe,
         );
         self.state.pipelines.push((key, pair));
         self.state.pipelines.len() - 1
@@ -1420,7 +1433,13 @@ impl Renderer {
     ) -> Result<InFlightView, RenderError> {
         let options = &entry.options;
         self.ensure_targets(options.width, options.height);
-        let pipeline_index = self.ensure_pipelines(line_width_px(options));
+        // Bias surfaces only when line geometry actually draws this view:
+        // enabled model edges, or a section boundary (drawn unconditionally).
+        // Keying on `options.lines` alone would fork the bytes of otherwise
+        // identical renders of line-free models.
+        let wireframe = (options.lines && scene.gpu_assets.iter().any(|asset| !asset.lines.is_empty()))
+            || presentation.boundary.is_some();
+        let pipeline_index = self.ensure_pipelines(line_width_px(options), wireframe);
         let state = &self.state;
         let targets = state.targets.as_ref().expect("targets ensured above");
         let pair = &state.pipelines[pipeline_index].1;
@@ -1936,6 +1955,7 @@ mod tests {
                 model: Mat4::IDENTITY,
                 normal_matrix: Mat4::IDENTITY,
             }],
+            topology_diagnostics: Vec::new(),
             bounds: Some((min.to_array(), max.to_array())),
         }
     }
@@ -1967,6 +1987,7 @@ mod tests {
                 model: Mat4::IDENTITY,
                 normal_matrix: Mat4::IDENTITY,
             }],
+            topology_diagnostics: Vec::new(),
             bounds: Some(([-3.0, -1.0, -2.0], [5.0, 4.0, 3.0])),
         }
     }
@@ -2012,6 +2033,7 @@ mod tests {
                 model: Mat4::IDENTITY,
                 normal_matrix: Mat4::IDENTITY,
             }],
+            topology_diagnostics: Vec::new(),
             bounds: Some(([-1.0, -1.0, -0.5], [1.0, 1.0, 0.0])),
         }
     }
@@ -2047,6 +2069,7 @@ mod tests {
                 model: Mat4::IDENTITY,
                 normal_matrix: Mat4::IDENTITY,
             }],
+            topology_diagnostics: Vec::new(),
             bounds: Some(([-1.0; 3], [1.0; 3])),
         }
     }
@@ -3224,16 +3247,17 @@ mod tests {
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
                 .expect("renderer");
 
-        let first = renderer.ensure_pipelines(2.0);
-        assert_eq!(renderer.ensure_pipelines(2.0), first);
+        let first = renderer.ensure_pipelines(2.0, true);
+        assert_eq!(renderer.ensure_pipelines(2.0, true), first);
         assert_eq!(renderer.counters.pipeline_sets, 1);
-        let second = renderer.ensure_pipelines(4.0);
+        assert_ne!(renderer.ensure_pipelines(2.0, false), first);
+        let second = renderer.ensure_pipelines(4.0, true);
         assert_ne!(first, second);
-        assert_eq!(renderer.counters.pipeline_sets, 2);
+        assert_eq!(renderer.counters.pipeline_sets, 3);
 
         // Fill past the cap: the oldest entry is evicted, the cache stays bounded.
         for width in 0..MAX_CACHED_PIPELINE_PAIRS as u32 {
-            renderer.ensure_pipelines(8.0 + width as f32);
+            renderer.ensure_pipelines(8.0 + width as f32, true);
         }
         assert_eq!(renderer.state.pipelines.len(), MAX_CACHED_PIPELINE_PAIRS);
         assert!(
@@ -3241,7 +3265,7 @@ mod tests {
                 .state
                 .pipelines
                 .iter()
-                .any(|(key, _)| *key == 2.0f32.to_bits())
+                .any(|(key, _)| *key == 2.0f32.to_bits() << 1 | 1)
         );
 
         renderer.ensure_targets(320, 240);

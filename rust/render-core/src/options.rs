@@ -142,6 +142,7 @@ struct WorldTransform {
     rotation: glam::Mat3,
     meters_per_unit: f32,
     axes: [[f32; 3]; 3],
+    caller_up: glam::Vec3,
 }
 
 impl WorldTransform {
@@ -613,6 +614,11 @@ fn signed_axis(value: &str, name: &str) -> Result<(usize, glam::Vec3), RenderErr
 }
 
 fn resolve_world(request: Option<&WorldRequest>) -> Result<WorldTransform, RenderError> {
+    if request.is_some_and(|world| world.up.is_some() != world.forward.is_some()) {
+        return Err(RenderError::Parse(
+            "world.up and world.forward must be provided together".into(),
+        ));
+    }
     let up_name = request
         .and_then(|world| world.up.as_deref())
         .unwrap_or("+y");
@@ -626,13 +632,7 @@ fn resolve_world(request: Option<&WorldRequest>) -> Result<WorldTransform, Rende
             "world.up and world.forward must name different axes".into(),
         ));
     }
-    let remaining = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z][3 - up_index - forward_index];
-    let caller_basis = glam::Mat3::from_cols(remaining, up, forward);
-    if caller_basis.determinant() < 0.0 {
-        return Err(RenderError::Parse(
-            "world.up and world.forward must define a right-handed frame".into(),
-        ));
-    }
+    let caller_basis = glam::Mat3::from_cols(up.cross(forward), up, forward);
     let rotation = caller_basis.transpose();
     let meters_per_unit = match request.and_then(|world| world.unit.as_deref()) {
         None | Some("meter") => 1.0,
@@ -651,6 +651,7 @@ fn resolve_world(request: Option<&WorldRequest>) -> Result<WorldTransform, Rende
             (rotation * glam::Vec3::Y).to_array(),
             (rotation * glam::Vec3::Z).to_array(),
         ],
+        caller_up: up,
     })
 }
 
@@ -780,7 +781,10 @@ fn resolve_camera(
                 direction.unwrap_or([0.612_372_46, 0.5, 0.612_372_46]),
                 "direction",
             )?);
-            let up = world.direction(normalized_direction(up.unwrap_or([0.0, 1.0, 0.0]), "up")?);
+            let up = world.direction(match up {
+                Some(up) => normalized_direction(*up, "up")?,
+                None => world.caller_up,
+            });
             validate_orientation(direction, up, "direction")?;
             let margin = margin.unwrap_or(0.1);
             if !margin.is_finite() || !(0.0..=0.5).contains(&margin) {
@@ -1061,15 +1065,34 @@ mod tests {
         );
         assert!(signed_axis("sideways", "axis").is_err());
 
+        let axes = ["+x", "-x", "+y", "-y", "+z", "-z"];
+        let mut accepted = 0;
+        for up in axes {
+            for forward in axes {
+                if up[1..] == forward[1..] {
+                    continue;
+                }
+                let world = resolve_world(Some(&WorldRequest {
+                    up: Some(up.into()),
+                    forward: Some(forward.into()),
+                    unit: None,
+                }))
+                .expect("every non-collinear signed-axis pair");
+                assert!((world.rotation.determinant() - 1.0).abs() < 1e-6);
+                accepted += 1;
+            }
+        }
+        assert_eq!(accepted, 24);
+
         for request in [
             WorldRequest {
                 up: Some("+z".into()),
-                forward: Some("+y".into()),
+                forward: None,
                 unit: None,
             },
             WorldRequest {
-                up: Some("+z".into()),
-                forward: None,
+                up: None,
+                forward: Some("-y".into()),
                 unit: None,
             },
             WorldRequest {
@@ -1079,6 +1102,22 @@ mod tests {
             },
         ] {
             assert!(resolve_world(Some(&request)).is_err());
+        }
+    }
+
+    #[test]
+    fn default_fit_camera_uses_the_declared_world_up() {
+        for (up, forward) in [("+y", "+z"), ("+z", "-y"), ("+x", "+z")] {
+            let options = RenderRequest::from_json(&format!(
+                r#"{{"format":"png","world":{{"up":"{up}","forward":"{forward}"}}}}"#
+            ))
+            .expect("parse")
+            .resolve_options()
+            .expect("resolve");
+            let RenderCamera::Fit { up, .. } = options.camera else {
+                panic!("default camera must fit");
+            };
+            assert_vec3_near(up.into(), glam::Vec3::Y);
         }
     }
 

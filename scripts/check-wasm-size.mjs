@@ -54,6 +54,10 @@ const sizes = {
 // the shrink is the deleted raw-pixels entry points: the wasm-bindgen glue for
 // the class method and the free function, their JS result object, and the
 // core's format-free pixels request path. Rendered bytes are unchanged.
+// Stable-toolchain main baseline: raw 751,233, gzip-9 307,369, brotli-11
+// 249,284 on macOS with Rust 1.98.0 / LLVM 22.1.8, wasm-pack 0.15.0, and
+// Binaryen 132 `-Oz`. This is the recorded main artifact before the camera,
+// presentation, and topology programs below; retain it as the long-range base.
 // Cartesian-camera build: raw 931,986, gzip-9 369,380, brotli-11 294,978 on
 // macOS, against 857,495 / 344,892 / 276,011 for the raw-output build —
 // +74,491 raw (+8.7%), +24,488 gzip-9 (+7.1%), +18,967 brotli-11 (+6.9%).
@@ -78,7 +82,15 @@ const sizes = {
 // against a paired P0 worktree at 1,136,364 / 454,313 / 361,588 — +66,682 raw,
 // +20,289 gzip-9, +13,547 brotli-11. The Brotli ceiling enforces the accepted
 // 15 KB P1 budget over that exact base.
-const ceilings = { raw: 1_270_000, gzip9: 480_000, brotli11: 376_588 };
+// Rust-core closeout hardening: 1,207,761 / 481,705 / 377,159 — +4,715 raw,
+// +7,103 gzip-9, +2,024 brotli-11 for bounded topology work, fail-closed shell
+// ownership, lazy optional topology, and cap diagnostics. These exact measured
+// values replace the former 1,270,000 raw ceiling's 5.6% slack.
+// Draw-aware wireframe bias: 1,207,843 / 481,817 / 377,128 — +82 raw for
+// keying the surface polygon offset on line geometry actually drawing (model
+// edges enabled, or a section boundary) instead of on `options.lines` alone,
+// so identical renders of line-free models stay byte-identical.
+const ceilings = { raw: 1_207_843, gzip9: 481_817, brotli11: 377_128 };
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {

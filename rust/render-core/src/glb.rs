@@ -7,10 +7,15 @@ use glam::{Mat4, Vec3};
 use gltf::accessor::{DataType, Dimensions};
 use gltf::mesh::{Mode, Semantic};
 use serde::Deserialize;
-use std::{collections::BTreeMap, ops::Range};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::Range,
+};
 
 pub(crate) const MODE_TRIANGLES: u32 = 4;
 pub(crate) const MODE_LINES: u32 = 1;
+const MAX_ACCESSOR_VALUES: usize = 4_000_000;
+const MAX_TOTAL_ACCESSOR_VALUES: usize = 8_000_000;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Material {
@@ -41,9 +46,15 @@ pub(crate) struct MeshAsset {
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct ManifoldTopology {
-    pub(crate) positions: Vec<f32>,
     pub(crate) indices: Vec<u32>,
     pub(crate) primitive_ranges: Vec<Range<usize>>,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct TopologyDiagnostic {
+    pub(crate) code: &'static str,
+    pub(crate) mesh_index: usize,
+    pub(crate) detail: String,
 }
 
 #[derive(Debug, PartialEq)]
@@ -58,6 +69,7 @@ pub(crate) struct MeshInstance {
 pub(crate) struct Scene {
     pub(crate) meshes: Vec<MeshAsset>,
     pub(crate) instances: Vec<MeshInstance>,
+    pub(crate) topology_diagnostics: Vec<TopologyDiagnostic>,
     /// Exact world-space bounds over vertices referenced by draw indices.
     pub(crate) bounds: Option<([f32; 3], [f32; 3])>,
 }
@@ -66,11 +78,15 @@ impl Scene {
     fn visit_positions(
         &self,
         options: Option<&RenderOptions>,
+        mode: Option<u32>,
         visit: &mut dyn FnMut(Vec3),
     ) -> Result<bool, String> {
         let mut any = false;
         for instance in &self.instances {
             for primitive in &self.meshes[instance.mesh_index].primitives {
+                if mode.is_some_and(|mode| primitive.mode != mode) {
+                    continue;
+                }
                 if options.is_some_and(|options| {
                     !self.primitive_is_eligible(instance, primitive, options)
                 }) {
@@ -97,11 +113,41 @@ impl Scene {
         options: &RenderOptions,
         visit: &mut dyn FnMut(Vec3),
     ) -> Result<bool, String> {
-        self.visit_positions(Some(options), visit)
+        self.visit_positions(Some(options), None, visit)
+    }
+
+    /// Visit only eligible triangle positions, excluding authored line bounds.
+    pub(crate) fn for_each_surface_position(
+        &self,
+        options: &RenderOptions,
+        visit: &mut dyn FnMut(Vec3),
+    ) -> Result<bool, String> {
+        let mut any = false;
+        for instance in &self.instances {
+            for primitive in &self.meshes[instance.mesh_index].primitives {
+                if primitive.mode != MODE_TRIANGLES
+                    || !self.primitive_is_eligible(instance, primitive, options)
+                {
+                    continue;
+                }
+                for &index in &primitive.indices {
+                    let offset = index as usize * 3;
+                    let Some(position) = primitive.positions.get(offset..offset + 3) else {
+                        continue;
+                    };
+                    let world = instance.model.transform_point3(Vec3::from_slice(position));
+                    if world.is_finite() {
+                        visit(world);
+                        any = true;
+                    }
+                }
+            }
+        }
+        Ok(any)
     }
 
     fn for_each_draw_position(&self, visit: &mut dyn FnMut(Vec3)) -> Result<bool, String> {
-        self.visit_positions(None, visit)
+        self.visit_positions(None, None, visit)
     }
 
     pub(crate) fn primitive_ref(
@@ -170,6 +216,26 @@ impl Scene {
     }
 }
 
+fn validate_accessor_counts(
+    counts: impl IntoIterator<Item = (usize, usize)>,
+) -> Result<(), String> {
+    let mut total = 0_usize;
+    for (index, count) in counts {
+        if count > MAX_ACCESSOR_VALUES {
+            return Err(format!(
+                "accessor {index} count {count} exceeds {MAX_ACCESSOR_VALUES}"
+            ));
+        }
+        total = total
+            .checked_add(count)
+            .filter(|total| *total <= MAX_TOTAL_ACCESSOR_VALUES)
+            .ok_or_else(|| {
+                format!("declared accessor values exceed {MAX_TOTAL_ACCESSOR_VALUES}")
+            })?;
+    }
+    Ok(())
+}
+
 fn validate_document(document: &gltf::Document, bin: &[u8]) -> Result<(), String> {
     if document.animations().next().is_some() {
         return Err("animations are not supported".into());
@@ -177,6 +243,12 @@ fn validate_document(document: &gltf::Document, bin: &[u8]) -> Result<(), String
     if document.skins().next().is_some() {
         return Err("skins are not supported".into());
     }
+
+    validate_accessor_counts(
+        document
+            .accessors()
+            .map(|accessor| (accessor.index(), accessor.count())),
+    )?;
 
     let buffers: Vec<_> = document.buffers().collect();
     if buffers.len() > 1 {
@@ -266,7 +338,7 @@ fn validate_oriented_manifold(indices: &[u32], vertex_count: usize) -> Result<()
         return Err("manifold index count must be divisible by 3".into());
     }
     let mut edges = BTreeMap::<(u32, u32), (usize, i32)>::new();
-    let mut links = vec![Vec::<(u32, u32)>::new(); vertex_count];
+    let mut links = BTreeMap::<u32, Vec<(u32, u32)>>::new();
     for triangle in indices.as_chunks::<3>().0 {
         let [a, b, c] = *triangle;
         if a == b || b == c || c == a {
@@ -278,9 +350,9 @@ fn validate_oriented_manifold(indices: &[u32], vertex_count: usize) -> Result<()
         {
             return Err("manifold primitive index out of range".into());
         }
-        links[a as usize].push((b, c));
-        links[b as usize].push((c, a));
-        links[c as usize].push((a, b));
+        links.entry(a).or_default().push((b, c));
+        links.entry(b).or_default().push((c, a));
+        links.entry(c).or_default().push((a, b));
         for (start, end) in [(a, b), (b, c), (c, a)] {
             let key = if start < end {
                 (start, end)
@@ -298,7 +370,7 @@ fn validate_oriented_manifold(indices: &[u32], vertex_count: usize) -> Result<()
     {
         return Err("manifold primitive is not an oriented 2-manifold".into());
     }
-    for link in links.into_iter().filter(|link| !link.is_empty()) {
+    for link in links.into_values() {
         let mut adjacency = BTreeMap::<u32, Vec<u32>>::new();
         for (left, right) in link {
             adjacency.entry(left).or_default().push(right);
@@ -306,12 +378,11 @@ fn validate_oriented_manifold(indices: &[u32], vertex_count: usize) -> Result<()
         }
         let start = *adjacency.keys().next().expect("non-empty vertex link");
         let mut pending = vec![start];
-        let mut visited = Vec::new();
+        let mut visited = BTreeSet::new();
         while let Some(vertex) = pending.pop() {
-            if visited.contains(&vertex) {
+            if !visited.insert(vertex) {
                 continue;
             }
-            visited.push(vertex);
             pending.extend(&adjacency[&vertex]);
         }
         if visited.len() != adjacency.len() {
@@ -334,6 +405,11 @@ fn decode_manifold(
     let fail = |error: String| format!("{context}: {error}");
     let extension: ManifoldExtension = serde_json::from_value(value.clone())
         .map_err(|error| fail(format!("invalid extension object: {error}")))?;
+    if primitives.is_empty() {
+        return Err(fail(
+            "annotated mesh must contain a TRIANGLES primitive".into(),
+        ));
+    }
     let mut shared_attributes = None;
     let mut shared_index_view = None;
     let mut original_indices = Vec::new();
@@ -401,7 +477,7 @@ fn decode_manifold(
             "manifoldPrimitive must share the render POSITION accessor".into(),
         ));
     }
-    let positions = primitives[0].positions.clone();
+    let positions = &primitives[0].positions;
     let indices =
         read_unsigned(accessor(document, manifold.indices).map_err(&fail)?, bin).map_err(&fail)?;
     if indices.len() != original_indices.len() {
@@ -460,7 +536,6 @@ fn decode_manifold(
         }
     }
     Ok(Some(ManifoldTopology {
-        positions,
         indices,
         primitive_ranges,
     }))
@@ -470,7 +545,9 @@ fn decode_mesh(
     mesh: gltf::Mesh<'_>,
     document: &gltf::Document,
     bin: &[u8],
-) -> Result<MeshAsset, String> {
+    sections_requested: bool,
+    manifold_required: bool,
+) -> Result<(MeshAsset, Option<TopologyDiagnostic>), String> {
     let source_index = mesh.index();
     let mut primitives = Vec::new();
     for primitive in mesh.primitives() {
@@ -556,12 +633,30 @@ fn decode_mesh(
             material: validate_material(&primitive.material())?,
         });
     }
-    let manifold = decode_manifold(&mesh, document, bin, &primitives)?;
-    Ok(MeshAsset {
-        source_index,
-        primitives,
-        manifold,
-    })
+    let (manifold, diagnostic) = if sections_requested || manifold_required {
+        match decode_manifold(&mesh, document, bin, &primitives) {
+            Ok(manifold) => (manifold, None),
+            Err(detail) if manifold_required => return Err(detail),
+            Err(detail) => (
+                None,
+                Some(TopologyDiagnostic {
+                    code: "invalid-ext-mesh-manifold",
+                    mesh_index: source_index,
+                    detail,
+                }),
+            ),
+        }
+    } else {
+        (None, None)
+    };
+    Ok((
+        MeshAsset {
+            source_index,
+            primitives,
+            manifold,
+        },
+        diagnostic,
+    ))
 }
 
 fn validate_transform(model: Mat4) -> Result<Mat4, String> {
@@ -578,8 +673,7 @@ fn validate_transform(model: Mat4) -> Result<Mat4, String> {
     Ok(normal_matrix)
 }
 
-/// Parse a GLB into shared mesh assets plus deterministic core-node instances.
-pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
+fn parse_glb_impl(bytes: &[u8], sections_requested: bool) -> Result<Scene, String> {
     let glb = gltf::binary::Glb::from_slice(bytes).map_err(|error| error.to_string())?;
     let mut json: gltf::json::Root = gltf::json::deserialize::from_slice(&glb.json)
         .map_err(|error| format!("glTF JSON: {error}"))?;
@@ -590,6 +684,10 @@ pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
     {
         return Err(format!("unsupported required extension {extension}"));
     }
+    let manifold_required = json
+        .extensions_required
+        .iter()
+        .any(|extension| extension == "EXT_mesh_manifold");
     json.extensions_required
         .retain(|extension| extension != "EXT_mesh_manifold");
     let document = gltf::Document::from_json(json).map_err(|error| error.to_string())?;
@@ -603,6 +701,7 @@ pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
         return Ok(Scene {
             meshes: Vec::new(),
             instances: Vec::new(),
+            topology_diagnostics: Vec::new(),
             bounds: None,
         });
     };
@@ -612,6 +711,7 @@ pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
     let mut visited = vec![false; node_count];
     let mut mesh_map = vec![None; mesh_count];
     let mut meshes = Vec::new();
+    let mut topology_diagnostics = Vec::new();
     let mut instances = Vec::new();
     let mut roots: Vec<_> = scene.nodes().collect();
     roots.reverse();
@@ -637,7 +737,10 @@ pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
                 Some(index) => index,
                 None => {
                     let index = meshes.len();
-                    meshes.push(decode_mesh(mesh, &document, bin)?);
+                    let (mesh, diagnostic) =
+                        decode_mesh(mesh, &document, bin, sections_requested, manifold_required)?;
+                    meshes.push(mesh);
+                    topology_diagnostics.extend(diagnostic);
                     mesh_map[source_index] = Some(index);
                     index
                 }
@@ -658,6 +761,7 @@ pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
     let mut scene = Scene {
         meshes,
         instances,
+        topology_diagnostics,
         bounds: None,
     };
     let mut bounds: Option<(Vec3, Vec3)> = None;
@@ -670,6 +774,18 @@ pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
     })?;
     scene.bounds = bounds.map(|(min, max)| (min.to_array(), max.to_array()));
     Ok(scene)
+}
+
+/// Parse ordinary draw geometry without touching optional section topology.
+pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
+    parse_glb_impl(bytes, false)
+}
+
+/// Parse draw geometry and certify exact topology when sections request it.
+/// Invalid optional topology is retained as a diagnostic while the section
+/// builder certifies the base primitives instead.
+pub(crate) fn parse_glb_for_sections(bytes: &[u8]) -> Result<Scene, String> {
+    parse_glb_impl(bytes, true)
 }
 
 #[cfg(test)]
@@ -1045,7 +1161,9 @@ mod tests {
 
     #[test]
     fn supported_manifold_extension_may_be_required() {
-        parse_glb(&manifold_cube_fixture(true)).expect("EXT_mesh_manifold");
+        let scene =
+            parse_glb_for_sections(&manifold_cube_fixture(true)).expect("EXT_mesh_manifold");
+        assert!(scene.meshes[0].manifold.is_some());
     }
 
     #[test]
@@ -1063,13 +1181,20 @@ mod tests {
             .as_array_mut()
             .expect("primitives")
             .push(line.clone());
+        let scene = parse_glb_for_sections(&glb(
+            json.clone(),
+            parsed.bin.as_ref().expect("bin").to_vec(),
+        ))
+        .expect("certified fallback");
+        assert!(scene.meshes[0].manifold.is_none());
+        assert_eq!(
+            scene.topology_diagnostics[0].code,
+            "invalid-ext-mesh-manifold"
+        );
         assert!(
-            parse_glb(&glb(
-                json.clone(),
-                parsed.bin.as_ref().expect("bin").to_vec()
-            ))
-            .unwrap_err()
-            .contains("only TRIANGLES primitives")
+            scene.topology_diagnostics[0]
+                .detail
+                .contains("only TRIANGLES primitives")
         );
         json["meshes"][0]["primitives"]
             .as_array_mut()
@@ -1082,7 +1207,8 @@ mod tests {
             .expect("meshes")
             .push(json!({"primitives": [line]}));
 
-        let scene = parse_glb(&glb(json, parsed.bin.expect("bin").into_owned())).expect("scene");
+        let scene = parse_glb_for_sections(&glb(json, parsed.bin.expect("bin").into_owned()))
+            .expect("scene");
         assert!(scene.meshes[0].manifold.is_some());
         assert!(scene.meshes[1].manifold.is_none());
         assert_eq!(scene.meshes[1].primitives[0].mode, MODE_LINES);
@@ -1093,6 +1219,83 @@ mod tests {
         let mut indices = CUBE_INDICES.to_vec();
         indices.extend(CUBE_INDICES.iter().map(|index| index + 8));
         validate_oriented_manifold(&indices, 16).expect("two closed shells");
+
+        let valence = 4_096_u32;
+        let mut suspension = Vec::with_capacity(valence as usize * 6);
+        for index in 0..valence {
+            let current = 2 + index;
+            let next = 2 + (index + 1) % valence;
+            suspension.extend_from_slice(&[0, current, next, 1, next, current]);
+        }
+        validate_oriented_manifold(&suspension, valence as usize + 2)
+            .expect("high-valence manifold vertex");
+    }
+
+    #[test]
+    fn declared_accessor_counts_are_bounded_before_decoding() {
+        assert!(validate_accessor_counts([(0, MAX_ACCESSOR_VALUES)]).is_ok());
+        assert_eq!(
+            validate_accessor_counts([(7, MAX_ACCESSOR_VALUES + 1)]).unwrap_err(),
+            format!(
+                "accessor 7 count {} exceeds {MAX_ACCESSOR_VALUES}",
+                MAX_ACCESSOR_VALUES + 1
+            )
+        );
+        assert!(
+            validate_accessor_counts([(0, MAX_ACCESSOR_VALUES), (1, MAX_ACCESSOR_VALUES), (2, 1)])
+                .unwrap_err()
+                .contains("declared accessor values")
+        );
+
+        let source = fixture(Layout::Packed, 5125, true);
+        let parsed = gltf::binary::Glb::from_slice(&source).expect("fixture");
+        let mut json: Value = serde_json::from_slice(&parsed.json).expect("json");
+        json["accessors"][0]["count"] = json!(MAX_ACCESSOR_VALUES + 1);
+        assert!(
+            parse_glb(&glb(json, parsed.bin.expect("bin").into_owned()))
+                .unwrap_err()
+                .contains("accessor 0 count")
+        );
+    }
+
+    #[test]
+    fn malformed_optional_manifold_is_lazy_and_sections_use_the_certified_fallback() {
+        let source = manifold_cube_fixture(false);
+        let parsed = gltf::binary::Glb::from_slice(&source).expect("fixture");
+        let mut json: Value = serde_json::from_slice(&parsed.json).expect("json");
+        json["meshes"][0]["extensions"]["EXT_mesh_manifold"] = json!({});
+        let malformed = glb(json, parsed.bin.expect("bin").into_owned());
+
+        let ordinary = parse_glb(&malformed).expect("ordinary render ignores optional topology");
+        assert!(ordinary.topology_diagnostics.is_empty());
+
+        let section_scene = parse_glb_for_sections(&malformed).expect("fallback scene");
+        assert_eq!(
+            section_scene.topology_diagnostics[0].code,
+            "invalid-ext-mesh-manifold"
+        );
+        let cap = crate::section::build(
+            &section_scene,
+            &RenderOptions {
+                sections: Some(crate::Sections {
+                    planes: vec![crate::SectionPlane {
+                        point: [0.0; 3],
+                        normal: [1.0, 0.0, 0.0],
+                    }],
+                    clip_surfaces: true,
+                    clip_lines: true,
+                }),
+                ..RenderOptions::default()
+            },
+        )
+        .expect("certified base topology");
+        assert!(!cap.indices.is_empty());
+
+        let parsed = gltf::binary::Glb::from_slice(&malformed).expect("fixture");
+        let mut json: Value = serde_json::from_slice(&parsed.json).expect("json");
+        json["extensionsRequired"] = json!(["EXT_mesh_manifold"]);
+        let error = parse_glb(&glb(json, parsed.bin.expect("bin").into_owned())).unwrap_err();
+        assert!(error.contains("manifoldPrimitive"), "{error}");
     }
 
     #[test]
@@ -1139,7 +1342,8 @@ mod tests {
 
     #[test]
     fn sparse_manifold_indices_restore_material_seam_topology() {
-        let scene = parse_glb(&manifold_material_seam_fixture()).expect("material seam");
+        let fixture = manifold_material_seam_fixture();
+        let scene = parse_glb_for_sections(&fixture).expect("material seam");
         let topology = scene.meshes[0].manifold.as_ref().expect("manifold");
         let expected = CUBE_INDICES
             .as_chunks::<3>()
@@ -1152,24 +1356,37 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(topology.indices, expected);
         assert_eq!(topology.primitive_ranges, [0..18, 18..36]);
-        assert_eq!(topology.positions.len(), 16 * 3);
+        assert_eq!(scene.meshes[0].primitives[0].positions.len(), 16 * 3);
 
-        let cap = crate::section::build(
-            &scene,
-            &RenderOptions {
-                sections: Some(crate::Sections {
-                    planes: vec![crate::SectionPlane {
-                        point: [0.0; 3],
-                        normal: [1.0, 0.0, 0.0],
-                    }],
-                    clip_surfaces: true,
-                    clip_lines: true,
-                }),
-                ..RenderOptions::default()
-            },
-        )
-        .expect("section cap");
+        let options = RenderOptions {
+            sections: Some(crate::Sections {
+                planes: vec![crate::SectionPlane {
+                    point: [0.0; 3],
+                    normal: [1.0, 0.0, 0.0],
+                }],
+                clip_surfaces: true,
+                clip_lines: true,
+            }),
+            ..RenderOptions::default()
+        };
+        let cap = crate::section::build(&scene, &options).expect("section cap");
         assert!(!cap.indices.is_empty());
+
+        let parsed = gltf::binary::Glb::from_slice(&fixture).expect("fixture");
+        let mut json: Value = serde_json::from_slice(&parsed.json).expect("json");
+        json.as_object_mut()
+            .expect("object")
+            .remove("extensionsUsed");
+        json["meshes"][0]
+            .as_object_mut()
+            .expect("mesh")
+            .remove("extensions");
+        let fallback = parse_glb_for_sections(&glb(json, parsed.bin.expect("bin").into_owned()))
+            .expect("fallback topology");
+        let fallback_cap = crate::section::build(&fallback, &options).expect("fallback cap");
+        assert_eq!(cap.vertices, fallback_cap.vertices);
+        assert_eq!(cap.indices, fallback_cap.indices);
+        assert_eq!(cap.boundaries, fallback_cap.boundaries);
     }
 
     #[test]
@@ -1180,8 +1397,18 @@ mod tests {
         let bin = parsed.bin.expect("bin").into_owned();
 
         let rejects = |json: Value, bin: Vec<u8>, expected: &str| {
-            let error = parse_glb(&glb(json, bin)).unwrap_err();
-            assert!(error.contains(expected), "expected {expected}: {error}");
+            let scene = parse_glb_for_sections(&glb(json, bin)).expect("fallback scene");
+            let diagnostic = scene
+                .topology_diagnostics
+                .first()
+                .expect("structured topology diagnostic");
+            assert_eq!(diagnostic.code, "invalid-ext-mesh-manifold");
+            assert_eq!(diagnostic.mesh_index, 0);
+            assert!(
+                diagnostic.detail.contains(expected),
+                "expected {expected}: {}",
+                diagnostic.detail
+            );
         };
 
         let document =
@@ -1318,36 +1545,36 @@ mod tests {
             .as_object_mut()
             .expect("extension")
             .remove("mergeValues");
-        assert!(
-            parse_glb(&glb(missing_merge_values, bin.clone()))
-                .unwrap_err()
-                .contains("must be defined together")
+        rejects(
+            missing_merge_values,
+            bin.clone(),
+            "must be defined together",
         );
 
         let mut wrong_position = base.clone();
         wrong_position["meshes"][0]["extensions"]["EXT_mesh_manifold"]["manifoldPrimitive"]["attributes"]
             ["POSITION"] = json!(1);
-        assert!(
-            parse_glb(&glb(wrong_position, bin.clone()))
-                .unwrap_err()
-                .contains("must share the render POSITION accessor")
+        rejects(
+            wrong_position,
+            bin.clone(),
+            "must share the render POSITION accessor",
         );
 
         let mut wrong_count = base.clone();
         wrong_count["meshes"][0]["extensions"]["EXT_mesh_manifold"]["manifoldPrimitive"]["indices"] =
             json!(2);
-        assert!(
-            parse_glb(&glb(wrong_count, bin.clone()))
-                .unwrap_err()
-                .contains("index streams must have equal length")
+        rejects(
+            wrong_count,
+            bin.clone(),
+            "index streams must have equal length",
         );
 
         let mut mismatched_merge = base.clone();
         mismatched_merge["meshes"][0]["extensions"]["EXT_mesh_manifold"]["mergeValues"] = json!(5);
-        assert!(
-            parse_glb(&glb(mismatched_merge, bin.clone()))
-                .unwrap_err()
-                .contains("do not describe the manifold index changes")
+        rejects(
+            mismatched_merge,
+            bin.clone(),
+            "do not describe the manifold index changes",
         );
 
         let mut false_claim = base;
@@ -1361,11 +1588,7 @@ mod tests {
             .as_object_mut()
             .expect("extension")
             .remove("mergeValues");
-        assert!(
-            parse_glb(&glb(false_claim, bin))
-                .unwrap_err()
-                .contains("not an oriented 2-manifold")
-        );
+        rejects(false_claim, bin, "not an oriented 2-manifold");
     }
 
     #[test]
@@ -1815,6 +2038,7 @@ mod tests {
                 model: Mat4::from_scale(Vec3::splat(f32::MAX)),
                 normal_matrix: Mat4::IDENTITY,
             }],
+            topology_diagnostics: Vec::new(),
             bounds: None,
         };
         assert!(scene.for_each_draw_position(&mut drop).is_err());

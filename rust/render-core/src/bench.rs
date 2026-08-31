@@ -5,7 +5,7 @@
 
 use crate::{
     CameraProjection, ImageFormat, RenderCamera, RenderError, RenderOptions, RenderView, Rendered,
-    encode, render_image, render_images_timed,
+    SectionPlane, Sections, encode, render_image, render_images_timed,
 };
 
 fn fit_camera(direction: [f32; 3], up: [f32; 3]) -> RenderCamera {
@@ -111,6 +111,7 @@ pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
             model: glam::Mat4::IDENTITY,
             normal_matrix: glam::Mat4::IDENTITY,
         }],
+        topology_diagnostics: Vec::new(),
         bounds: None,
     };
     let mut report = serde_json::json!({
@@ -173,6 +174,14 @@ pub async fn bench_multi_view(
             background: Some([1.0, 1.0, 1.0, 1.0]),
             axes,
             scale_bar,
+            sections: Some(Sections {
+                planes: vec![SectionPlane {
+                    point: [0.0; 3],
+                    normal: [1.0, 0.0, 0.0],
+                }],
+                clip_surfaces: true,
+                clip_lines: true,
+            }),
             ..Default::default()
         };
         // A label is drawn where one is set, so the label leg strips them

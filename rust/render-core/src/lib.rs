@@ -589,12 +589,6 @@ fn build_plan(
     for view in views {
         let view_options = resolved_view_options(options, view);
         with_view_result(validate_options(&view_options), &view.id)?;
-        if view_options.camera.is_fit() && scene.presented_bounds(&view_options).is_none() {
-            return Err(with_view(
-                RenderError::Parse("fitted camera has no eligible geometry to frame".into()),
-                &view.id,
-            ));
-        }
         let prepared = with_view_result(
             capture_overlay::prepare_view(scene, &view_options),
             &view.id,
@@ -607,6 +601,15 @@ fn build_plan(
         });
     }
     Ok(plan)
+}
+
+fn parse_scene(glb: &[u8], options: &RenderOptions) -> Result<glb::Scene, RenderError> {
+    if options.sections.is_some() {
+        glb::parse_glb_for_sections(glb)
+    } else {
+        parse_glb(glb)
+    }
+    .map_err(RenderError::Parse)
 }
 
 /// Upload the parsed scene and run the plan on a ready renderer, assembling
@@ -682,7 +685,7 @@ async fn render_once(
         ));
     }
     let parse_started = clock(now);
-    let scene = parse_glb(glb).map_err(RenderError::Parse)?;
+    let scene = parse_scene(glb, options)?;
     let parse = clock(now) - parse_started;
     let setup_started = clock(now);
     let plan = build_plan(&scene, options, format, views)?;
@@ -729,7 +732,7 @@ impl Renderer {
         let counters_start = self.counters();
         self.recover_if_lost().await?;
         let parse_started = clock(now);
-        let scene = parse_glb(glb).map_err(RenderError::Parse)?;
+        let scene = parse_scene(glb, options)?;
         let parse = clock(now) - parse_started;
         let setup_started = clock(now);
         let plan = build_plan(&scene, options, format, views)?;
@@ -819,7 +822,7 @@ fn stage_clock<'a>(
 pub async fn render_rgba(glb: &[u8], options: &RenderOptions) -> Result<Rendered, RenderError> {
     validate_options(options)?;
     // Reject before any GPU work: parse and prepare precede device creation.
-    let parsed = parse_glb(glb).map_err(RenderError::Parse)?;
+    let parsed = parse_scene(glb, options)?;
     let prepared = capture_overlay::prepare_view(&parsed, options)?;
     let entry = render::PlanEntry {
         id: String::new(),
@@ -1579,6 +1582,11 @@ mod tests {
             let benchmark = pollster::block_on(bench::bench_multi_view(FIXTURE, 192, 192, &clock))
                 .expect("multi-view benchmark");
             assert_eq!(benchmark["variants"].as_array().map(Vec::len), Some(8));
+            assert!(
+                benchmark["variants"][0]["batch"]["timings"]["capBuild"]
+                    .as_f64()
+                    .is_some_and(|duration| duration > 0.0)
+            );
         }
     }
 
