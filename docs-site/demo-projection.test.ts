@@ -5,7 +5,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   cleanLabel,
+  demoAnglesFromDirection,
   demoControls,
+  demoDirectionFromAngles,
   readDemoOptions,
   substituteDemoValues,
   type DemoControl,
@@ -42,6 +44,16 @@ const perturb = (control: DemoControl, current: DemoValue): DemoValue => {
 };
 
 describe('interactive demo projections', () => {
+  it('round-trips spherical controls through caller-world Cartesian directions', () => {
+    expect(demoDirectionFromAngles(60, -45)).toEqual([0.6123724357, 0.5, 0.6123724357]);
+    const zUp = { up: '+z', forward: '-y' };
+    const direction = demoDirectionFromAngles(60, -45, zUp);
+    expect(direction).toEqual([0.6123724357, -0.6123724357, 0.5]);
+    const angles = demoAnglesFromDirection(direction, zUp);
+    expect(angles.phi).toBeCloseTo(60);
+    expect(angles.theta).toBeCloseTo(-45);
+  });
+
   it('builds every authored demo and keeps its agent projection verbatim', () => {
     expect(demos.length).toBeGreaterThan(0);
     for (const { code, descriptor, lang, path } of demos) {

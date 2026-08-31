@@ -98,5 +98,16 @@ All notable changes to nanoraster are recorded here.
 ## Unreleased
 
 - Extract the renderer into its standalone package.
-- Add a shared caller-world declaration for camera, section, world-light, axes,
-  and scale-bar values while preserving glTF-space defaults.
+- Replace orbit angles with fitted and fixed Cartesian cameras, configurable
+  field of view and zoom, and a flat 3-pixel output-space line width.
+- Add surface and authored-line switches, exact primitive selection,
+  deterministic multi-plane sections, caller-world camera/plane/world-light
+  coordinates, and expanded timing and resource evidence.
+- Consume validated `EXT_mesh_manifold` topology for deterministic section
+  caps.
+- Close valid section cuts through paired halfedges. A true cut ring that
+  collapses below the fixed-point quantum now fails with the named diagnostic
+  prefix `sections: cap:`, naming the collapse below three quantized points,
+  instead of returning an empty cap.
+- Build browser artifacts with Rust 1.98, wasm-pack 0.15, and exact-pinned
+  Binaryen 132.

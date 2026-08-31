@@ -9,27 +9,34 @@ whole model in frame.
 
 ## Position, target, and roll
 
-`position`, `target`, and `up` are three-number tuples in the submitted GLB's
-world frame. `position` and `target` establish the view direction. `up`
-establishes screen vertical, so changing it rolls the camera without moving the
-eye. Position and target must differ; up must not be collinear with the view.
+`position`, `target`, and `up` are three-number tuples in the caller world
+declared by the request's shared `world`. `position` and `target` establish the
+view direction. `up` establishes screen vertical, so changing it rolls the
+camera without moving the eye. Position and target must differ; up must not be
+collinear with the view. Omit `world` for canonical glTF +Y-up metres.
 
 ```typescript
-import type { RenderCamera } from 'nanoraster';
+import type { RenderCamera, RenderWorld } from 'nanoraster';
+
+const callerWorld = {
+  up: '+z',
+  forward: '-y',
+  unit: 'meter',
+} as const satisfies RenderWorld;
 
 const inspectionCamera = {
   framing: 'fixed',
-  position: [0.08, 0.04, 0.08],
+  position: [0.08, -0.08, 0.04],
   target: [0, 0, 0],
-  up: [0, 1, 0],
+  up: [0, 0, 1],
   projection: { kind: 'perspective', verticalFieldOfView: 45, zoom: 1.2 },
   clipping: { near: 0.005, far: 1 },
 } as const satisfies RenderCamera;
 ```
 
-The numbers use GLB world units. If the file stores metres, `0.08` is 80 mm.
-nanoraster does not reinterpret a CAD source axis; convert the camera into the
-same coordinate frame as the GLB before sending the request.
+Here `0.08` is 80 mm along a Z-up metre caller axis. Pass `callerWorld` beside
+the camera; nanoraster performs the one conversion to canonical GLB space.
+Do not pre-convert these values in the caller.
 
 ## Projection and zoom
 
@@ -41,7 +48,7 @@ effective field of view = 2 × atan(tan(verticalFieldOfView / 2) / zoom)
 ```
 
 Orthographic cameras replace field of view with `verticalSpan`, the visible
-world-space height before zoom:
+caller-world height before zoom:
 
 ```text
 effective vertical span = verticalSpan / zoom
@@ -61,15 +68,12 @@ const planCamera = {
 
 ## Clipping
 
-Omit `clipping` to derive safe positive near and far planes from the subject
-bounds. Supply it when matching another renderer's visible clipping. `near`
-must be positive and `far` must be greater. Geometry before the near plane or
-after the far plane is intentionally absent. Range outside the subject bounds
-is tightened without changing visible geometry, which preserves depth
-precision when a host camera uses a very broad safety range. Authored fat lines
-crossing the near plane are trimmed before screen-space expansion.
+Omit `clipping` to derive safe positive planes from subject bounds. Supply it
+to match another renderer: `near` must be positive and `far` greater. Unused
+range is tightened for depth precision without changing visible geometry.
+Fat lines crossing the near plane are trimmed before expansion.
 
-## Try four preset cameras
+## Try two preset cameras
 
 This request is also a serializable RPC payload. Pick a preset in the control
 panel, then edit its vectors and projection. The visible code and executed
@@ -103,28 +107,6 @@ const images = await renderImages(glb, {
         clipping: { near: 0.005, far: 1 },
       },
     },
-    {
-      id: 'low',
-      label: 'Low inspection',
-      camera: {
-        framing: 'fixed',
-        position: [0.1, -0.025, 0.035],
-        target: [0, 0, 0],
-        up: [0, 1, 0],
-        projection: { kind: 'perspective', verticalFieldOfView: 52 },
-      },
-    },
-    {
-      id: 'plan',
-      label: 'Orthographic plan',
-      camera: {
-        framing: 'fixed',
-        position: [0, 0.12, 0],
-        target: [0, 0, 0],
-        up: [0, 0, 1],
-        projection: { kind: 'orthographic', verticalSpan: 0.08 },
-      },
-    },
   ],
 });
 ```
@@ -143,6 +125,7 @@ const request = {
   format: 'png',
   width: 1600,
   height: 900,
+  world: callerWorld,
   camera: inspectionCamera,
 } as const;
 

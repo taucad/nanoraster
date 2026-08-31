@@ -130,6 +130,20 @@
   min-width: 0;
 }
 
+.spherical {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.advanced summary {
+  margin-bottom: 10px;
+  color: var(--color-fd-muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
 .code {
   grid-area: code;
   min-width: 0;

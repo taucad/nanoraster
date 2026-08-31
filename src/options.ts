@@ -392,9 +392,19 @@ export type RenderTimings = {
 
 type NoExtraKeys<Value, Shape> = Value & Record<Exclude<keyof Value, keyof Shape>, never>;
 
+type StrictItems<Items extends readonly Shape[], Shape> = {
+  readonly [Index in keyof Items]: Items[Index] extends Shape ? NoExtraKeys<Items[Index], Shape> : never;
+};
+
 type StrictLighting<Lighting> = Lighting extends RenderLightingRig
-  ? NoExtraKeys<Lighting, RenderLightingRig>
+  ? NoExtraKeys<Lighting, RenderLightingRig> & {
+      readonly lights: StrictItems<Lighting['lights'], RenderLight>;
+    }
   : Lighting;
+
+type StrictVisiblePrimitives<Primitives> = Primitives extends readonly RenderPrimitiveReference[]
+  ? StrictItems<Primitives, RenderPrimitiveReference>
+  : Primitives;
 
 type StrictWorld<World> = World extends RenderWorld ? NoExtraKeys<World, RenderWorld> : World;
 
@@ -465,6 +475,7 @@ export type StrictRenderImagesOptions<Options extends RenderImagesOptions> = NoE
 > & {
   readonly views: StrictViews<Options['views']>;
   readonly lighting?: StrictLighting<Options['lighting']>;
+  readonly visiblePrimitives?: StrictVisiblePrimitives<Options['visiblePrimitives']>;
   readonly sections?: StrictSections<Options['sections']>;
   readonly world?: StrictWorld<Options['world']>;
 };
@@ -682,8 +693,8 @@ const validateWorld = (world: unknown): void => {
     throw new TypeError('world must be an object');
   }
   assertKnownKeys(world, worldKeys, 'world');
-  const up = (world['up'] ?? '+y') as RenderWorldAxis;
-  const forward = (world['forward'] ?? '+z') as RenderWorldAxis;
+  const up = (world['up'] === undefined ? '+y' : world['up']) as RenderWorldAxis;
+  const forward = (world['forward'] === undefined ? '+z' : world['forward']) as RenderWorldAxis;
   assertOptionalEnum(up, 'world.up', worldAxes);
   assertOptionalEnum(forward, 'world.forward', worldAxes);
   assertOptionalEnum(world['unit'], 'world.unit', ['meter', 'millimeter']);

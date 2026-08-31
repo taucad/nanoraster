@@ -3,8 +3,8 @@ title: Cut section views
 description: Cut one or more retained half-spaces and render deterministic striped caps and outlines.
 ---
 
-A section plane is a point and a normal in the submitted GLB's world frame.
-The normal points into the half-space that remains visible.
+Plane points and normals use the caller world; normals point into the retained
+half-space. Omit `world` for canonical glTF +Y-up metres.
 
 ## Cut with one or more planes
 
@@ -19,6 +19,7 @@ import { renderImage } from 'nanoraster';
 
 const image = await renderImage(glb, {
   format: 'webp',
+  world: { up: '+z', forward: '-y', unit: 'meter' },
   sections: {
     planes: [
       { point: [0, 0, 0], normal: [-1, 0, 0] },
@@ -32,31 +33,34 @@ const image = await renderImage(glb, {
 
 </RenderDemo>
 
-Normals accept any finite non-zero magnitude and are normalized internally.
-An empty plane list is invalid; omit `sections` to render without a cut.
+Normals accept any finite non-zero magnitude. Omit `sections` for no cut. Here
+the second normal is caller +Z; nanoraster converts the plane once.
 
 ## Control what each plane clips
 
-`clipSurfaces` and `clipLines` both default to `true`. Turning off
-`clipSurfaces` leaves triangle surfaces unchanged and produces no caps while
-authored lines may still be cut. Turning off `clipLines` leaves authored lines
-unchanged while surfaces, caps, and cap outlines still follow the planes.
+Both switches default to `true`. Disabling `clipSurfaces` leaves triangles
+uncut and produces no caps; disabling `clipLines` leaves authored lines uncut.
 
 ## Read the cap
 
-Closed, orientable triangle surfaces receive striped material-colour caps and
-black outlines. Overlapping caps are red with yellow cross-stripes; touching
-regions retain their material style.
+Closed orientable surfaces receive striped material-colour caps and black
+outlines. Overlaps are red with yellow cross-stripes.
 
-A successful render contains every true cap. Open or non-manifold topology and
-fixed-precision overflow return a source-and-plane `parse` error. Tangent planes
-may yield an outline without a cap. nanoraster pairs duplicated glTF seams but
-does not repair meshes.
+A successful render contains every true cap. Unsupported topology and
+fixed-precision overflow return source-and-plane `parse` errors. Tangent planes
+may yield only an outline. nanoraster pairs duplicated glTF seams but does not
+repair meshes.
 
-A valid `EXT_mesh_manifold` mesh supplies exact cap topology. Base primitives
-control rendering, materials, and visibility.
+### Contract note: sub-quantum ring collapse
 
-Hatch direction follows the section plane; spacing follows the camera.
+If a true cut ring collapses below three fixed-grid points, rendering fails
+rather than returning a partial cap. Its named `sections: cap:` diagnostic says
+`true cut ring collapsed below three quantized points` and includes the source
+and plane. Rescale the model or move the cut beyond that quantum.
+
+A valid `EXT_mesh_manifold` mesh supplies exact topology. Base primitives still
+control rendering, materials, and visibility. Hatch direction follows the
+plane; spacing follows the camera.
 
 Fitted framing follows the visible primitive set but does not refit after a
 plane moves. The cut therefore reveals the interior without making the camera

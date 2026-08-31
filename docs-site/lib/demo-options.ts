@@ -14,6 +14,70 @@ export type DemoValue = number | string | boolean | readonly number[];
 export type DemoPathPart = string | number;
 export type DemoSpan = { readonly start: number; readonly end: number };
 
+type DemoWorld = { readonly up?: unknown; readonly forward?: unknown };
+type Vector3 = readonly [number, number, number];
+
+const axisVector = (axis: unknown, fallback: Vector3): Vector3 => {
+  if (typeof axis !== 'string' || !/^[+-][xyz]$/u.test(axis)) return fallback;
+  const sign = axis[0] === '+' ? 1 : -1;
+  if (axis[1] === 'x') return [sign, 0, 0];
+  if (axis[1] === 'y') return [0, sign, 0];
+  return [0, 0, sign];
+};
+
+const callerBasis = (world: unknown): readonly [right: Vector3, up: Vector3, forward: Vector3] => {
+  const declaration =
+    world !== null && typeof world === 'object' && !Array.isArray(world) ? (world as DemoWorld) : {};
+  const up = axisVector(declaration.up, [0, 1, 0]);
+  const forward = axisVector(declaration.forward, [0, 0, 1]);
+  return [
+    [
+      up[1] * forward[2] - up[2] * forward[1],
+      up[2] * forward[0] - up[0] * forward[2],
+      up[0] * forward[1] - up[1] * forward[0],
+    ],
+    up,
+    forward,
+  ];
+};
+
+const dot = (left: readonly number[], right: Vector3): number =>
+  (left[0] ?? 0) * right[0] + (left[1] ?? 0) * right[1] + (left[2] ?? 0) * right[2];
+
+/** Docs-only spherical veneer over the public Cartesian fit-camera direction. */
+export const demoDirectionFromAngles = (
+  phiDegrees: number,
+  thetaDegrees: number,
+  world?: unknown,
+): Vector3 => {
+  const phi = (phiDegrees * Math.PI) / 180;
+  const theta = (thetaDegrees * Math.PI) / 180;
+  const [right, up, forward] = callerBasis(world);
+  const planar = Math.sin(phi);
+  const component = (index: 0 | 1 | 2): number => {
+    const value =
+      right[index] * planar * Math.cos(theta) +
+      up[index] * Math.cos(phi) -
+      forward[index] * planar * Math.sin(theta);
+    return Math.abs(value) < 1e-10 ? 0 : Number(value.toFixed(10));
+  };
+  return [component(0), component(1), component(2)];
+};
+
+/** Recover the docs-only angles from a Cartesian fit-camera direction. */
+export const demoAnglesFromDirection = (
+  direction: readonly number[],
+  world?: unknown,
+): { readonly phi: number; readonly theta: number } => {
+  const [right, up, forward] = callerBasis(world);
+  const length = Math.hypot(...direction);
+  if (length === 0 || !Number.isFinite(length)) return { phi: 90, theta: 0 };
+  return {
+    phi: (Math.acos(Math.max(-1, Math.min(1, dot(direction, up) / length))) * 180) / Math.PI,
+    theta: (Math.atan2(-dot(direction, forward), dot(direction, right)) * 180) / Math.PI,
+  };
+};
+
 type DemoCamera = {
   readonly framing: 'fit' | 'fixed';
   readonly direction?: readonly [number, number, number];

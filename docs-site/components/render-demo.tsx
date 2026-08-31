@@ -5,12 +5,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   cleanLabel,
+  demoAnglesFromDirection,
   demoControls,
+  demoDirectionFromAngles,
   describeDemoView,
   isRawDemo,
   readDemoOptions,
   substituteDemoValues,
   type DemoDescriptor,
+  type DemoControl,
   type DemoValue,
 } from '@/lib/demo-options';
 import { buildDemoRequest } from '@/lib/demo-request';
@@ -222,6 +225,28 @@ export const RenderDemo = ({
     void draw(next);
   };
 
+  const vectorInputs = (control: Extract<DemoControl, { readonly kind: 'vector' }>): React.JSX.Element => (
+    <span className={styles.vector}>
+      {[0, 1, 2].map((index) => (
+        <input
+          aria-label={`${control.label} ${['x', 'y', 'z'][index]}`}
+          key={index}
+          max={control.max}
+          min={control.min}
+          onChange={(event) => {
+            const current = values[control.key];
+            const vector = Array.isArray(current) ? Array.from(current) : [0, 0, 0];
+            vector[index] = Number(event.currentTarget.value);
+            update(control.key, vector);
+          }}
+          step={control.step}
+          type="number"
+          value={(values[control.key] as readonly number[] | undefined)?.[index] ?? 0}
+        />
+      ))}
+    </span>
+  );
+
   const shown = useMemo(
     () => (parsedDescriptor.code === code ? substituteDemoValues(parsedDescriptor, values) : code),
     [code, parsedDescriptor, values],
@@ -322,91 +347,140 @@ export const RenderDemo = ({
               </select>
             </label>
           ) : undefined}
-          {controls.map((control) => (
-            <label className={styles.control} key={control.key}>
-              <span>{control.label}</span>
-
-              {control.kind === 'range' ? (
-                <input
-                  // PNG is the one format that ignores quality entirely.
-                  disabled={control.key === 'quality' && values['format'] === 'png'}
-                  max={control.max}
-                  min={control.min}
-                  onChange={(event) => {
-                    update(control.key, Number(event.currentTarget.value));
-                  }}
-                  step={control.step}
-                  type="range"
-                  value={Number(values[control.key] ?? 0)}
-                />
-              ) : control.kind === 'choice' ? (
-                <select
-                  onChange={(event) => {
-                    update(control.key, event.currentTarget.value);
-                  }}
-                  value={String(values[control.key] ?? '')}
-                >
-                  {control.choices.map((choice, index) => (
-                    <option key={choice} value={choice}>
-                      {control.labels?.[index] ?? choice}
-                    </option>
-                  ))}
-                </select>
-              ) : control.kind === 'vector' ? (
-                <span className={styles.vector}>
-                  {[0, 1, 2].map((index) => (
+          {controls.map((control) => {
+            if (
+              control.kind === 'vector' &&
+              (control.key === 'camera.direction' || control.key.endsWith('.camera.direction'))
+            ) {
+              const direction = values[control.key];
+              const angles = demoAnglesFromDirection(
+                Array.isArray(direction) ? direction : [0.6123724357, 0.5, 0.6123724357],
+                parsedDescriptor.request['world'],
+              );
+              return (
+                <div className={styles.spherical} key={control.key}>
+                  <label className={styles.control}>
+                    <span>
+                      φ {angles.phi.toFixed(0)}° · elev {(90 - angles.phi).toFixed(0)}°
+                    </span>
                     <input
-                      aria-label={`${control.label} ${['x', 'y', 'z'][index]}`}
-                      key={index}
-                      max={control.max}
-                      min={control.min}
+                      aria-label="phi polar angle"
+                      max={180}
+                      min={0}
                       onChange={(event) => {
-                        const current = values[control.key];
-                        const vector = Array.isArray(current) ? Array.from(current) : [0, 0, 0];
-                        vector[index] = Number(event.currentTarget.value);
-                        update(control.key, vector);
+                        update(
+                          control.key,
+                          demoDirectionFromAngles(
+                            Number(event.currentTarget.value),
+                            angles.theta,
+                            parsedDescriptor.request['world'],
+                          ),
+                        );
                       }}
-                      step={control.step}
-                      type="number"
-                      value={(values[control.key] as readonly number[] | undefined)?.[index] ?? 0}
+                      step={1}
+                      type="range"
+                      value={angles.phi}
                     />
-                  ))}
-                </span>
-              ) : control.kind === 'text' ? (
-                <input
-                  onChange={(event) => {
-                    update(control.key, cleanLabel(event.currentTarget.value));
-                  }}
-                  placeholder="no label"
-                  type="text"
-                  value={String(values[control.key] ?? '')}
-                />
-              ) : control.kind === 'colour' ? (
-                <input
-                  onChange={(event) => {
-                    // Rounded so the literal written back into the example
-                    // stays readable; four places is well below a visible step.
-                    update(
-                      control.key,
-                      hexToLinear(event.currentTarget.value).map((part) => Number(part.toFixed(4))),
-                    );
-                  }}
-                  type="color"
-                  value={linearToHex(
-                    Array.isArray(values[control.key]) ? (values[control.key] as number[]) : [1, 1, 1, 1],
-                  )}
-                />
-              ) : (
-                <input
-                  checked={values[control.key] === true}
-                  onChange={(event) => {
-                    update(control.key, event.currentTarget.checked);
-                  }}
-                  type="checkbox"
-                />
-              )}
-            </label>
-          ))}
+                  </label>
+                  <label className={styles.control}>
+                    <span>θ azimuth · {angles.theta.toFixed(0)}°</span>
+                    <input
+                      aria-label="theta azimuth angle"
+                      max={180}
+                      min={-180}
+                      onChange={(event) => {
+                        update(
+                          control.key,
+                          demoDirectionFromAngles(
+                            angles.phi,
+                            Number(event.currentTarget.value),
+                            parsedDescriptor.request['world'],
+                          ),
+                        );
+                      }}
+                      step={1}
+                      type="range"
+                      value={angles.theta}
+                    />
+                  </label>
+                  <details className={styles.advanced}>
+                    <summary>advanced · direction XYZ</summary>
+                    <label className={styles.control}>
+                      <span>{control.label}</span>
+                      {vectorInputs(control)}
+                    </label>
+                  </details>
+                </div>
+              );
+            }
+            return (
+              <label className={styles.control} key={control.key}>
+                <span>{control.label}</span>
+
+                {control.kind === 'range' ? (
+                  <input
+                    // PNG is the one format that ignores quality entirely.
+                    disabled={control.key === 'quality' && values['format'] === 'png'}
+                    max={control.max}
+                    min={control.min}
+                    onChange={(event) => {
+                      update(control.key, Number(event.currentTarget.value));
+                    }}
+                    step={control.step}
+                    type="range"
+                    value={Number(values[control.key] ?? 0)}
+                  />
+                ) : control.kind === 'choice' ? (
+                  <select
+                    onChange={(event) => {
+                      update(control.key, event.currentTarget.value);
+                    }}
+                    value={String(values[control.key] ?? '')}
+                  >
+                    {control.choices.map((choice, index) => (
+                      <option key={choice} value={choice}>
+                        {control.labels?.[index] ?? choice}
+                      </option>
+                    ))}
+                  </select>
+                ) : control.kind === 'vector' ? (
+                  vectorInputs(control)
+                ) : control.kind === 'text' ? (
+                  <input
+                    onChange={(event) => {
+                      update(control.key, cleanLabel(event.currentTarget.value));
+                    }}
+                    placeholder="no label"
+                    type="text"
+                    value={String(values[control.key] ?? '')}
+                  />
+                ) : control.kind === 'colour' ? (
+                  <input
+                    onChange={(event) => {
+                      // Rounded so the literal written back into the example
+                      // stays readable; four places is well below a visible step.
+                      update(
+                        control.key,
+                        hexToLinear(event.currentTarget.value).map((part) => Number(part.toFixed(4))),
+                      );
+                    }}
+                    type="color"
+                    value={linearToHex(
+                      Array.isArray(values[control.key]) ? (values[control.key] as number[]) : [1, 1, 1, 1],
+                    )}
+                  />
+                ) : (
+                  <input
+                    checked={values[control.key] === true}
+                    onChange={(event) => {
+                      update(control.key, event.currentTarget.checked);
+                    }}
+                    type="checkbox"
+                  />
+                )}
+              </label>
+            );
+          })}
         </div>
 
         {codeBelowControls ? (

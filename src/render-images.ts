@@ -31,38 +31,47 @@ export const serializeImagesOptions = (options: RenderImagesOptions): string => 
 };
 
 const parseTimings = (json: string): RenderTimings => {
-  const raw = JSON.parse(json) as {
-    parse: number;
-    setup: number;
-    capBuild: number;
-    upload: number;
-    peakReadbackBytes: number;
-    glbParses: number;
-    adapterDeviceRequests: number;
-    pipelineSets: number;
-    presentationBuilds: number;
-    sceneUploads: number;
-    targetAllocations: number;
-    views: Array<{ id: string; render: number; overlay: number; encode: number }>;
+  const object = (value: unknown, name: string): Record<string, unknown> => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new TypeError(`renderer contract violation: ${name} must be an object`);
+    }
+    return value as Record<string, unknown>;
   };
+  const number = (value: unknown, name: string): number => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new TypeError(`renderer contract violation: ${name} must be a finite number`);
+    }
+    return value;
+  };
+
+  const raw = object(JSON.parse(json), 'timings');
+  if (!Array.isArray(raw['views'])) {
+    throw new TypeError('renderer contract violation: timings.views must be an array');
+  }
   return {
-    parse: raw.parse,
-    setup: raw.setup,
-    capBuild: raw.capBuild,
-    upload: raw.upload,
-    peakReadbackBytes: raw.peakReadbackBytes,
-    glbParses: raw.glbParses,
-    adapterDeviceRequests: raw.adapterDeviceRequests,
-    pipelineSets: raw.pipelineSets,
-    presentationBuilds: raw.presentationBuilds,
-    sceneUploads: raw.sceneUploads,
-    targetAllocations: raw.targetAllocations,
-    views: raw.views.map(({ id, render, overlay, encode }) => ({
-      id,
-      render,
-      overlay,
-      encode,
-    })),
+    parse: number(raw['parse'], 'timings.parse'),
+    setup: number(raw['setup'], 'timings.setup'),
+    capBuild: number(raw['capBuild'], 'timings.capBuild'),
+    upload: number(raw['upload'], 'timings.upload'),
+    peakReadbackBytes: number(raw['peakReadbackBytes'], 'timings.peakReadbackBytes'),
+    glbParses: number(raw['glbParses'], 'timings.glbParses'),
+    adapterDeviceRequests: number(raw['adapterDeviceRequests'], 'timings.adapterDeviceRequests'),
+    pipelineSets: number(raw['pipelineSets'], 'timings.pipelineSets'),
+    presentationBuilds: number(raw['presentationBuilds'], 'timings.presentationBuilds'),
+    sceneUploads: number(raw['sceneUploads'], 'timings.sceneUploads'),
+    targetAllocations: number(raw['targetAllocations'], 'timings.targetAllocations'),
+    views: raw['views'].map((value, index) => {
+      const view = object(value, `timings.views[${index}]`);
+      if (typeof view['id'] !== 'string') {
+        throw new TypeError(`renderer contract violation: timings.views[${index}].id must be a string`);
+      }
+      return {
+        id: view['id'],
+        render: number(view['render'], `timings.views[${index}].render`),
+        overlay: number(view['overlay'], `timings.views[${index}].overlay`),
+        encode: number(view['encode'], `timings.views[${index}].encode`),
+      };
+    }),
   };
 };
 

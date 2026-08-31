@@ -113,10 +113,11 @@ Node.js builtin and resolves the wasm asset without bundler configuration.
 of readback and encode competing with input.
 
 **Capturing a live viewer's camera.** Freeze the viewer's numeric pose before
-starting the asynchronous render. The vectors must use the submitted GLB's
-world frame, and output width and height must use the same aspect as the viewer.
+rendering. Keep the pose in the same caller world passed to nanoraster; never
+pre-convert it to GLB space. Match the viewer's output aspect.
 
 ```typescript
+const world = { up: '+z', forward: '-y', unit: 'meter' } as const;
 const camera = {
   framing: 'fixed',
   position: [eye.x, eye.y, eye.z],
@@ -133,12 +134,12 @@ const image = await renderImage(glb, {
   format: 'webp',
   width: 1600,
   height: 900,
+  world,
   camera,
 });
 ```
 
 For an orthographic viewer, use `kind: 'orthographic'` and set `verticalSpan`
-to its unzoomed visible height. The wire contract defines field of view, zoom,
-and span without naming a framework; keep object extraction in a consumer
-adapter. [Place the camera](place-the-camera) gives the equations and clipping
-rules.
+to its unzoomed caller-world height. If the viewer stores canonical GLB camera
+values, transform them back to its declared caller world once in the adapter.
+[Place the camera](place-the-camera) gives the equations and clipping rules.

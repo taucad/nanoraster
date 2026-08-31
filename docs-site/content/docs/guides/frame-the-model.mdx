@@ -11,10 +11,9 @@ subject in frame.
 ## Set direction and screen up
 
 `direction` points from the subject toward the camera. `up` establishes screen
-vertical and preserves roll. Both are Cartesian vectors in the GLB's world
-frame; their magnitudes are ignored, and they must not be collinear. Fitting
-may translate the camera and optical target together to balance the subject's
-angular envelope without changing that orientation.
+vertical and preserves roll. Both are Cartesian vectors in the declared caller
+world; their magnitudes are ignored, and they must not be collinear. Fitting may
+translate the camera and optical target together without changing orientation.
 
 <RenderDemo>
 
@@ -23,18 +22,39 @@ import { renderImage } from 'nanoraster';
 
 const image = await renderImage(glb, {
   format: 'webp',
+  world: { up: '+z', forward: '-y', unit: 'meter' },
   camera: {
     framing: 'fit',
-    direction: [0.6123724357, 0.5, 0.6123724357],
+    direction: [0.6123724357, -0.6123724357, 0.5],
+    up: [0, 0, 1],
   },
 });
 ```
 
 </RenderDemo>
 
-Those vectors spell the default three-quarter view. Omit `camera` to get the
-same result. For a top view, use `direction: [0, 1, 0]` and a non-collinear
-screen-up such as `[0, 0, 1]`.
+This worked request authors a three-quarter view in Z-up metres; nanoraster
+converts it once to the GLB frame. The live φ/θ controls derive the Cartesian
+`direction` shown in the copyable code. Expand **advanced · direction XYZ** for
+raw vector entry.
+
+## Turn angles into directions
+
+For a default +Y-up, +Z-forward caller world, φ is the polar angle from up and
+θ is azimuth. This helper preserves the former angle convention for turntables:
+
+```typescript
+import type { RenderVector3 } from 'nanoraster';
+
+const directionFromAngles = (phiDegrees: number, thetaDegrees: number): RenderVector3 => {
+  const phi = (phiDegrees * Math.PI) / 180;
+  const theta = (thetaDegrees * Math.PI) / 180;
+  return [Math.sin(phi) * Math.cos(theta), Math.cos(phi), -Math.sin(phi) * Math.sin(theta)];
+};
+```
+
+Pass each result as a fitted camera's `direction`; the renderer API remains
+Cartesian.
 
 ## Choose the fitted projection
 
@@ -79,26 +99,6 @@ A fixed camera is never changed by annotations.
 
 ### Very wide perspective
 
-The supported `1..179` degree range is rectilinear: 90 degrees is ordinary,
-while values approaching 180 compress most forward rays toward the image
-centre. Nanoraster keeps every referenced point in front of the eye and inside
-the frame, so a deep subject may gain extra whitespace once positive front
-clearance becomes stricter than the requested minimum margin. Use a narrower
-field of view for photographic framing; a fisheye would be a different
-projection model.
-
-## Batch views
-
-Each view owns an optional complete camera. Omission means the same default fit
-as `renderImage`; there is no shared partial camera or inheritance order.
-
-```typescript
-const views = [
-  { id: 'iso' },
-  { id: 'right', camera: { framing: 'fit', direction: [1, 0, 0] } },
-  {
-    id: 'top',
-    camera: { framing: 'fit', direction: [0, 1, 0], up: [0, 0, 1], projection: { kind: 'orthographic' } },
-  },
-] as const;
-```
+The `1..179` degree range is rectilinear. Near 180 degrees, positive front
+clearance can add whitespace beyond `margin`. Use a narrower field for
+photographic framing; fisheye is a different projection.

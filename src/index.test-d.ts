@@ -372,6 +372,33 @@ void ({
   // @ts-expect-error direction needs three components
   lighting: { lights: [{ direction: [0, 1], color: [1, 1, 1] }] },
 } as const satisfies ImageOptions);
+void renderImages(glb, {
+  format: 'png',
+  lighting: {
+    lights: [
+      {
+        direction: [0, 1, 0],
+        color: [1, 1, 1],
+        // @ts-expect-error deep unknown light keys are rejected by generic calls
+        intensity: 2,
+      },
+    ],
+  },
+  views: [{ id: 'front' }],
+});
+void renderImages(glb, {
+  format: 'png',
+  visiblePrimitives: [
+    {
+      nodeIndex: 0,
+      meshIndex: 0,
+      primitiveIndex: 0,
+      // @ts-expect-error deep unknown primitive keys are rejected by generic calls
+      componentId: 'part',
+    },
+  ],
+  views: [{ id: 'front' }],
+});
 void ({
   format: 'png',
   lighting: {

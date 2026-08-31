@@ -76,6 +76,7 @@ subject is black.
 ```typescript
 const images = await renderImages(glb, {
   format: 'webp',
+  world: { up: '+z', forward: '-y', unit: 'meter' },
   lighting: {
     lights: [{ direction: [1, 0.4, 0], color: [3, 2.9, 2.7] }],
     space: 'world',
@@ -89,12 +90,10 @@ const images = await renderImages(glb, {
 
 </RenderDemo>
 
-`space: 'world'` authors the directions in glTF world coordinates, so the rig
-stays attached to the model while the camera orbits it. That deliberately breaks
-what makes a view sheet comparable: under the default `'view'`, `front` and
-`back` differ only in geometry; under `'world'` the back is in shadow because the
-light never moved. Choose it when the light belongs to the subject, not for
-contact sheets.
+`space: 'world'` reads directions in the declared caller world, so this light
+stays fixed to the Z-up subject while the camera orbits. Nanoraster converts it
+once; do not supply GLB-space values. Under default `'view'`, the rig instead
+travels with each camera, which is usually better for contact sheets.
 
 ### 4. Keep the preset pinned
 

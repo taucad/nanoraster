@@ -14,6 +14,41 @@ The package has no compatibility commitments before its first stable release.
   preserves the requested rectilinear field of view, and may translate its
   optical axis while preserving `direction`; `margin` is a minimum contained
   border rather than an exact fill promise.
+
+  To preserve an old `(phi, theta, up)` view, convert degrees to radians as
+  `p = phi * Math.PI / 180` and `t = theta * Math.PI / 180`, then use the
+  matching former up-axis formula:
+
+  ```typescript
+  const direction =
+    up === 'x'
+      ? [Math.cos(p), Math.sin(p) * Math.cos(t), Math.sin(p) * Math.sin(t)]
+      : up === 'z'
+        ? [Math.sin(p) * Math.cos(t), Math.sin(p) * Math.sin(t), Math.cos(p)]
+        : [Math.sin(p) * Math.cos(t), Math.cos(p), -Math.sin(p) * Math.sin(t)];
+  ```
+
+  The last branch is the old default `up: 'y'`. Put `direction` and the
+  corresponding Cartesian screen-up vector inside `camera: { framing: 'fit',
+... }`.
+
+- `RenderTimings` changes from `{ parse, setup, views }` to the following
+  required shape:
+
+  ```typescript
+  {
+    parse, setup, capBuild, upload,
+    peakReadbackBytes, glbParses, adapterDeviceRequests, pipelineSets,
+    presentationBuilds, sceneUploads, targetAllocations,
+    views: [{ id, render, overlay, encode }],
+  }
+  ```
+
+  `setup` is now the inclusive renderer-acquisition, presentation, cap-build,
+  and upload interval; `capBuild` and `upload` expose two included stages.
+  Exact snapshots and consumers enumerating timing keys must add the resource
+  counters and the two stage fields.
+
 - WebP `quality` values below `1` encode lossy instead of being ignored. A
   request that passed an explicit `quality` under a lossless-only release now
   produces a lossy file; drop the option or pass `1` to keep lossless output.

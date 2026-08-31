@@ -93,6 +93,8 @@ describe('image request serialization', () => {
       [null, 'world must be an object'],
       [{ north: '+z' }, 'world contains unknown property "north"'],
       [{ up: 'z' }, 'world.up must be +x or -x or +y or -y or +z or -z'],
+      [{ up: null }, 'world.up must be +x or -x or +y or -y or +z or -z'],
+      [{ forward: null }, 'world.forward must be +x or -x or +y or -y or +z or -z'],
       [{ forward: '+x', unit: 'inch' }, 'world.unit must be meter or millimeter'],
       [{ up: '+z' }, 'world.up and world.forward must name different axes'],
       [{ up: '+z', forward: '+y' }, 'world.up and world.forward must define a right-handed frame'],
