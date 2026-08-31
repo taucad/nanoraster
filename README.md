@@ -9,14 +9,12 @@
 </p>
 
 Tiny headless WebGPU glTF renderer for deterministic PNG, WebP, JPEG, and raw RGBA output.
-Runs on a native binary in Node.js and on WebGPU in the browser, from one Rust
-render core.
+One Rust core runs native in Node.js and on WebGPU in the browser.
 
 [![PBR spur gear rendered to WebP by nanoraster](https://nanoraster.xyz/demo/helical-gear-pbr.webp)](https://nanoraster.xyz/#live-demo)
 
-Try the [live demo](https://nanoraster.xyz/#live-demo), then read the
-[docs](https://nanoraster.xyz/docs): quick start, guides and the API reference,
-also served as Markdown for agents at
+Try the [live demo](https://nanoraster.xyz/#live-demo), then the
+[docs](https://nanoraster.xyz/docs) — served as Markdown for agents at
 [nanoraster.xyz/llms.txt](https://nanoraster.xyz/llms.txt).
 
 ## Install
@@ -41,18 +39,37 @@ const image = await renderImage(glb, {
 await writeFile(image.name, image.bytes);
 ```
 
-Same request, same pixels: the camera, lighting and encoder are fixed for a
-given request, so a render can serve as evidence. `format: 'raw'` returns the
-RGBA frame instead of a file, for pixel diffs, video frames and textures
+Same request, same pixels: a render can serve as evidence. `format: 'raw'`
+returns the RGBA frame for pixel diffs, video frames and textures
 ([Work with raw pixels](https://nanoraster.xyz/docs/guides/work-with-raw-pixels)).
-Continue with the [tutorial and guides](https://nanoraster.xyz/docs).
+
+Spatial values are Cartesian, defaulting to glTF's +Y-up, +Z-forward, metre
+world; declare `world` when the caller uses another convention:
+
+```typescript
+const image = await renderImage(glb, {
+  format: 'webp',
+  world: { up: '+z', forward: '-y', unit: 'millimeter' },
+  camera: {
+    framing: 'fit',
+    direction: [1, 1, 1],
+    up: [0, 0, 1],
+  },
+  lineWidth: 3,
+});
+```
+
+`framing: 'fit'` solves placement and clipping around the subject;
+`framing: 'fixed'` preserves an explicit Cartesian `position`/`target`/`up`
+pose and projection. Edge lines are a flat 3 output pixels. See
+[Frame the model](https://nanoraster.xyz/docs/guides/frame-the-model) and
+[Place the camera](https://nanoraster.xyz/docs/guides/place-the-camera).
 
 ## Reuse the renderer
 
-The one-shot calls share one renderer per process, so only the first call pays
-the GPU bring-up; create your own to control its lifetime or power preference.
-When you know the full set of outputs, declare them in one `renderImages` call
-with per-view overrides, about three times faster than separate renders:
+One-shot calls share one renderer per process; create your own to control
+lifetime and power preference. Declaring all outputs in one `renderImages`
+call with per-view overrides is about three times faster:
 
 ```typescript
 import { createRenderer } from 'nanoraster';
@@ -72,13 +89,12 @@ See [Reuse the renderer](https://nanoraster.xyz/docs/guides/reuse-the-renderer).
 
 ## Compatibility
 
-See [compatibility.md](compatibility.md). Every check mark in that table maps
-to a named job in `.github/workflows/ci.yml`.
+See [compatibility.md](compatibility.md); every check mark maps to a named job
+in `.github/workflows/ci.yml`.
 
 ## Versioning and stability
 
-Versions follow Semantic Versioning. Before 1.0, a minor release may contain a
-breaking API change; each major line records those changes in
+Semantic Versioning; before 1.0 a minor release may break the API — see
 [BREAKING_CHANGES.md](BREAKING_CHANGES.md).
 
 ## Security and provenance

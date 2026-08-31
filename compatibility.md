@@ -8,6 +8,24 @@ proves the install, the load and the adapter, and a driver defect outside this
 package blocks the render itself. `Experimental` means the package is built and
 its binary inspected, with no render evidence.
 
+## 0.5.0 release line
+
+Version 0.5.0 is a breaking pre-1.0 minor release from 0.4.1. Top-level
+`phi`, `theta`, `up`, `projection`, and `margin` are replaced by a Cartesian
+`camera` with `framing: 'fit' | 'fixed'`; the shared `world` option defines the
+caller coordinate system for spatial request values. Edge lines now default to
+a flat 3 output pixels at every image size.
+
+`RenderTimings` changes from `{ parse, setup, views }` to eleven scalar stage
+and resource fields plus per-view timings. Valid `EXT_mesh_manifold` topology
+is consumed for exact deterministic section caps, while base glTF primitives
+remain authoritative for rendering.
+
+The raw browser WASM grows from 751,242 bytes (about 751 KB) to 1,203,046 bytes
+(about 1.2 MB) with the presentation and topology work. Runtime support is
+unchanged, and the native target list remains the same sixteen packages shown
+below.
+
 ## Runtimes
 
 | Host          | Support | CI evidence          |
