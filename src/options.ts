@@ -65,6 +65,20 @@ export type RenderVector3 = readonly [x: number, y: number, z: number];
 export type RenderWorldAxis = '+x' | '-x' | '+y' | '-y' | '+z' | '-z';
 
 /**
+ * Caller-world orbit angles in degrees — the polar form of a camera
+ * {@link RenderVector3} direction, converted by
+ * {@link renderDirectionFromOrbit} and {@link renderOrbitFromDirection}.
+ *
+ * @public
+ */
+export type RenderOrbit = {
+  /** Angle above the caller-world horizontal plane, from -90 to 90. */
+  readonly elevation: number;
+  /** Angle in that plane, from `world.forward` toward the caller's right. */
+  readonly azimuth: number;
+};
+
+/**
  * Coordinate system of request-space values and rendered presentation.
  * Submitted GLB bytes always remain glTF: right-handed, +Y up, +Z forward,
  * and metres. Omitted fields use those glTF defaults.
@@ -546,6 +560,8 @@ const sectionPlaneKeys = new Set(['point', 'normal']);
 
 const worldKeys = new Set(['up', 'forward', 'unit']);
 
+const orbitKeys = new Set(['azimuth', 'elevation']);
+
 const worldAxes: readonly RenderWorldAxis[] = ['+x', '-x', '+y', '-y', '+z', '-z'];
 
 /** Inclusive pixel bounds for image width and height. @public */
@@ -567,7 +583,7 @@ export const renderImageZoomRange = [0.01, 100] as const;
 export const renderImageLineWidthRange = [0.25, 16] as const;
 
 /** Most simultaneous section planes one request may carry. @public */
-export const renderImageMaxSections = 6;
+export const renderImageMaxSections = 8;
 
 /** Most directional lights one rig may carry. @public */
 export const renderImageMaxLights = 8;
@@ -685,6 +701,13 @@ const worldAxisVector = (axis: RenderWorldAxis): RenderVector3 => {
   return [0, 0, sign];
 };
 
+/**
+ * Mirror render-core's `resolve_world`: the pair is supplied together or not
+ * at all, both names are signed axes, and they name different axes. No
+ * handedness rule — render-core derives the caller's right as
+ * `up × forward`, which makes `(right, up, forward)` right-handed for every
+ * one of the 24 non-collinear pairs, so all 24 are legal.
+ */
 const validateWorld = (world: unknown): void => {
   if (world === undefined) {
     return;
@@ -698,25 +721,11 @@ const validateWorld = (world: unknown): void => {
   assertOptionalEnum(up, 'world.up', worldAxes);
   assertOptionalEnum(forward, 'world.forward', worldAxes);
   assertOptionalEnum(world['unit'], 'world.unit', ['meter', 'millimeter']);
-  const upName = up.slice(1);
-  const forwardName = forward.slice(1);
-  if (upName === forwardName) {
-    throw new TypeError('world.up and world.forward must name different axes');
+  if ((world['up'] === undefined) !== (world['forward'] === undefined)) {
+    throw new TypeError('world.up and world.forward must be provided together');
   }
-  const [upX, upY, upZ] = worldAxisVector(up);
-  const [forwardX, forwardY, forwardZ] = worldAxisVector(forward);
-  const remaining: RenderVector3 =
-    upName !== 'x' && forwardName !== 'x'
-      ? [1, 0, 0]
-      : upName !== 'y' && forwardName !== 'y'
-        ? [0, 1, 0]
-        : [0, 0, 1];
-  const handedness =
-    remaining[0] * (upY * forwardZ - upZ * forwardY) +
-    remaining[1] * (upZ * forwardX - upX * forwardZ) +
-    remaining[2] * (upX * forwardY - upY * forwardX);
-  if (handedness !== 1) {
-    throw new TypeError('world.up and world.forward must define a right-handed frame');
+  if (up.slice(1) === forward.slice(1)) {
+    throw new TypeError('world.up and world.forward must name different axes');
   }
 };
 
@@ -738,6 +747,104 @@ const cameraVector = (value: unknown, name: string, allowZero = false): RenderVe
     throw new TypeError(`${name} must not be zero length`);
   }
   return vector;
+};
+
+const degreesPerRadian = 180 / Math.PI;
+
+const orbitElevationRange = [-90, 90] as const;
+
+/**
+ * The default fitted three-quarter view. Holding it in orbit form leaves one
+ * derivation of the default direction rather than a literal per call site.
+ */
+const defaultFitOrbit: RenderOrbit = { azimuth: 45, elevation: 30 };
+
+const dot = (left: RenderVector3, right: RenderVector3): number =>
+  left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+
+/**
+ * The declared world's forward, right, and up axes. `right = up × forward`
+ * matches render-core's caller basis, so azimuth turns the same way on both
+ * sides of the wire.
+ */
+const orbitBasis = (
+  world: RenderWorld | undefined,
+): readonly [forward: RenderVector3, right: RenderVector3, up: RenderVector3] => {
+  validateWorld(world);
+  const up = worldAxisVector(world?.up ?? '+y');
+  const forward = worldAxisVector(world?.forward ?? '+z');
+  return [
+    forward,
+    [
+      up[1] * forward[2] - up[2] * forward[1],
+      up[2] * forward[0] - up[0] * forward[2],
+      up[0] * forward[1] - up[1] * forward[0],
+    ],
+    up,
+  ];
+};
+
+/**
+ * Convert caller-world orbit angles to the unit direction they name.
+ *
+ * `azimuth` 0 sits on `world.forward` and turns positively toward the
+ * caller's right; `elevation` lifts out of that plane toward `world.up`.
+ * The result is the inverse of {@link renderOrbitFromDirection} under the
+ * same world.
+ *
+ * @public
+ * @param orbit - Azimuth and elevation in degrees, elevation within -90 to 90
+ * @param world - Caller coordinate system the angles are read in; omit it for the glTF world
+ * @returns The unit direction in caller-world coordinates
+ */
+export const renderDirectionFromOrbit = (orbit: RenderOrbit, world?: RenderWorld): RenderVector3 => {
+  if (!isRecord(orbit)) {
+    throw new TypeError('orbit must be an object');
+  }
+  assertKnownKeys(orbit, orbitKeys, 'orbit');
+  assertFinite(orbit.azimuth, 'orbit.azimuth');
+  assertRange(orbit.elevation, 'orbit.elevation', orbitElevationRange);
+  const [forward, right, up] = orbitBasis(world);
+  const azimuth = orbit.azimuth / degreesPerRadian;
+  const elevation = orbit.elevation / degreesPerRadian;
+  const alongForward = Math.cos(elevation) * Math.cos(azimuth);
+  const alongRight = Math.cos(elevation) * Math.sin(azimuth);
+  const alongUp = Math.sin(elevation);
+  return [
+    forward[0] * alongForward + right[0] * alongRight + up[0] * alongUp,
+    forward[1] * alongForward + right[1] * alongRight + up[1] * alongUp,
+    forward[2] * alongForward + right[2] * alongRight + up[2] * alongUp,
+  ];
+};
+
+/**
+ * Convert a caller-world direction to the orbit angles that name it.
+ *
+ * Magnitude is ignored. `azimuth` comes back normalized to the half-open
+ * range -180 (exclusive) to 180 (inclusive). A direction lying exactly on
+ * `world.up` or its negative has no azimuth in the horizontal plane, so
+ * elevation is ±90 and azimuth is reported as 0.
+ *
+ * @public
+ * @param direction - Non-zero direction in caller-world coordinates
+ * @param world - Caller coordinate system the direction is read in; omit it for the glTF world
+ * @returns The azimuth and elevation in degrees
+ */
+export const renderOrbitFromDirection = (direction: RenderVector3, world?: RenderWorld): RenderOrbit => {
+  const vector = cameraVector(direction, 'direction');
+  const [forward, right, up] = orbitBasis(world);
+  const alongForward = dot(vector, forward);
+  const alongRight = dot(vector, right);
+  const alongUp = dot(vector, up) / Math.hypot(...vector);
+  return {
+    // `+ 0` folds a negative zero to positive, so a direction opposite
+    // `world.forward` reports 180 rather than -180.
+    azimuth:
+      alongForward === 0 && alongRight === 0
+        ? 0
+        : Math.atan2(alongRight + 0, alongForward) * degreesPerRadian,
+    elevation: Math.asin(Math.min(Math.max(alongUp, -1), 1)) * degreesPerRadian,
+  };
 };
 
 const normalizedCrossLength = (left: RenderVector3, right: RenderVector3): number => {
@@ -799,7 +906,7 @@ const validateProjection = (projection: unknown, name: string, framing: RenderCa
   throw new TypeError(`${name}.kind must be perspective or orthographic`);
 };
 
-const validateCamera = (camera: unknown, name: string): void => {
+const validateCamera = (camera: unknown, name: string, world?: RenderWorld): void => {
   if (camera === undefined) {
     return;
   }
@@ -808,11 +915,15 @@ const validateCamera = (camera: unknown, name: string): void => {
   }
   if (camera['framing'] === 'fit') {
     assertKnownKeys(camera, fitCameraKeys, name);
+    // Both fit defaults are read in the declared world, as render-core reads
+    // them: an omitted direction is `world.default_fit_direction()` and an
+    // omitted up is `world.caller_up`. Defaulting either in the glTF basis
+    // would make the collinearity verdict disagree with the authority.
     const direction = cameraVector(
-      camera['direction'] ?? [0.612_372_435_7, 0.5, 0.612_372_435_7],
+      camera['direction'] ?? renderDirectionFromOrbit(defaultFitOrbit, world),
       `${name}.direction`,
     );
-    const up = cameraVector(camera['up'] ?? [0, 1, 0], `${name}.up`);
+    const up = cameraVector(camera['up'] ?? worldAxisVector(world?.up ?? '+y'), `${name}.up`);
     if (normalizedCrossLength(direction, up) < minimumCameraVectorLength) {
       throw new TypeError(`${name}.direction and ${name}.up must not be collinear`);
     }
@@ -1028,8 +1139,9 @@ const validateCameraCommon = (options: CameraCommonOptions, annotated: boolean):
   if (options.lineWidth !== undefined) {
     assertRange(options.lineWidth, 'lineWidth', renderImageLineWidthRange);
   }
-  validateCamera(options.camera, 'camera');
+  // World first: the camera's fit defaults are resolved in it.
   validateWorld(options.world);
+  validateCamera(options.camera, 'camera', options.world);
   assertOptionalBoolean(options.axes, 'axes');
   assertOptionalBoolean(options.scaleBar, 'scaleBar');
   validateAnnotatedDimensions(options, annotated);
@@ -1121,7 +1233,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
       throw new TypeError(`views contains duplicate id ${JSON.stringify(id)}`);
     }
     ids.add(id);
-    validateCamera(camera, `views[${index}].camera`);
+    validateCamera(camera, `views[${index}].camera`, options.world);
     if (width !== undefined) {
       assertRange(width, `views[${index}].width`, renderImageDimensionRange);
     }

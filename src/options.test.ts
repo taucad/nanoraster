@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import type { RenderImageOptions, RenderImagesOptions } from '#options.js';
-import { imageFileName, imageViewFileName, toImageRequestJson, toImagesRequestJson } from '#options.js';
+import type {
+  RenderImageOptions,
+  RenderImagesOptions,
+  RenderOrbit,
+  RenderSectionPlane,
+  RenderVector3,
+  RenderWorld,
+  RenderWorldAxis,
+} from '#options.js';
+import {
+  imageFileName,
+  imageViewFileName,
+  renderDirectionFromOrbit,
+  renderOrbitFromDirection,
+  toImageRequestJson,
+  toImagesRequestJson,
+} from '#options.js';
 
 const parse = (json: string): Record<string, unknown> => JSON.parse(json) as Record<string, unknown>;
 
@@ -88,7 +103,29 @@ describe('image request serialization', () => {
     }
   });
 
-  it('should reject invalid, left-handed, and per-view worlds', () => {
+  // render-core derives the caller's right as `up × forward`, which makes
+  // `(right, up, forward)` right-handed for every non-collinear pair, so it
+  // accepts all 24 of them. The TS mirror once rejected half of them as
+  // "left-handed"; a request valid on one side has to be valid on both.
+  it('should accept every one of the 24 non-collinear signed axis pairs', () => {
+    const axes = ['+x', '-x', '+y', '-y', '+z', '-z'] as const;
+    const pairs = axes.flatMap((up) =>
+      axes.filter((forward) => forward.slice(1) !== up.slice(1)).map((forward) => ({ up, forward })),
+    );
+    expect(pairs).toHaveLength(24);
+    for (const world of pairs) {
+      expect(parse(toImageRequestJson({ format: 'png', world }))).toMatchObject({ world });
+    }
+    // Divergence D2: the exact pair the TS mirror used to reject on its own.
+    expect(pairs).toContainEqual({ up: '+z', forward: '+y' });
+    // A world may also declare only its unit, leaving both axes at the glTF
+    // defaults — that is the pair supplied together, as neither.
+    expect(parse(toImageRequestJson({ format: 'png', world: { unit: 'millimeter' } }))).toMatchObject({
+      world: { unit: 'millimeter' },
+    });
+  });
+
+  it('should reject invalid, half-declared, and per-view worlds', () => {
     const invalid: readonly (readonly [unknown, string])[] = [
       [null, 'world must be an object'],
       [{ north: '+z' }, 'world contains unknown property "north"'],
@@ -96,8 +133,12 @@ describe('image request serialization', () => {
       [{ up: null }, 'world.up must be +x or -x or +y or -y or +z or -z'],
       [{ forward: null }, 'world.forward must be +x or -x or +y or -y or +z or -z'],
       [{ forward: '+x', unit: 'inch' }, 'world.unit must be meter or millimeter'],
-      [{ up: '+z' }, 'world.up and world.forward must name different axes'],
-      [{ up: '+z', forward: '+y' }, 'world.up and world.forward must define a right-handed frame'],
+      // Divergence D1: render-core requires the pair together, so a lone axis
+      // is the pair error, not a same-axis or handedness complaint.
+      [{ up: '+z' }, 'world.up and world.forward must be provided together'],
+      [{ up: '-x' }, 'world.up and world.forward must be provided together'],
+      [{ forward: '+x' }, 'world.up and world.forward must be provided together'],
+      [{ up: '+z', forward: '-z' }, 'world.up and world.forward must name different axes'],
     ];
     for (const [world, message] of invalid) {
       expect(() => toImageRequestJson({ format: 'png', world } as unknown as RenderImageOptions)).toThrow(
@@ -132,11 +173,11 @@ describe('image request serialization', () => {
         'visiblePrimitives[1] duplicates an earlier primitive reference',
       ],
       [{ sections: null }, 'sections must be an object'],
-      [{ sections: { planes: [] } }, 'sections.planes must contain between 1 and 6 planes'],
+      [{ sections: { planes: [] } }, 'sections.planes must contain between 1 and 8 planes'],
       [{ sections: { planes: [null] } }, 'sections.planes[0] must be an object'],
       [
-        { sections: { planes: Array.from({ length: 7 }, () => ({ point: [0, 0, 0], normal: [1, 0, 0] })) } },
-        'sections.planes must contain between 1 and 6 planes',
+        { sections: { planes: Array.from({ length: 9 }, () => ({ point: [0, 0, 0], normal: [1, 0, 0] })) } },
+        'sections.planes must contain between 1 and 8 planes',
       ],
       [
         { sections: { planes: [{ point: [0, 0, 0], normal: [0, 0, 0] }] } },
@@ -381,6 +422,35 @@ describe('image request serialization', () => {
     }
   });
 
+  // render-core resolves an omitted fit `up` to `world.caller_up`. The TS
+  // precheck once defaulted it to the glTF `[0, 1, 0]`, so under any other
+  // world it disagreed with the authority in both directions.
+  it('should default an omitted fit up to the declared world up', () => {
+    const world = { up: '+z', forward: '-y' } as const;
+    const collinear = 'camera.direction and camera.up must not be collinear';
+    const request = (camera: unknown): string =>
+      toImageRequestJson({ format: 'png', world, camera } as unknown as RenderImageOptions);
+
+    // [0, 1, 0] is collinear with the old glTF-basis default but not with this
+    // world's up, so render-core accepts it and the mirror must too.
+    expect(parse(request({ framing: 'fit', direction: [0, 1, 0] }))).toMatchObject({ world });
+    // A direction along the declared up is what render-core rejects instead.
+    expect(() => request({ framing: 'fit', direction: [0, 0, 2] })).toThrow(collinear);
+    // The glTF world keeps its historic default.
+    expect(() =>
+      toImageRequestJson({ format: 'png', camera: { framing: 'fit', direction: [0, 1, 0] } }),
+    ).toThrow(collinear);
+
+    // Views share the request world, so their cameras resolve in it too.
+    expect(() =>
+      toImagesRequestJson({
+        format: 'png',
+        world,
+        views: [{ id: 'top', camera: { framing: 'fit', direction: [0, 0, 1] } }],
+      } as unknown as RenderImagesOptions),
+    ).toThrow('views[0].camera.direction and views[0].camera.up must not be collinear');
+  });
+
   it('should name the replacement for removed angle and axis fields', () => {
     for (const removed of ['phi', 'theta', 'up', 'projection', 'margin']) {
       expect(() =>
@@ -594,6 +664,22 @@ describe('image request serialization', () => {
     ).toThrow('views[0]: annotated images must be at least 192x192');
   });
 
+  it('should carry the raised section-plane limit of eight', () => {
+    const planes: readonly [RenderSectionPlane, ...RenderSectionPlane[]] = [
+      { point: [0, 0, 0], normal: [1, 0, 0] },
+      { point: [0, 0, 0], normal: [-1, 0, 0] },
+      { point: [0, 0, 0], normal: [0, 1, 0] },
+      { point: [0, 0, 0], normal: [0, -1, 0] },
+      { point: [0, 0, 0], normal: [0, 0, 1] },
+      { point: [0, 0, 0], normal: [0, 0, -1] },
+      { point: [1, 1, 1], normal: [1, 1, 1] },
+      { point: [-1, -1, -1], normal: [-1, -1, -1] },
+    ];
+    expect(parse(toImageRequestJson({ format: 'png', sections: { planes } }))['sections']).toEqual({
+      planes,
+    });
+  });
+
   it('should serialize a raw request and a raw per-view override', () => {
     expect(parse(toImageRequestJson({ format: 'raw', width: 640, height: 480 }))).toEqual({
       format: 'raw',
@@ -643,6 +729,131 @@ describe('label presence as the annotation switch', () => {
       { id: 'front', label: 'Front' },
       { id: 'thumb', width: 64, height: 64 },
     ]);
+  });
+});
+
+// An independent oracle for the basis the helpers are supposed to build, so
+// the property tests below are not checking the implementation against itself.
+const axisVector = (axis: RenderWorldAxis): RenderVector3 => {
+  const sign = axis.startsWith('+') ? 1 : -1;
+  return [axis.endsWith('x') ? sign : 0, axis.endsWith('y') ? sign : 0, axis.endsWith('z') ? sign : 0];
+};
+
+const signedAxes: readonly RenderWorldAxis[] = ['+x', '-x', '+y', '-y', '+z', '-z'];
+
+const legalWorlds: readonly Required<Pick<RenderWorld, 'up' | 'forward'>>[] = signedAxes.flatMap((up) =>
+  signedAxes.filter((forward) => forward.slice(1) !== up.slice(1)).map((forward) => ({ up, forward })),
+);
+
+const expectVectorClose = (actual: RenderVector3, expected: RenderVector3): void => {
+  for (const [index, component] of expected.entries()) {
+    expect(actual[index]).toBeCloseTo(component, 9);
+  }
+};
+
+describe('orbit angle conversion', () => {
+  it('should place azimuth zero on world.forward and turn toward the caller right', () => {
+    for (const world of legalWorlds) {
+      const forward = axisVector(world.forward);
+      const up = axisVector(world.up);
+      const right: RenderVector3 = [
+        up[1] * forward[2] - up[2] * forward[1],
+        up[2] * forward[0] - up[0] * forward[2],
+        up[0] * forward[1] - up[1] * forward[0],
+      ];
+      expectVectorClose(renderDirectionFromOrbit({ azimuth: 0, elevation: 0 }, world), forward);
+      expectVectorClose(renderDirectionFromOrbit({ azimuth: 90, elevation: 0 }, world), right);
+      expectVectorClose(renderDirectionFromOrbit({ azimuth: 0, elevation: 90 }, world), up);
+    }
+  });
+
+  // The load-bearing property: every legal world, every angle off the poles.
+  it('should round-trip every angle through all 24 legal worlds', () => {
+    const azimuths = [-179.9, -135, -90, -45, -0.5, 0, 17.25, 45, 90, 135, 180];
+    const elevations = [-89.5, -60, -30, -1, 0, 12.5, 30, 60, 89.5];
+    for (const world of [undefined, ...legalWorlds]) {
+      for (const azimuth of azimuths) {
+        for (const elevation of elevations) {
+          const orbit: RenderOrbit = { azimuth, elevation };
+          const returned = renderOrbitFromDirection(renderDirectionFromOrbit(orbit, world), world);
+          expect(returned.azimuth).toBeCloseTo(azimuth, 9);
+          expect(returned.elevation).toBeCloseTo(elevation, 9);
+        }
+      }
+    }
+  });
+
+  it('should default to the glTF world and reproduce the documented fit direction', () => {
+    const direction = renderDirectionFromOrbit({ azimuth: 45, elevation: 30 });
+    expectVectorClose(direction, [0.612_372_435_7, 0.5, 0.612_372_435_7]);
+    expectVectorClose(direction, renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }, { unit: 'meter' }));
+    expect(renderOrbitFromDirection([0, 0, 1])).toEqual({ azimuth: 0, elevation: 0 });
+    expect(renderOrbitFromDirection([1, 0, 0]).azimuth).toBeCloseTo(90, 9);
+  });
+
+  it('should report azimuth zero at either pole', () => {
+    for (const world of legalWorlds) {
+      const up = axisVector(world.up);
+      const down: RenderVector3 = [-up[0], -up[1], -up[2]];
+      const above = renderOrbitFromDirection(up, world);
+      const below = renderOrbitFromDirection(down, world);
+      // Exactly zero, not a negative zero left behind by `atan2`.
+      expect(above.azimuth).toBe(0);
+      expect(below.azimuth).toBe(0);
+      expect(above.elevation).toBeCloseTo(90, 9);
+      expect(below.elevation).toBeCloseTo(-90, 9);
+    }
+  });
+
+  it('should normalize azimuth into the half-open -180 to 180 range', () => {
+    // Opposite `world.forward` is the boundary: it reports 180, never -180.
+    expect(renderOrbitFromDirection([0, 0, -1]).azimuth).toBeCloseTo(180, 9);
+    expect(
+      renderOrbitFromDirection(renderDirectionFromOrbit({ azimuth: 405, elevation: 0 })).azimuth,
+    ).toBeCloseTo(45, 9);
+    expect(
+      renderOrbitFromDirection(renderDirectionFromOrbit({ azimuth: -270, elevation: 0 })).azimuth,
+    ).toBeCloseTo(90, 9);
+  });
+
+  it('should ignore direction magnitude', () => {
+    expect(renderOrbitFromDirection([0, 8, 8]).elevation).toBeCloseTo(45, 9);
+    expect(renderOrbitFromDirection([0, 0.001, 0.001]).elevation).toBeCloseTo(45, 9);
+  });
+
+  it('should reject invalid orbits, directions, and worlds at their exact path', () => {
+    const invalidOrbits: readonly (readonly [unknown, string])[] = [
+      [null, 'orbit must be an object'],
+      [[45, 30], 'orbit must be an object'],
+      [{ azimuth: 0, elevation: 0, roll: 0 }, 'orbit contains unknown property "roll"'],
+      [{ elevation: 0 }, 'orbit.azimuth must be a finite number'],
+      [{ azimuth: Number.NaN, elevation: 0 }, 'orbit.azimuth must be a finite number'],
+      [{ azimuth: 0 }, 'orbit.elevation must be a finite number'],
+      [{ azimuth: 0, elevation: 90.1 }, 'orbit.elevation must be between -90 and 90'],
+      [{ azimuth: 0, elevation: -90.1 }, 'orbit.elevation must be between -90 and 90'],
+    ];
+    for (const [orbit, message] of invalidOrbits) {
+      expect(() => renderDirectionFromOrbit(orbit as RenderOrbit)).toThrow(TypeError);
+      expect(() => renderDirectionFromOrbit(orbit as RenderOrbit)).toThrow(message);
+    }
+
+    const invalidDirections: readonly (readonly [unknown, string])[] = [
+      [[0, 0, 0], 'direction must not be zero length'],
+      [[0, 1], 'direction must contain three finite numbers'],
+      ['up', 'direction must contain three finite numbers'],
+      [[0, Number.NaN, 1], 'direction must contain three finite numbers'],
+    ];
+    for (const [direction, message] of invalidDirections) {
+      expect(() => renderOrbitFromDirection(direction as RenderVector3)).toThrow(message);
+    }
+
+    // Both helpers validate the world by the same rule the request does.
+    for (const world of [{ up: '-x' }, { up: '+z', forward: '+z' }, { north: '+z' }] as const) {
+      expect(() => renderDirectionFromOrbit({ azimuth: 0, elevation: 0 }, world as RenderWorld)).toThrow(
+        TypeError,
+      );
+      expect(() => renderOrbitFromDirection([0, 0, 1], world as RenderWorld)).toThrow(TypeError);
+    }
   });
 });
 

@@ -18,6 +18,7 @@ expectTypeOf<keyof RenderModule>().toEqualTypeOf<
   | 'createRenderer'
   | 'describeAdapter'
   | 'imageMimeTypes'
+  | 'renderDirectionFromOrbit'
   | 'renderImage'
   | 'renderImageAmbientRange'
   | 'renderImageAnnotatedMinDimension'
@@ -36,6 +37,7 @@ expectTypeOf<keyof RenderModule>().toEqualTypeOf<
   | 'renderImageViewIdPattern'
   | 'renderImageZoomRange'
   | 'renderImages'
+  | 'renderOrbitFromDirection'
 >();
 
 const glb = new Uint8Array([1, 2, 3]);
@@ -49,6 +51,21 @@ const world = {
 } as const satisfies renderModule.RenderWorld;
 expectTypeOf(world.up).toEqualTypeOf<'+z'>();
 expectTypeOf<renderModule.RenderWorldAxis>().toEqualTypeOf<'+x' | '-x' | '+y' | '-y' | '+z' | '-z'>();
+
+// The orbit pair is world-aware and Cartesian on the wire: angles never reach
+// the request, they only produce the `direction` it already accepts.
+const orbit = { azimuth: 45, elevation: 30 } as const satisfies renderModule.RenderOrbit;
+expectTypeOf(renderModule.renderDirectionFromOrbit(orbit)).toEqualTypeOf<renderModule.RenderVector3>();
+expectTypeOf(renderModule.renderDirectionFromOrbit(orbit, world)).toEqualTypeOf<renderModule.RenderVector3>();
+expectTypeOf(renderModule.renderOrbitFromDirection(vector)).toEqualTypeOf<renderModule.RenderOrbit>();
+expectTypeOf(renderModule.renderOrbitFromDirection(vector, world)).toEqualTypeOf<renderModule.RenderOrbit>();
+void renderImage(glb, {
+  format: 'png',
+  world,
+  camera: { framing: 'fit', direction: renderModule.renderDirectionFromOrbit(orbit, world) },
+});
+// @ts-expect-error orbit angles are not a camera field
+void ({ framing: 'fit', azimuth: 45 } as const satisfies renderModule.RenderCamera);
 void renderImage(glb, { format: 'png', world });
 // @ts-expect-error the unreleased camera-specific tuple name was consolidated
 expectTypeOf<renderModule.CameraVector>();
