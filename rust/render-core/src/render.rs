@@ -1438,11 +1438,23 @@ impl Renderer {
         let options = &entry.options;
         self.ensure_targets(options.width, options.height);
         // Bias surfaces only when line geometry actually draws this view:
-        // enabled model edges, or a section boundary (drawn unconditionally).
-        // Keying on `options.lines` alone would fork the bytes of otherwise
-        // identical renders of line-free models.
+        // enabled model edges that survive `visiblePrimitives`, or a section
+        // boundary (drawn unconditionally). Keying on `options.lines` alone —
+        // or on line geometry the selection excludes — would fork the bytes of
+        // otherwise identical renders. This mirrors the line pass's own draw
+        // condition below; the two must stay in step.
         let wireframe = (options.lines
-            && scene.gpu_assets.iter().any(|asset| !asset.lines.is_empty()))
+            && scene.gpu_instances.iter().any(|instance| {
+                let asset = &scene.gpu_assets[instance.mesh_index];
+                asset.lines.iter().any(|lines| {
+                    primitive_selected(
+                        options,
+                        instance.source_node_index,
+                        asset.source_mesh_index,
+                        lines.source_primitive_index,
+                    )
+                })
+            }))
             || presentation.boundary.is_some();
         let pipeline_index = self.ensure_pipelines(line_width_px(options), wireframe);
         let state = &self.state;

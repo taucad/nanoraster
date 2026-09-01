@@ -27,10 +27,18 @@
 //   -Oz (the bug): webp 7.20-7.30 ms, png 23.7-24.3 ms, ratio 0.301-0.303
 //
 // PNG barely moves between the two, which is what makes it a usable yardstick.
-// The 0.20 ceiling sits about 1.7x above the good build and about 1.5x below
-// the bad one — headroom for a host whose codec mix weighs differently,
-// without giving up the signal. Re-anchor it only against a fresh pair of
-// measurements like the ones above, never to make a red build green.
+//
+// The ratio is steadier than either timing, but it is not architecture-free:
+// the two codecs lean on SIMD differently, so the same good artifact reads
+// 0.11 on arm64 macOS and 0.207 on CI's x86_64 Linux runner (png 41.71 ms,
+// webp 8.65 ms). That spread is as wide as the regression itself, so a single
+// global ceiling cannot separate both hosts: anything loose enough to pass a
+// good Linux build (0.207) would also pass a bad macOS one (0.30). The
+// ceiling is therefore calibrated per platform, against measurements taken on
+// that platform, and an unmeasured host falls back to the loosest known bound
+// — still a gate, just a weaker one, and better than a false red on a machine
+// nobody has characterised. Re-anchor an entry only against a fresh good/bad
+// pair measured on that platform, never to make a red build green.
 //
 //   node scripts/check-wasm-speed.mjs [directory]
 //
@@ -45,7 +53,17 @@ const WIDTH = 768;
 const HEIGHT = 432;
 const WARMUP_SAMPLES = 1;
 const SAMPLES = 7;
-const CEILING = 0.2;
+// Measured good build → nearest bad build, per platform. Each ceiling sits
+// roughly midway in log terms: ~1.7x above the good reading, ~1.5x below the
+// bad one. `linux-x64`'s bad figure is projected from the 2.6x WebP-side cost
+// measured on `darwin-arm64`, since the `-Oz` artifact was only ever built
+// here; tighten it once a bad build is measured on that runner.
+const CEILINGS = {
+  'darwin-arm64': 0.2, // good 0.11, bad 0.30 (both measured)
+  'linux-x64': 0.35, // good 0.207 (measured), bad ~0.54 (projected)
+};
+const platform = `${process.platform}-${process.arch}`;
+const CEILING = CEILINGS[platform] ?? Math.max(...Object.values(CEILINGS));
 
 const directory = resolve(process.argv[2] ?? 'tests/out/wasm-bench');
 const glue = await import(pathToFileURL(resolve(directory, 'render_wasm.js')).href);
@@ -68,14 +86,21 @@ const distribution = (codec) => {
 };
 const codecs = Object.fromEntries(['png', 'webp', 'jpeg'].map((codec) => [codec, distribution(codec)]));
 if (!(codecs.png.p50 > 0)) throw new Error(`png encode measured ${codecs.png.p50}ms; the clock is unusable`);
-const ratio = Math.round((codecs.webp.p50 / codecs.png.p50) * 10_000) / 10_000;
+// The raw ratio decides; only the log is rounded, so 0.20004 cannot round its
+// way under its ceiling.
+const ratio = codecs.webp.p50 / codecs.png.p50;
+const reported = Math.round(ratio * 10_000) / 10_000;
 
 console.log(
-  JSON.stringify({ frame: [WIDTH, HEIGHT], samples: SAMPLES, codecs, ratio, ceiling: CEILING }, null, 2),
+  JSON.stringify(
+    { frame: [WIDTH, HEIGHT], platform, samples: SAMPLES, codecs, ratio: reported, ceiling: CEILING },
+    null,
+    2,
+  ),
 );
 if (ratio > CEILING) {
   throw new Error(
-    `render WASM lossless-WebP encode is ${ratio} of its PNG encode, above ${CEILING}: ` +
+    `render WASM lossless-WebP encode is ${reported} of its PNG encode, above ${CEILING}: ` +
       `webp ${codecs.webp.p50}ms against png ${codecs.png.p50}ms. ` +
       'A size-first optimization level on render-core reads exactly like this.',
   );

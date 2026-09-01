@@ -1811,4 +1811,46 @@ mod tests {
 
         renderer.destroy();
     }
+
+    /// The surface pipeline takes a slope-scaled depth bias only when line
+    /// geometry actually draws. `visiblePrimitives` can exclude every line
+    /// primitive while `lines` stays on, and that view must be the same render
+    /// as the one that turns lines off — same bytes, and the same pipeline, so
+    /// the bytes cannot fork on a host whose depth interpolation differs from
+    /// this one's.
+    #[test]
+    fn excluded_line_primitives_do_not_bias_surfaces() {
+        // Mesh 0 holds a TRIANGLES primitive (0) and a LINES primitive (1),
+        // instanced at nodes 1 and 2.
+        const LINES_FIXTURE: &[u8] =
+            include_bytes!("../../../tests/fixtures/interleaved-instanced-lines.glb");
+        const SIZE: &str = r#""format":"png","width":96,"height":96,"timings":true"#;
+        const SURFACES: &str = r#""visiblePrimitives":[
+            {"nodeIndex":1,"meshIndex":0,"primitiveIndex":0},
+            {"nodeIndex":2,"meshIndex":0,"primitiveIndex":0}]"#;
+        let mut renderer = pollster::block_on(Renderer::from_request(None)).expect("renderer");
+        let render = |renderer: &mut Renderer, tail: &str| {
+            let (mut images, timings) = pollster::block_on(renderer.render_images_request(
+                LINES_FIXTURE,
+                &format!(r#"{{{SIZE},{tail},"views":[{{"id":"iso"}}]}}"#),
+                None,
+            ))
+            .expect("render");
+            (images.remove(0), timings.expect("timings").pipeline_sets)
+        };
+
+        // Lines off builds the unbiased surface pipeline; the selection that
+        // excludes every line primitive must reuse it rather than compile the
+        // biased one, and must land on the same bytes.
+        let (disabled, _) = render(&mut renderer, r#""lines":false"#);
+        let (selected, pipeline_sets) = render(&mut renderer, SURFACES);
+        assert_eq!(
+            pipeline_sets, 0,
+            "excluded lines compiled a second pipeline"
+        );
+        assert_eq!(selected, disabled);
+        // Guard the premise: this fixture really does draw lines.
+        let (with_lines, _) = render(&mut renderer, r#""lines":true"#);
+        assert_ne!(with_lines, disabled);
+    }
 }

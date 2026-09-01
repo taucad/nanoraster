@@ -101,11 +101,15 @@ for (const [name, glb] of Object.entries(fixtures)) {
 const topologyFixture = withReusableManifoldTopology(closedCubeGlb(16));
 const topologySamples = [];
 for (let index = 0; index < 6; index += 1) {
+  // `parse_scene` only takes the section path — the one that decodes optional
+  // `EXT_mesh_manifold` — when sections are requested, so the gate has to ask
+  // for one to measure the topology decode it claims to measure.
   const result = await renderMany(topologyFixture, {
     format: 'raw',
     width: 16,
     height: 16,
     timings: true,
+    sections: { planes: onePlane },
     views: [{ id: 'isometric' }],
   });
   if (index > 0) topologySamples.push(result.timings.parse);

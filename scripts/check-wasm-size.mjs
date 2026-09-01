@@ -112,7 +112,15 @@ const sizes = {
 // guards in `section.rs`/`glb.rs` reachable by tests (merged work-ceiling
 // accumulator, extracted `ray_crosses_triangle`, explicit accessor-total
 // bound) with behaviour pinned verbatim by the new tests.
-const ceilings = { raw: 1_515_486, gzip9: 569_364, brotli11: 431_345 };
+// Selection-aware wireframe bias: 1,516,379 / 570,052 / 431,779 — +893 raw for
+// finishing the "draw-aware wireframe bias" entry above. That predicate keyed
+// the surface polygon offset on any uploaded line geometry, which
+// `visiblePrimitives` can exclude from the draw entirely; it now walks the
+// instances and asks `primitive_selected`, exactly as the line pass does, so a
+// selection that excludes every line primitive renders through the same
+// unbiased pipeline as `lines: false`. Only `raw` moves: the compressed
+// figures land inside their existing 0.5% compressor allowance.
+const ceilings = { raw: 1_516_379, gzip9: 569_364, brotli11: 431_345 };
 
 // `raw` is the artifact and is byte-reproducible, so it is enforced exactly.
 // The compressed figures are not properties of the artifact alone: they are

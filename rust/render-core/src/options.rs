@@ -128,12 +128,28 @@ pub struct SectionsRequest {
     clip_lines: Option<bool>,
 }
 
+/// Wrap a present field so an explicit `null` survives as `Some(None)`. Serde
+/// only calls this for a field that is actually there, so an absent one still
+/// lands on `Default` — `None` — and a plain `Option` would collapse the two.
+fn present_option<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::deserialize(deserializer).map(Some)
+}
+
 /// Coordinate system of caller-authored spatial values and presentation.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorldRequest {
-    up: Option<String>,
-    forward: Option<String>,
+    // `Option<Option<_>>` separates an absent field (`None`, which defaults)
+    // from an explicit JSON `null` (`Some(None)`, which is rejected), so
+    // `{"up": null}` cannot silently take the default the TypeScript facade
+    // rejects outright.
+    #[serde(default, deserialize_with = "present_option")]
+    up: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present_option")]
+    forward: Option<Option<String>>,
     unit: Option<String>,
 }
 
@@ -641,18 +657,32 @@ fn signed_axis(value: &str, name: &str) -> Result<(usize, glam::Vec3), RenderErr
     Ok((index, vector))
 }
 
+/// Flatten one declared axis field: absent stays absent, an explicit `null` is
+/// an error rather than a silent fall back to the default.
+fn declared_axis<'a>(
+    field: Option<&'a Option<String>>,
+    name: &str,
+) -> Result<Option<&'a str>, RenderError> {
+    match field {
+        None => Ok(None),
+        Some(None) => Err(RenderError::Parse(format!("{name} must not be null"))),
+        Some(Some(value)) => Ok(Some(value.as_str())),
+    }
+}
+
 fn resolve_world(request: Option<&WorldRequest>) -> Result<WorldTransform, RenderError> {
-    if request.is_some_and(|world| world.up.is_some() != world.forward.is_some()) {
+    let up_declared = declared_axis(request.and_then(|world| world.up.as_ref()), "world.up")?;
+    let forward_declared = declared_axis(
+        request.and_then(|world| world.forward.as_ref()),
+        "world.forward",
+    )?;
+    if up_declared.is_some() != forward_declared.is_some() {
         return Err(RenderError::Parse(
             "world.up and world.forward must be provided together".into(),
         ));
     }
-    let up_name = request
-        .and_then(|world| world.up.as_deref())
-        .unwrap_or("+y");
-    let forward_name = request
-        .and_then(|world| world.forward.as_deref())
-        .unwrap_or("+z");
+    let up_name = up_declared.unwrap_or("+y");
+    let forward_name = forward_declared.unwrap_or("+z");
     let (up_index, up) = signed_axis(up_name, "world.up")?;
     let (forward_index, forward) = signed_axis(forward_name, "world.forward")?;
     if up_index == forward_index {
@@ -1076,8 +1106,8 @@ mod tests {
         assert_eq!(default.axes, RenderOptions::default().world_axes);
 
         let tau = resolve_world(Some(&WorldRequest {
-            up: Some("+z".into()),
-            forward: Some("-y".into()),
+            up: Some(Some("+z".into())),
+            forward: Some(Some("-y".into())),
             unit: Some("millimeter".into()),
         }))
         .expect("Tau world");
@@ -1108,8 +1138,8 @@ mod tests {
             for forward in axes {
                 if up[1..] == forward[1..] {
                     let collinear = resolve_world(Some(&WorldRequest {
-                        up: Some(up.into()),
-                        forward: Some(forward.into()),
+                        up: Some(Some(up.into())),
+                        forward: Some(Some(forward.into())),
                         unit: None,
                     }))
                     .expect_err("collinear signed-axis pair");
@@ -1120,8 +1150,8 @@ mod tests {
                     continue;
                 }
                 let world = resolve_world(Some(&WorldRequest {
-                    up: Some(up.into()),
-                    forward: Some(forward.into()),
+                    up: Some(Some(up.into())),
+                    forward: Some(Some(forward.into())),
                     unit: None,
                 }))
                 .expect("every non-collinear signed-axis pair");
@@ -1133,13 +1163,13 @@ mod tests {
 
         for request in [
             WorldRequest {
-                up: Some("+z".into()),
+                up: Some(Some("+z".into())),
                 forward: None,
                 unit: None,
             },
             WorldRequest {
                 up: None,
-                forward: Some("-y".into()),
+                forward: Some(Some("-y".into())),
                 unit: None,
             },
             WorldRequest {
@@ -1150,6 +1180,37 @@ mod tests {
         ] {
             assert!(resolve_world(Some(&request)).is_err());
         }
+
+        // An explicit JSON `null` is a caller mistake, not an omission: serde
+        // collapses both to `None` unless the field is `Option<Option<_>>`, and
+        // the TypeScript facade rejects `null` outright. Omitting both fields
+        // still takes the documented `+y`/`+z` defaults.
+        for (world, message) in [
+            (r#"{"up":null}"#, "parse: world.up must not be null"),
+            (
+                r#"{"forward":null}"#,
+                "parse: world.forward must not be null",
+            ),
+            (
+                r#"{"up":null,"forward":null}"#,
+                "parse: world.up must not be null",
+            ),
+            (
+                r#"{"up":null,"forward":"+z"}"#,
+                "parse: world.up must not be null",
+            ),
+        ] {
+            let error = RenderRequest::from_json(&format!(r#"{{"format":"png","world":{world}}}"#))
+                .expect("parse")
+                .resolve()
+                .expect_err("explicit null world axis");
+            assert_eq!(error.to_string(), message, "for world {world}");
+        }
+        let omitted = RenderRequest::from_json(r#"{"format":"png","world":{"unit":"millimeter"}}"#)
+            .expect("parse")
+            .resolve()
+            .expect("omitted axes keep the defaults");
+        assert_eq!(omitted.0.world_axes, RenderOptions::default().world_axes);
     }
 
     #[test]
