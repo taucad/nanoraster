@@ -226,6 +226,23 @@
   overflow-wrap: anywhere;
 }
 
+/* A track's own value is printed in its label, and the label column is sized
+   by its content, so a value that grows a digit widens the column and shrinks
+   every input in the panel while the handle is still moving. Each reading
+   reserves the width of the widest value its own control can print and sets
+   its digits right, so the column is the same width at every position. */
+.reading {
+  display: inline-block;
+  min-width: 4ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Lengths and factors print more characters than a whole-degree angle. */
+.measure {
+  min-width: 8ch;
+}
+
 /* Three sliders for one point, stacked so each keeps the full input width. */
 .stack {
   display: grid;

@@ -354,7 +354,7 @@ export const RenderDemo = ({
       <div className={styles.group} key={control.key}>
         <label className={styles.control}>
           <span title={control.title}>
-            {control.label} · azimuth {azimuth}°
+            {control.label} · azimuth <span className={styles.reading}>{azimuth}</span>°
           </span>
           <input
             aria-label={`${control.label} azimuth`}
@@ -369,7 +369,9 @@ export const RenderDemo = ({
           />
         </label>
         <label className={styles.control}>
-          <span>elevation {elevation}°</span>
+          <span>
+            elevation <span className={styles.reading}>{elevation}</span>°
+          </span>
           <input
             aria-label={`${control.label} elevation`}
             max={limit}
@@ -544,7 +546,8 @@ export const RenderDemo = ({
               return (
                 <label className={styles.control} key={control.key}>
                   <span title={control.title}>
-                    {control.label} · {readable(offset)}
+                    {control.label} ·{' '}
+                    <span className={`${styles.reading} ${styles.measure}`}>{readable(offset)}</span>
                   </span>
                   <input
                     max={control.max}
@@ -580,7 +583,8 @@ export const RenderDemo = ({
               return (
                 <label className={styles.control} key={control.key}>
                   <span title={control.title}>
-                    {control.label} · {readable(current)}
+                    {control.label} ·{' '}
+                    <span className={`${styles.reading} ${styles.measure}`}>{readable(current)}</span>
                   </span>
                   <input
                     max={high}
