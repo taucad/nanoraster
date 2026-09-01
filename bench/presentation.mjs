@@ -115,8 +115,15 @@ for (let index = 0; index < 6; index += 1) {
   if (index > 0) topologySamples.push(result.timings.parse);
 }
 const topologyParse = median(topologySamples);
-if (topologyParse > 0.5) {
-  throw new Error(`EXT_mesh_manifold parse median ${topologyParse}ms exceeds 0.5ms`);
+// The 0.5 ms this gate used to carry was measured on a request that asked for
+// no sections, so it timed a parse that never decoded the extension at all.
+// Now that it does, the honest baseline is what decoding costs: about 0.13 ms
+// on an M-series host and 0.62 ms on a CI x86_64 runner. 2 ms clears the
+// slower of those with room for a loaded runner, and still catches the
+// order-of-magnitude regression a mis-shaped topology decode would produce.
+const topologyCeiling = 2;
+if (topologyParse > topologyCeiling) {
+  throw new Error(`EXT_mesh_manifold parse median ${topologyParse}ms exceeds ${topologyCeiling}ms`);
 }
 
 const repeated = fixtures['heavy-instanced-planetary'];

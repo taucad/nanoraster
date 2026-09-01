@@ -352,7 +352,7 @@ export declare const orbitFromDirection: (direction: RenderVector3, world?: Rend
 - **Parameters:** any finite non-zero direction, and the world it is expressed
   in. Magnitude is ignored.
 - **Returns:** the orbit angles that reproduce it, exactly inverting
-  [`directionFromOrbit`](#renderdirectionfromorbit) in the same world.
+  [`directionFromOrbit`](#directionfromorbit) in the same world.
   Azimuth comes back above `-180` and up to `180`, and at the poles, elevation
   `-90` or `90`, it is undefined and reported as `0`.
 - **Throws:** `TypeError` for a zero or non-finite direction, or an invalid
