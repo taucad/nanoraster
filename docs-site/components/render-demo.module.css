@@ -196,6 +196,13 @@
   overflow-wrap: anywhere;
 }
 
+/* Fumadocs still sizes that `pre` to its longest line inside a scrolling
+   wrapper, so a rewritten literal can summon a horizontal scrollbar. Reserving
+   the gutter keeps one from resizing the panel under a moving slider. */
+.demo :global(.fd-scroll-container) {
+  scrollbar-gutter: stable;
+}
+
 .code {
   grid-area: code;
   min-width: 0;
