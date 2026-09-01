@@ -3,11 +3,11 @@ title: Render multiple views
 description: Declare an ordered plan of identified camera views — with per-view size and format overrides — and render it in one call from one GLB.
 ---
 
-Render several outputs of one model in a single call — the plan call — keeping
-the IDs and order you declared, as [the tutorial](../tutorial) does for its
-contact sheet. One call parses and uploads the GLB once, shares the GPU device
-across every view, and schedules the whole set together, which a loop of
-single renders never can.
+Render several outputs of one model in one call, the plan call. The
+results keep the IDs and the order you declared, as
+[the tutorial](../tutorial) does for its contact sheet. One call parses and
+uploads the GLB once, shares the GPU device across every view, and schedules
+the whole set together. A loop of single renders never can.
 
 ### 1. Declare the views as a tuple
 
@@ -59,9 +59,9 @@ options object is inferred as const.
 
 ### 3. Ladder sizes and formats with per-view overrides
 
-A view is more than a camera: `width`, `height`, `format` and `quality` can be
-overridden per entry, defaulting to the shared values. One subject becomes a
-card, a social image and a print asset in one call.
+A view is more than a camera. You can override `width`, `height`, `format`,
+and `quality` per entry; each defaults to the shared value. One call turns one
+subject into a card, a social image, and a print asset.
 
 ```typescript
 const [card, og, print] = await renderImages(glb, {
@@ -79,18 +79,18 @@ console.log(og.file.name); // 'render-og.webp'
 console.log(print.file.mimeType); // 'image/png'
 ```
 
-Each entry's filename and MIME type follow its own resolved format, and
-TypeScript narrows `print.file.mimeType` to `'image/png'` while `card` and
-`og` stay `'image/webp'`. Overrides pass the same validation as the shared
-values — a per-view `quality: 1` on WebP still means lossless, and annotated
-views still need 192 pixels each way.
+Each entry's filename and MIME type follow its own resolved format. TypeScript
+narrows `print.file.mimeType` to `'image/png'`, while `card` and `og` stay
+`'image/webp'`. Overrides pass the same validation as the shared values: a
+per-view `quality: 1` on WebP still means lossless, and annotated views still
+need 192 pixels each way.
 
 ### 4. Preserve literal types across a variable
 
-Assigning options to a variable widens the literals and loses the IDs.
-`as const satisfies RenderImagesOptions` prevents that: `as const` keeps every
-literal, and `satisfies` still rejects misspelled or misplaced keys — all at
-compile time, with nothing added to the bundle.
+When you assign the options to a variable, TypeScript widens the literals and
+loses the IDs. `as const satisfies RenderImagesOptions` prevents that.
+`as const` keeps every literal, and `satisfies` still rejects misspelled or
+misplaced keys. Both act at compile time and add nothing to the bundle.
 
 ```typescript
 import { renderImages, type RenderImagesOptions } from 'nanoraster';
@@ -105,23 +105,24 @@ const images = await renderImages(glb, options);
 
 ## Variations
 
-**One image only.** Use `renderImage`. The batch call requires a non-empty
+**One image only.** Use `renderImage`. The plan call requires a non-empty
 tuple and returns a tuple even for one view, under the same
 [exactness rules](../api#renderimages).
 
-**Labels per view.** Give an entry a `label` and that view is labelled; leave
-it off and it is not. See [Format and annotate](format-and-annotate).
+**Labels per view.** Give an entry a `label` and that view is labelled. Omit
+it and the view is not. See [Format and annotate](format-and-annotate).
 
 **Shared-only settings.** `axes`, `scaleBar`, `background`, and `lighting`
 apply to the whole request. Presentation filters and section planes are shared
-too, so one plan renders one presented subject from several cameras. `camera`, `label`, and the four output
-fields vary per view. There is no shared partial camera or inheritance order.
+too, so one plan renders one presented subject from several cameras. `camera`,
+`label`, and the four output fields vary per view. There is no shared partial
+camera or inheritance order.
 
 **Renders spread over time.** The plan call shares the device across views
 _within_ one call; [`createRenderer`](reuse-the-renderer) shares it across
-calls _over time_. They compose — a warm renderer accepts the same plan calls.
-Either way, when you can write the full list of images down, send it as one
-call rather than a loop: only the renderer can schedule work it can see.
+calls _over time_. They compose: a warm renderer accepts the same plan calls.
+Either way, when you can write the full list of images, send it as one call
+rather than a loop. Only the renderer can schedule work it can see.
 
 **Stage timings.** `timings: true` attaches stage and resource data to
 `results.timings`. `presentationBuilds` is `1` for the plan; see

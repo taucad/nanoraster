@@ -3,21 +3,21 @@ title: Frame the model
 description: Choose a fitted camera direction, screen-up vector, projection, and margin while nanoraster solves placement from referenced geometry.
 ---
 
-A fitted camera chooses an orientation while nanoraster solves the optical
-target, distance, and clip planes from indexed geometry that can be drawn. Use
-it for thumbnails, contact sheets, and any capture that must keep the whole
-subject in frame.
+With a fitted camera, you choose an orientation. nanoraster solves the
+optical target, distance, and clip planes from indexed geometry that can be
+drawn. Use it for thumbnails, contact sheets, and any capture
+that must keep the whole subject in frame.
 
 ## Set direction and screen up
 
 `direction` points from the subject toward the camera. `up` establishes screen
 vertical and preserves roll. Both are Cartesian vectors in the declared caller
-world; their magnitudes are ignored. Fitting may translate the camera and
-optical target together without changing orientation.
+world. The renderer ignores their magnitudes. Fitting may translate the camera
+and optical target together without changing orientation.
 
-Omit `up` on a fit camera and it becomes the declared `world.up`. Supply it to
-roll the camera. A plan view, whose `direction` runs along that same axis, names
-no roll: screen-up comes from `world.forward` instead, so it needs no `up`.
+Omit `up` on a fit camera and it becomes the declared `world.up`. Supply `up`
+to roll the camera. A plan view's `direction` runs along that same axis and names no roll.
+Screen-up comes from `world.forward` instead, so a plan view needs no `up`.
 
 <RenderDemo>
 
@@ -38,7 +38,7 @@ const image = await renderImage(glb, {
 
 </RenderDemo>
 
-This worked request authors a three-quarter view in Z-up metres; nanoraster
+This worked request authors a three-quarter view in Z-up metres. nanoraster
 converts it once to the GLB frame. The live azimuth and elevation controls move
 the two angles in the copyable code. Expand **advanced · direction XYZ** for raw
 vector entry.
@@ -46,10 +46,11 @@ vector entry.
 ## Turn angles into directions
 
 [`directionFromOrbit`](../api#directionfromorbit) converts orbit
-angles to the Cartesian `direction` a fitted camera takes, and
+angles to the Cartesian `direction` a fitted camera takes.
 [`orbitFromDirection`](../api#orbitfromdirection) inverts it. Both
-resolve their axes from the world you pass, so pass the same `world` the request
-declares — as the example above does. Read a direction back the same way:
+resolve their axes from the world you pass, so pass the same `world` the
+request declares, as the example above does. Read a direction back the same
+way:
 
 ```typescript
 import { orbitFromDirection } from 'nanoraster';
@@ -57,10 +58,10 @@ import { orbitFromDirection } from 'nanoraster';
 const { azimuth, elevation } = orbitFromDirection([0.61, -0.61, 0.5], world);
 ```
 
-Azimuth is the angle in the world horizontal plane, zero on `world.forward` and
-positive toward the viewer's right; elevation is the angle above it. This
-convention is the pair's own, not the one the removed `phi`/`theta` options
-carried. The wire stays Cartesian: a turntable is a sequence of azimuths.
+Azimuth is the angle in the world horizontal plane. It is zero on
+`world.forward` and positive toward the viewer's right. Elevation is the angle above it. This convention is the pair's own, not the one the removed
+`phi`/`theta` options carried. The wire stays Cartesian: a turntable is a
+sequence of azimuths.
 
 ## Choose the fitted projection
 
@@ -82,13 +83,13 @@ const plan = {
 } as const;
 ```
 
-Fit framing intentionally has no `zoom`: `margin` is its one size control.
+Fit framing has no `zoom` by design. `margin` is its one size control.
 Use a [fixed camera](place-the-camera) when a caller must own magnification.
 
 ## Set the empty border
 
-`camera.margin` is the minimum empty fraction around contained fitted geometry,
-from `0` to `0.5`; the default is `0.1`.
+`camera.margin` is the minimum empty fraction around contained fitted
+geometry, from `0` to `0.5`. The default is `0.1`.
 
 ```typescript
 const image = await renderImage(glb, {
@@ -97,13 +98,13 @@ const image = await renderImage(glb, {
 });
 ```
 
-Fitting uses `width / height`, so set the output size before tuning the margin.
-Annotations may loosen a fitted camera to keep the model clear of their fixed
-screen-space slots, and the non-limiting image axis may have more whitespace.
-A fixed camera is never changed by annotations.
+Fitting uses `width / height`, so set the output size before you tune the
+margin. Annotations may loosen a fitted camera to keep the model clear of
+their fixed screen-space slots. The non-limiting image axis may have more
+whitespace. Annotations never change a fixed camera.
 
 ### Very wide perspective
 
 The `1..179` degree range is rectilinear. Near 180 degrees, positive front
 clearance can add whitespace beyond `margin`. Use a narrower field for
-photographic framing; fisheye is a different projection.
+photographic framing. Fisheye is a different projection.

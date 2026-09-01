@@ -3,8 +3,8 @@ title: Light the subject
 description: Replace the studio preset with a rig of your own, render from the environment alone, or fix a light to the model instead of the camera.
 ---
 
-Every render is lit by the studio preset unless the request says otherwise.
-`lighting` takes the preset name or an explicit rig; a rig replaces the studio
+The studio preset lights every render unless the request says otherwise.
+`lighting` takes the preset name or an explicit rig. A rig replaces the studio
 lights and inherits every value it leaves out.
 
 ### 1. Replace the studio lights
@@ -29,12 +29,15 @@ const image = await renderImage(glb, {
 
 </RenderDemo>
 
-`lights` replaces the three studio lights outright — it never adds to them.
+`lights` replaces the three studio lights outright. It never adds to them.
 `direction` points from the surface toward the light, in view space by default
-(`+x` right, `+y` up, `+z` toward the viewer), so the rig travels with the camera
-and every view is lit the same way; any non-zero vector is normalised. `color` is
-linear RGB radiance, unitless, up to eight lights. `ambient` lifts the shadow
-side; `exposure` scales the rig before the ACES tone map.
+(`+x` right, `+y` up, `+z` toward the viewer). The rig travels with the
+camera and lights every view the same way. The renderer normalises any
+non-zero vector.
+
+`color` is linear RGB radiance, unitless. The rig takes up to eight lights.
+`ambient` lifts the shadow side. `exposure` scales the rig before the ACES
+tone map.
 
 The studio preset, for reference (`ambient: 0.02`, analytic environment):
 
@@ -63,11 +66,11 @@ const image = await renderImage(glb, {
 </RenderDemo>
 
 An empty `lights` array with `ambient: 0` leaves the analytic environment as
-the only source (a rig inherits the studio ambient unless it says otherwise).
-Metals, which have no diffuse lobe, read well this way; dielectrics go soft and
-flat. `environment: 'none'` removes the specular reflection and the diffuse
-irradiance together and leaves only the lights you supplied — with none, the
-subject is black.
+the only source. A rig inherits the studio ambient unless it says otherwise.
+Metals have no diffuse lobe, so the environment alone renders them well.
+Dielectrics render soft and flat. `environment: 'none'` removes the specular
+reflection and the diffuse irradiance together, leaving only the lights you
+supplied. With none, the subject is black.
 
 ### 3. Fix a light to the model
 
@@ -98,10 +101,11 @@ const images = await renderImages(glb, {
 
 </RenderDemo>
 
-`space: 'world'` reads directions in the declared caller world, so this light
-stays fixed to the Z-up subject while the camera orbits. nanoraster converts it
-once; do not supply GLB-space values. Under default `'view'`, the rig instead
-travels with each camera, which is usually better for contact sheets.
+`space: 'world'` reads directions in the declared caller world. The light
+stays fixed to the Z-up subject while the camera orbits. nanoraster
+converts the rig once; do not supply GLB-space values. Under the default
+`'view'`, the rig travels with each camera, which is usually better
+for contact sheets.
 
 ### 4. Keep the preset pinned
 
@@ -113,24 +117,26 @@ const image = await renderImage(glb, {
 ```
 
 Omitting `lighting`, passing `'studio'` and spelling out the studio values
-produce the same bytes. Pin it when the request, not the default, should say how
-the image was lit; [determinism](../how-it-works#determinism) covers either.
+produce the same bytes. Pin the preset when the request, not the default,
+should say how the image was lit.
+[Determinism](../how-it-works#determinism) covers either.
 
 ## Variations
 
 **Lighting is shared across a batch.** `renderImages` takes one rig for the
-whole call; a model-fixed light is `space: 'world'`, as above.
+whole call. A model-fixed light uses `space: 'world'`, as above.
 
-**Annotations ignore the rig.** The axis indicator, label and scale bar are
-composited after shading; authored edge lines are drawn unlit.
+**Annotations ignore the rig.** The renderer composites the axis indicator,
+label and scale bar after shading. It draws authored edge lines unlit.
 
 **Metals depend on the environment.** A fully metallic subject has no diffuse
-term, so under `environment: 'none'` it renders nearly black; see
+term, so under `environment: 'none'` it renders nearly black. See
 [Material model](../how-it-works#material-model).
 
 **Cost scales with light count.** Eight lights cost roughly eight times the
-direct-lighting work of one — invisible at thumbnail sizes, not at 4096².
+direct-lighting work of one. That is invisible at thumbnail sizes, but not
+at 4096².
 
-**Every bound is exported.** `renderImageMaxLights`, `renderImageLightColorRange`,
-`renderImageAmbientRange` and `renderImageExposureRange` are what the
-[validator](../api#constants) applies.
+**Every bound is exported.** The [validator](../api#constants) applies
+`renderImageMaxLights`, `renderImageLightColorRange`,
+`renderImageAmbientRange` and `renderImageExposureRange`.

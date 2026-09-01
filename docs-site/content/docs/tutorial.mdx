@@ -3,12 +3,12 @@ title: Render a view sheet
 description: Build a four-view contact sheet from one GLB, learning batch rendering, fitted cameras, and labels along the way.
 ---
 
-Build a labelled four-view contact sheet (front, right, top and iso) from one
+Build a labelled four-view contact sheet (front, right, top, and iso) from one
 GLB in a single render call.
 
 ## Step 1: Render a single fitted view
 
-Start with one view so the camera controls are visible on their own.
+Start with one view, so the camera controls are visible on their own.
 [Frame the model](guides/frame-the-model) explains `direction` and `up`.
 
 <RenderDemo>
@@ -35,14 +35,14 @@ await writeFile('front.webp', front.bytes);
 
 </RenderDemo>
 
-**Verify**: `front.webp` shows the gear face-on, teeth all round the rim.
+**Verify**: `front.webp` shows the gear face-on, teeth all around the rim.
 
 ## Step 2: Switch to the batch call
 
-Rendering each view with its own call parses and uploads the GLB every time.
-`renderImages` does that once and renders every view in the list — start
-with two, then add the rest in step 3. A sheet wants a tighter fit than a
-single hero image, so each preset uses `margin: 0.05`.
+A separate call for each view parses and uploads the GLB every time.
+`renderImages` does that once, then renders every view in the list. Start with
+two views. Add the rest in step 3. A sheet needs a tighter fit than a single
+hero image, so each preset uses `margin: 0.05`.
 
 <RenderDemo>
 
@@ -85,7 +85,7 @@ for (const { id, file } of sheet) {
 
 </RenderDemo>
 
-**Verify**: two files appear, and the console prints the IDs in the order you
+**Verify**: two files appear. The console prints the IDs in the order you
 declared them:
 
 ```console
@@ -97,9 +97,9 @@ The result filename carries the view `id`, not a counter.
 
 ## Step 3: Add the top and iso views
 
-The top view looks down the up axis; the iso view is the default three-quarter
-angle. `axes` draws a camera-aware marker in each image, which is what
-orients the top view once it is on its own.
+The top view looks down the up axis. The iso view is the default three-quarter
+angle. `axes` draws a camera-aware marker in each image. This marker orients
+the top view once the image is on its own.
 
 <RenderDemo>
 
@@ -149,16 +149,16 @@ const sheet = await renderImages(glb, {
 
 </RenderDemo>
 
-**Verify**: four files. `render-top.webp` looks down at the model, and `render-iso.webp` uses
-[the quick start's direction](/docs).
+**Verify**: four files appear. `render-top.webp` looks down at the model.
+`render-iso.webp` uses [the quick start's direction](/docs).
 
 ## Step 4: Label each view
 
-Labels are drawn into the image, screen-upright, so a sheet stays readable
-once the images are separated from their filenames. A view carries one when
-its entry sets `label`; there is no flag to turn on, and clearing a label
-below removes it. `scaleBar` adds the bottom-left bar, so the finished sheet
-carries its own units too.
+The renderer draws each label into the image, screen-upright. A sheet then
+stays readable once the images are separated from their filenames. A view
+carries a label when its entry sets `label`. There is no flag to set. Clear a
+view's `label` entry to remove its label. `scaleBar` adds the bottom-left
+bar, so the finished sheet also carries its own units.
 
 <RenderDemo>
 
@@ -217,6 +217,6 @@ const sheet = await renderImages(glb, {
 
 ## Step 5: Keep it reproducible
 
-Run the script twice and compare the files: the sheet regenerates
-byte-for-byte on the same host. [How it works](how-it-works#determinism) sets out what is
-and is not guaranteed across hosts.
+Run the script twice. Compare the files. The sheet regenerates byte-for-byte on
+the same host. [How it works](how-it-works#determinism) states what is and
+is not guaranteed across hosts.

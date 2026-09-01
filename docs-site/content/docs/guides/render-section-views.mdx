@@ -3,14 +3,14 @@ title: Cut section views
 description: Cut one or more retained half-spaces and render deterministic striped caps and outlines.
 ---
 
-Plane points and normals use the caller world; normals point into the retained
-half-space. Omit `world` for canonical glTF +Y-up metres.
+Plane points and normals use the caller world. Normals point into the
+retained half-space. Omit `world` for canonical glTF +Y-up metres.
 
 ## Cut with one or more planes
 
-Use `sections.planes` for one to eight simultaneous cuts. The retained subject is
-the intersection of every half-space, so changing plane order does not change
-the image.
+Use `sections.planes` for one to eight simultaneous cuts. The retained
+subject is the intersection of every half-space. Plane order therefore does
+not change the image.
 
 <RenderDemo model="/demo/overlapping-cubes.glb">
 
@@ -37,13 +37,13 @@ const image = await renderImage(glb, {
 
 Normals take any finite non-zero magnitude, and
 [`directionFromOrbit`](../api#directionfromorbit) names one. Omit
-`sections` for no cut. Elevation 90 is caller +Z; nanoraster converts the plane
-once.
+`sections` for no cut. Elevation 90 is caller +Z. nanoraster converts the
+plane once.
 
 ## Control what each plane clips
 
 Both switches default to `true`. Disabling `clipSurfaces` leaves triangles
-uncut and produces no caps; disabling `clipLines` leaves authored lines uncut.
+uncut and produces no caps. Disabling `clipLines` leaves authored lines uncut.
 
 ## Read the cap
 
@@ -57,14 +57,15 @@ repair meshes.
 
 ### Contract note: sub-quantum ring collapse
 
-If a true cut ring collapses below three fixed-grid points, rendering fails
-rather than returning a partial cap. Its named `sections: cap:` diagnostic says
-`true cut ring collapsed below three quantized points` and includes the source
-and plane. Rescale the model or move the cut beyond that quantum.
+If a true cut ring collapses below three fixed-grid points, the render fails
+rather than returning a partial cap. The named `sections: cap:` diagnostic
+says `true cut ring collapsed below three quantized points`. The diagnostic
+includes the source and plane. Rescale the model, or move the cut beyond that
+quantum.
 
 A valid `EXT_mesh_manifold` mesh supplies exact topology. Base primitives still
 control rendering, materials, and visibility. Hatch direction follows the
-plane; spacing follows the camera.
+plane. Hatch spacing follows the camera.
 
 Fitted framing follows the visible primitive set but does not refit after a
 plane moves. The cut therefore reveals the interior without making the camera

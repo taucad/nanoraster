@@ -36,13 +36,14 @@ const inspectionCamera = {
 ```
 
 Here `0.08` is 80 mm along a Z-up metre caller axis. Pass `callerWorld` beside
-the camera; nanoraster performs the one conversion to canonical GLB space.
-Do not pre-convert these values in the caller.
+the camera. nanoraster performs the one conversion to canonical GLB space.
+Do not pre-convert in the caller.
 
 ## Projection and zoom
 
-Perspective field of view is vertical and measured in degrees. `zoom` is a
-positive magnification, defined independently of a rendering framework:
+The perspective field of view is vertical and in degrees. `zoom` is a
+positive magnification. Its definition does not depend on any rendering
+framework:
 
 ```text
 effective field of view = 2 × atan(tan(verticalFieldOfView / 2) / zoom)
@@ -55,7 +56,8 @@ caller-world height before zoom:
 effective vertical span = verticalSpan / zoom
 ```
 
-Output aspect is always `width / height`; there is no second aspect setting.
+The output aspect is always `width / height`. There is no second aspect
+setting.
 
 ```typescript
 const planCamera = {
@@ -70,23 +72,24 @@ const planCamera = {
 ### Very narrow perspective
 
 A tiny field of view is the wrong way to reach a parallel look. Framing
-distance grows as `1 / tan(fov / 2)`, so a subject one height tall sits 57
-heights away at 1 degree and 573 at 0.1, collapsing depth precision and making
-clipping brittle. Ask for `{ kind: 'orthographic' }`, which has no distance in
-it.
+distance grows as `1 / tan(fov / 2)`. A subject one height tall sits 57
+heights away at 1 degree, and 573 heights away at 0.1. That distance collapses
+depth precision and makes clipping brittle. Ask for
+`{ kind: 'orthographic' }`, which has no distance in it.
 
-To hand a shot between the two without a visible jump, measure rather than
-guess. Render the view at both projections and compare the frame corners, where
-perspective diverges most. Take the largest field of view whose worst-corner
-displacement from the orthographic projection stays under half a pixel, then
-switch: under half a pixel the two images differ by less than one sample.
+To hand a shot between the two projections without a visible jump, measure
+rather than guess. Render the view at both projections. Compare the frame
+corners, where perspective diverges most. Find the largest field of view whose
+worst-corner displacement from the orthographic projection stays under half a
+pixel, then switch.
 
 ## Clipping
 
-Omit `clipping` to derive safe positive planes from subject bounds. Supply it
-to match another renderer: `near` must be positive and `far` greater. Unused
-range is tightened for depth precision without changing visible geometry.
-Fat lines crossing the near plane are trimmed before expansion.
+Omit `clipping` and nanoraster derives safe positive planes from subject
+bounds. Supply `clipping` to match another renderer: `near` must be positive
+and `far` greater. The renderer tightens unused range for depth precision
+without changing visible geometry. The renderer trims fat lines that cross
+the near plane before expansion.
 
 ## Try two preset cameras
 
@@ -128,8 +131,8 @@ const images = await renderImages(glb, {
 
 </RenderDemo>
 
-Each label names the preset in the resulting sheet. Annotation behavior is
-covered in [Format and annotate](format-and-annotate).
+Each label names the preset in the resulting sheet.
+[Format and annotate](format-and-annotate) covers annotation behavior.
 
 ## Capture a viewer
 
@@ -149,7 +152,8 @@ const image = await renderImage(glb, request);
 
 For Three.js, map `camera.position`, the controls target, vertical `camera.fov`,
 and `camera.zoom` into those fields. Screen `up` comes from the camera's world
-quaternion, not from `camera.up`, which is the hint `lookAt` solves against and
-holds no roll. For an orthographic camera, derive `verticalSpan` from
-`(top - bottom)` before zoom. Do that mapping in the consumer adapter;
-nanoraster's request contains no Three.js class, matrix, or serialization rule.
+quaternion, not from `camera.up`. `camera.up` is the hint that `lookAt` solves
+against, and it holds no roll. For an orthographic camera, derive
+`verticalSpan` from `(top - bottom)` before zoom. Do that mapping in the
+consumer adapter. nanoraster's request contains no Three.js class, matrix, or
+serialization rule.

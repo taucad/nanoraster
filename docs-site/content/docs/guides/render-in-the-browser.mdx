@@ -5,16 +5,16 @@ description: Run nanoraster on browser WebGPU, bundle the WebAssembly artifact, 
 
 Render in a browser tab on WebGPU, with the API and render core the Node.js
 build uses. You need WebGPU enabled and a bundler that can emit a WebAssembly
-asset; Vite, webpack 5 and Rspack all do without configuration, and
+asset. Vite, webpack 5, and Rspack all can, without configuration.
 [Install](../install) covers how the artifact is delivered.
 
 ### 1. Check for a WebGPU adapter first
 
 `navigator.gpu` is necessary but not sufficient: a browser can expose the API
-and still produce no adapter, or a software one. `describeAdapter()` names what
-you got without downloading the wasm, and resolves `undefined` where there is
-nothing to bind. Check it before any work; `'cpu'` means software
-rasterisation, an order of magnitude slower.
+and still produce no adapter, or a software one. `describeAdapter()` names the
+adapter you have, without downloading the wasm. It resolves `undefined`
+where there is nothing to bind. Check it before any work; `'cpu'` means
+software rasterisation, an order of magnitude slower.
 
 ```typescript
 import { describeAdapter } from 'nanoraster';
@@ -34,7 +34,7 @@ discloses, from `"google swiftshader"` in headless Chrome to `""` in Firefox.
 
 ### 2. Render from bytes you already hold
 
-Only the source of the GLB differs: a fetch, a file input or an in-memory
+Only the source of the GLB differs: a fetch, a file input, or an in-memory
 buffer.
 
 ```typescript
@@ -61,14 +61,14 @@ const url = URL.createObjectURL(blob);
 document.querySelector('img')?.setAttribute('src', url);
 ```
 
-Revoke it with `URL.revokeObjectURL(url)` once the image has loaded, or the blob
-stays resident for the life of the document.
+Revoke the URL with `URL.revokeObjectURL(url)` after the image loads.
+Otherwise the blob stays resident for the life of the document.
 
 ### 4. Keep the render off the main thread
 
-Rendering occupies the GPU queue and spends CPU time encoding; in a worker,
-neither blocks input handling. Create the renderer once per worker and dispose
-it when the worker closes.
+A render occupies the GPU queue and spends CPU time on the encode. In a
+worker, neither blocks input handling. Create the renderer once per worker and
+dispose it when the worker closes.
 
 ```typescript
 // render.worker.ts
@@ -93,30 +93,31 @@ self.addEventListener('close', () => {
 });
 ```
 
-A renderer is single-realm: bytes cross `postMessage`, handles never do, and
-transferring `image.bytes.buffer` moves the memory instead of copying it. The
-catch matters: an unhandled rejection inside the listener would leave the
-caller waiting forever, so a failure is posted back as `{ error }` and bytes
+A renderer is single-realm: bytes cross `postMessage`, handles never do. A
+transfer of `image.bytes.buffer` moves the memory instead of a copy. An
+unhandled rejection inside the listener would leave the caller in
+a permanent wait, so the worker posts a failure back as `{ error }`, and bytes
 mean success. [Handle render failures](handle-render-failures) classifies the
 error; [Reuse the renderer](reuse-the-renderer) covers the lifetime.
 
 ## Variations
 
 **Cross-origin isolation.** The browser build does not require
-`SharedArrayBuffer`, so COOP/COEP headers are not needed.
+`SharedArrayBuffer`, so you do not need COOP/COEP headers.
 
 **Node and browser from one codebase.** The import specifier is the same in
 both, and nothing in your code needs to branch. The browser entry imports no
 Node.js builtin and resolves the wasm asset without bundler configuration.
 
-**Main-thread renders.** The one-shot functions work there too, at the price
-of readback and encode competing with input.
+**Main-thread renders.** The one-shot functions work there too, but readback
+and encode compete with input.
 
 **Capturing a live viewer's camera.** Freeze the viewer's numeric pose before
-rendering. Keep the pose in the same caller world passed to nanoraster; never
-pre-convert it to GLB space. Match the viewer's output aspect. `up` is screen
-up; a three.js `camera.up` is not, being the hint `lookAt` solves against, so
-derive it from the camera's world quaternion or a rolled view arrives upright.
+you render. Keep the pose in the same caller world you pass to nanoraster;
+never pre-convert it to GLB space. Match the viewer's output aspect. `up` is
+screen up. A three.js `camera.up` is not: it is the hint `lookAt` solves
+against. Derive `up` from the camera's world quaternion, or a rolled view
+arrives upright.
 
 ```typescript
 const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(
