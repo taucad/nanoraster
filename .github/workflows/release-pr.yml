@@ -86,6 +86,15 @@ jobs:
         with:
           node-version: '26'
 
+      # Release preparation runs the same `quality` gate as CI, and that gate
+      # drives a real browser over the built documentation routes. The shared
+      # setup installs no browser, so this job needs the one CI installs for
+      # the same task; without it the gate fails on a missing executable
+      # rather than on anything about the release.
+      - name: Install the browser the quality gate drives
+        if: steps.plans.outputs.pending == 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
       - name: Generate the release commit
         id: generate
         if: steps.plans.outputs.pending == 'true'
