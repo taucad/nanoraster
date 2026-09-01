@@ -339,15 +339,15 @@ export const RenderDemo = ({
     // Exact at the pole: `orbitFromDirection` clamps its sine before `asin`,
     // so a direction on the world's up axis reports ±90 with no float dust.
     const atPole = Math.abs(orbit.elevation) === 90;
-    // The elevation track stops a degree short of the poles, the way orbit
-    // controls conventionally do: at exactly ±90 the direction is the world's
-    // own up axis and the azimuth is no longer recoverable from it, so the
-    // azimuth handle would snap to a canonical bearing. One degree out, both
-    // angles stay live. An example that authors an exact pole keeps it — the
-    // value sits at the track's end with a truthful label until dragged, and
-    // reset restores it — because a plan view or a horizontal cut is exactly
-    // ±90 by meaning, and typed or authored directions are where the
-    // renderer's canonical pole orientation is the right convention.
+    // The track's ends are the exact poles: a plan view or a horizontal cut
+    // is exactly ±90 by meaning, so the slider reaches it. At a pole the
+    // direction is the world's own up axis — every azimuth names that same
+    // vector, none is recoverable from it, and the view takes the renderer's
+    // canonical pole orientation. The azimuth track is disabled there with a
+    // title saying why, rather than springing back to the canonical bearing
+    // mid-drag; leaving the pole resumes from that bearing, because a
+    // remembered azimuth would put a value in the copyable example that the
+    // request no longer carries.
     const move = (next: { azimuth: number; elevation: number }): void => {
       update(control.key, demoDirectionFromOrbit(next, declaredWorld));
     };
@@ -359,8 +359,8 @@ export const RenderDemo = ({
           </span>
           <input
             aria-label={`${control.label} azimuth`}
-            // At an authored pole the handle would spring back to the
-            // canonical bearing on release; a disabled track says why instead.
+            // At the pole the handle would spring back to the canonical
+            // bearing on release; a disabled track says why instead.
             disabled={atPole}
             max={180}
             min={-180}
@@ -386,8 +386,8 @@ export const RenderDemo = ({
           </span>
           <input
             aria-label={`${control.label} elevation`}
-            max={89}
-            min={-89}
+            max={90}
+            min={-90}
             onChange={(event) => {
               move({ azimuth, elevation: Number(event.currentTarget.value) });
             }}
