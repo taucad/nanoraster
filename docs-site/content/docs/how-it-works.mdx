@@ -17,7 +17,7 @@ stage name (`parse`, `gpu`, `encode`).
 flowchart TD
   subgraph CPU1[CPU]
     A([GLB bytes]) --> B[Parse geometry and materials]
-    B --> C[Fit camera to bounds]
+    B --> C[Resolve camera and presentation]
   end
   subgraph GPU[GPU]
     D[Upload buffers] --> E[Rasterise + edge pass] --> F[Read back pixels]
@@ -33,12 +33,16 @@ input; a failure here is classified `parse`. An out-of-profile _material_ is
 not rejected — it degrades instead, as the [material model](#material-model)
 describes.
 
-**Fit and upload** compute a camera that frames the model's bounds from your
-`phi`, `theta`, `up`, `projection` and `margin`, then move the geometry to the
-device once; see [Frame the model](guides/frame-the-model).
+**Resolve and upload** settles the camera from eligible referenced indexed
+geometry, primitive visibility, and any section caps before moving geometry to
+the device once. See [Frame the model](guides/frame-the-model),
+[Place the camera](guides/place-the-camera), [Choose visible geometry](guides/choose-visible-geometry),
+and [Cut section views](guides/render-section-views).
 
-**Rasterise** draws the model under the studio preset or the rig you supply,
-tone maps with the ACES filmic curve, then draws authored edge lines. Failures here are GPU-class.
+**Rasterise** clips and draws surfaces, section caps, cap outlines, and authored
+lines, then applies the requested annotations. Surface lighting uses the
+studio preset or supplied rig; section caps are unlit evidence. Failures here
+are GPU-class.
 
 **Encode** compresses the pixels that came back. A request it cannot
 represent, such as a transparent JPEG, fails as `encode`. Because the failure
@@ -49,9 +53,10 @@ read back; see [Work with raw pixels](guides/work-with-raw-pixels).
 
 [`renderImages`](api#renderimages) parses and uploads once, then fits,
 rasterises and encodes once per view. [`RenderTimings`](api#rendertimings)
-fields map onto these stages: `parse` for parse and fit, `setup` for device
-acquisition and upload, then per-view `render`, `overlay` for the annotation
-pass, and `encode`.
+fields map onto these stages: `parse` for parse and fit, `capBuild` for shared
+presentation work, `upload` for source geometry, then per-view `render`,
+`overlay` for the annotation pass, and `encode`. `setup` measures the complete
+acquisition, presentation and upload interval.
 
 [Both hosts](install), Node.js native and
 [browser WebGPU](guides/render-in-the-browser), wrap the same Rust core and
@@ -88,8 +93,8 @@ screenshot an agent compares across a tool loop. Evidence that varies for
 reasons unrelated to the subject invites false conclusions, so nanoraster
 removes inputs rather than seeding them. Lighting is the studio preset unless
 the request carries a [rig](guides/light-the-subject); tone map and gamma are
-fixed; camera distance is derived from the model's bounds; angles, format,
-size, background and annotations are yours.
+fixed; fitted placement is derived from referenced indexed geometry; camera
+angles, format, size, background and annotations are yours.
 
 What is guaranteed:
 
@@ -97,7 +102,7 @@ What is guaranteed:
   process or a different one.
 - Lighting is identical for every render that states the same `lighting`, or
   none.
-- The camera fit is identical for identical bounds and angles.
+- The camera fit is identical for identical referenced geometry and camera inputs.
 - Input failures reproduce exactly.
 
 What is not guaranteed:

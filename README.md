@@ -62,8 +62,8 @@ using renderer = await createRenderer({ powerPreference: 'low-power' });
 const [card, og] = await renderer.renderImages(glb, {
   format: 'webp',
   views: [
-    { id: 'card', phi: 60, theta: -45, width: 768, height: 576 },
-    { id: 'og', phi: 60, theta: -45, width: 1536, height: 804, format: 'png' },
+    { id: 'card', width: 768, height: 576 },
+    { id: 'og', width: 1536, height: 804, format: 'png' },
   ],
 });
 ```
