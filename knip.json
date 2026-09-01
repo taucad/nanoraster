@@ -4,6 +4,7 @@
   "workspaces": {
     ".": {
       "entry": [
+        "bench/*.mjs",
         "scripts/*.mjs",
         "src/**/*.test.ts",
         "src/**/*.test-d.ts",

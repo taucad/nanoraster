@@ -1,0 +1,156 @@
+---
+title: Place the camera
+description: Capture an exact perspective or orthographic view with a portable position, target, up vector, field of view, zoom, and clipping contract.
+---
+
+Use `framing: 'fixed'` when the capture must preserve a viewer pose or a remote
+request. Use [`framing: 'fit'`](frame-the-model) when nanoraster should keep the
+whole model in frame.
+
+## Position, target, and roll
+
+`position`, `target`, and `up` are three-number tuples in the submitted GLB's
+world frame. `position` and `target` establish the view direction. `up`
+establishes screen vertical, so changing it rolls the camera without moving the
+eye. Position and target must differ; up must not be collinear with the view.
+
+```typescript
+import type { RenderCamera } from 'nanoraster';
+
+const inspectionCamera = {
+  framing: 'fixed',
+  position: [0.08, 0.04, 0.08],
+  target: [0, 0, 0],
+  up: [0, 1, 0],
+  projection: { kind: 'perspective', verticalFieldOfView: 45, zoom: 1.2 },
+  clipping: { near: 0.005, far: 1 },
+} as const satisfies RenderCamera;
+```
+
+The numbers use GLB world units. If the file stores metres, `0.08` is 80 mm.
+nanoraster does not reinterpret a CAD source axis; convert the camera into the
+same coordinate frame as the GLB before sending the request.
+
+## Projection and zoom
+
+Perspective field of view is vertical and measured in degrees. `zoom` is a
+positive magnification, defined independently of a rendering framework:
+
+```text
+effective field of view = 2 × atan(tan(verticalFieldOfView / 2) / zoom)
+```
+
+Orthographic cameras replace field of view with `verticalSpan`, the visible
+world-space height before zoom:
+
+```text
+effective vertical span = verticalSpan / zoom
+```
+
+Output aspect is always `width / height`; there is no second aspect setting.
+
+```typescript
+const planCamera = {
+  framing: 'fixed',
+  position: [0, 0.12, 0],
+  target: [0, 0, 0],
+  up: [0, 0, 1],
+  projection: { kind: 'orthographic', verticalSpan: 0.08, zoom: 1 },
+} as const satisfies RenderCamera;
+```
+
+## Clipping
+
+Omit `clipping` to derive safe positive near and far planes from the subject
+bounds. Supply it when matching another renderer's visible clipping. `near`
+must be positive and `far` must be greater. Geometry before the near plane or
+after the far plane is intentionally absent. Range outside the subject bounds
+is tightened without changing visible geometry, which preserves depth
+precision when a host camera uses a very broad safety range. Authored fat lines
+crossing the near plane are trimmed before screen-space expansion.
+
+## Try four preset cameras
+
+This request is also a serializable RPC payload. Pick a preset in the control
+panel, then edit its vectors and projection. The visible code and executed
+request change together.
+
+<RenderDemo>
+
+```typescript
+import { renderImages } from 'nanoraster';
+
+const images = await renderImages(glb, {
+  format: 'png',
+  views: [
+    {
+      id: 'three-quarter',
+      label: 'Three-quarter fit',
+      camera: {
+        framing: 'fit',
+        direction: [0.6123724357, 0.5, 0.6123724357],
+      },
+    },
+    {
+      id: 'close',
+      label: 'Close perspective',
+      camera: {
+        framing: 'fixed',
+        position: [0.08, 0.04, 0.08],
+        target: [0, 0, 0],
+        up: [0, 1, 0],
+        projection: { kind: 'perspective', zoom: 1.2 },
+        clipping: { near: 0.005, far: 1 },
+      },
+    },
+    {
+      id: 'low',
+      label: 'Low inspection',
+      camera: {
+        framing: 'fixed',
+        position: [0.1, -0.025, 0.035],
+        target: [0, 0, 0],
+        up: [0, 1, 0],
+        projection: { kind: 'perspective', verticalFieldOfView: 52 },
+      },
+    },
+    {
+      id: 'plan',
+      label: 'Orthographic plan',
+      camera: {
+        framing: 'fixed',
+        position: [0, 0.12, 0],
+        target: [0, 0, 0],
+        up: [0, 0, 1],
+        projection: { kind: 'orthographic', verticalSpan: 0.08 },
+      },
+    },
+  ],
+});
+```
+
+</RenderDemo>
+
+Each label names the preset in the resulting sheet. Annotation behavior is
+covered in [Format and annotate](format-and-annotate).
+
+## Capture a viewer
+
+An adapter should freeze numeric camera state before asynchronous rendering:
+
+```typescript
+const request = {
+  format: 'png',
+  width: 1600,
+  height: 900,
+  camera: inspectionCamera,
+} as const;
+
+const image = await renderImage(glb, request);
+```
+
+For Three.js, map `camera.position`, the controls target, `camera.up`, vertical
+`camera.fov`, and `camera.zoom` into those fields. For an orthographic camera,
+derive `verticalSpan` from `(top - bottom)` before zoom. Do that mapping in the
+consumer adapter; nanoraster's request contains no Three.js class, matrix, or
+serialization rule.

@@ -158,8 +158,8 @@ describe('renderImages', () => {
     axes: true,
     scaleBar: true,
     views: [
-      { id: 'front', label: 'Front', phi: 90, theta: 0 },
-      { id: 'top', label: 'Top', phi: 0, theta: 0 },
+      { id: 'front', label: 'Front' },
+      { id: 'top', label: 'Top' },
     ],
   } as const;
 
@@ -188,10 +188,7 @@ describe('renderImages', () => {
 
     const results = await renderImages(glb, {
       format: 'webp',
-      views: [
-        { id: 'card', phi: 60, theta: -45 },
-        { id: 'hero', phi: 60, theta: -45, width: 1536, format: 'png' },
-      ],
+      views: [{ id: 'card' }, { id: 'hero', width: 1536, format: 'png' }],
     });
 
     expect(results.map(({ file }) => file.name)).toEqual(['render-card.webp', 'render-hero.png']);
@@ -206,10 +203,7 @@ describe('renderImages', () => {
       glb,
       JSON.stringify({
         format: 'webp',
-        views: [
-          { id: 'card', phi: 60, theta: -45 },
-          { id: 'hero', phi: 60, theta: -45, width: 1536, format: 'png' },
-        ],
+        views: [{ id: 'card' }, { id: 'hero', width: 1536, format: 'png' }],
       }),
     );
   });
@@ -225,10 +219,7 @@ describe('renderImages', () => {
       format: 'webp',
       width: 32,
       height: 24,
-      views: [
-        { id: 'thumb', phi: 60, theta: -45 },
-        { id: 'frame', phi: 60, theta: -45, format: 'raw' },
-      ],
+      views: [{ id: 'thumb' }, { id: 'frame', format: 'raw' }],
     });
 
     expect(results.map(({ file }) => file.name)).toEqual(['render-thumb.webp', 'render-frame.raw']);
@@ -242,7 +233,15 @@ describe('renderImages', () => {
       timings: JSON.stringify({
         parse: 0.5,
         setup: 2,
+        capBuild: 0.25,
+        upload: 0.5,
         peakReadbackBytes: 4,
+        glbParses: 1,
+        adapterDeviceRequests: 0,
+        pipelineSets: 0,
+        presentationBuilds: 1,
+        sceneUploads: 1,
+        targetAllocations: 0,
         views: [{ id: 'front', render: 1, overlay: 0, encode: 3 }],
       }),
     });
@@ -250,12 +249,21 @@ describe('renderImages', () => {
     const results = await renderImages(glb, {
       format: 'png',
       timings: true,
-      views: [{ id: 'front', phi: 90, theta: 0 }],
+      views: [{ id: 'front' }],
     });
 
     expect(results.timings).toEqual({
       parse: 0.5,
       setup: 2,
+      capBuild: 0.25,
+      upload: 0.5,
+      peakReadbackBytes: 4,
+      glbParses: 1,
+      adapterDeviceRequests: 0,
+      pipelineSets: 0,
+      presentationBuilds: 1,
+      sceneUploads: 1,
+      targetAllocations: 0,
       views: [{ id: 'front', render: 1, overlay: 0, encode: 3 }],
     });
     expect(results[0].file.name).toBe('render-front.png');
@@ -265,7 +273,7 @@ describe('renderImages', () => {
     plural.mockResolvedValue({ images: [new Uint8Array([1])], timings: 'not json' });
 
     await expect(
-      renderImages(glb, { format: 'png', timings: true, views: [{ id: 'front', phi: 90, theta: 0 }] }),
+      renderImages(glb, { format: 'png', timings: true, views: [{ id: 'front' }] }),
     ).rejects.toMatchObject({ code: 'unknown' });
   });
 
@@ -289,7 +297,7 @@ describe('renderImages', () => {
       renderImages(glb, {
         format: 'png',
         axes: true,
-        views: [{ id: 'front', phi: 90, theta: 0, width: 191 }],
+        views: [{ id: 'front', width: 191 }],
       } as never),
     ).rejects.toMatchObject({
       code: 'parse',
@@ -471,7 +479,7 @@ describe('createRenderer', () => {
     expect([file.width, file.height]).toEqual([768, 256]);
     const images = await renderer.renderImages(glb, {
       format: 'webp',
-      views: [{ id: 'front', phi: 90, theta: 0, height: 300 }],
+      views: [{ id: 'front', height: 300 }],
     });
     expect(images[0].file.name).toBe('render-front.webp');
     expect([images[0].file.width, images[0].file.height]).toEqual([768, 300]);
@@ -572,7 +580,7 @@ describe('createRenderer', () => {
     await expect(
       renderer.renderImages(glb, {
         format: 'gif',
-        views: [{ id: 'front', phi: 90, theta: 0 }],
+        views: [{ id: 'front' }],
       } as never),
     ).rejects.toMatchObject({ code: 'parse' });
 
@@ -603,7 +611,7 @@ describe('createRenderer', () => {
 
     const renderer = await createRenderer();
     await expect(
-      renderer.renderImages(glb, { format: 'png', views: [{ id: 'front', phi: 90, theta: 0 }] }),
+      renderer.renderImages(glb, { format: 'png', views: [{ id: 'front' }] }),
     ).rejects.toMatchObject({ code: 'device-lost' });
   });
 

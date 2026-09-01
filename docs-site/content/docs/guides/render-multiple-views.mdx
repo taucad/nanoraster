@@ -11,8 +11,8 @@ single renders never can.
 
 ### 1. Declare the views as a tuple
 
-Each view needs a unique `id` and its own angles. `axes` marks the
-orientation of each one, which a set of angles alone does not show.
+Each view needs a unique `id`. Its optional self-contained `camera` defaults to
+the fitted three-quarter view. `axes` marks each orientation.
 
 <RenderDemo>
 
@@ -28,10 +28,7 @@ const images = await renderImages(glb, {
   width: 640,
   height: 480,
   axes: true,
-  views: [
-    { id: 'iso', phi: 60, theta: -45 },
-    { id: 'front', phi: 90, theta: 0 },
-  ],
+  views: [{ id: 'iso' }, { id: 'front', camera: { framing: 'fit', direction: [1, 0, 0] } }],
 });
 ```
 
@@ -63,9 +60,9 @@ const [card, og, print] = await renderImages(glb, {
   width: 768,
   height: 576,
   views: [
-    { id: 'card', phi: 60, theta: -45 },
-    { id: 'og', phi: 60, theta: -45, width: 1536, height: 804 },
-    { id: 'print', phi: 60, theta: -45, width: 1536, height: 804, format: 'png' },
+    { id: 'card' },
+    { id: 'og', width: 1536, height: 804 },
+    { id: 'print', width: 1536, height: 804, format: 'png' },
   ],
 });
 
@@ -91,10 +88,7 @@ import { renderImages, type RenderImagesOptions } from 'nanoraster';
 
 const options = {
   format: 'webp',
-  views: [
-    { id: 'iso', phi: 60, theta: -45 },
-    { id: 'top', phi: 0, theta: 0 },
-  ],
+  views: [{ id: 'iso' }, { id: 'top', camera: { framing: 'fit', direction: [0, 1, 0], up: [0, 0, 1] } }],
 } as const satisfies RenderImagesOptions;
 
 const images = await renderImages(glb, options);
@@ -109,9 +103,10 @@ tuple and returns a tuple even for one view, under the same
 **Labels per view.** Give an entry a `label` and that view is labelled; leave
 it off and it is not. See [Format and annotate](format-and-annotate).
 
-**Shared-only settings.** `axes`, `scaleBar`, `background`, `lighting`,
-`margin`, `up` and `projection` apply to the whole request; the camera pair,
-`label` and the four output fields vary per view.
+**Shared-only settings.** `axes`, `scaleBar`, `background`, and `lighting`
+apply to the whole request. Presentation filters and section planes are shared
+too, so one plan renders one presented subject from several cameras. `camera`, `label`, and the four output
+fields vary per view. There is no shared partial camera or inheritance order.
 
 **Renders spread over time.** The plan call shares the device across views
 _within_ one call; [`createRenderer`](reuse-the-renderer) shares it across
@@ -119,6 +114,6 @@ calls _over time_. They compose — a warm renderer accepts the same plan calls.
 Either way, when you can write the full list of images down, send it as one
 call rather than a loop: only the renderer can schedule work it can see.
 
-**Stage timings.** `timings: true` attaches parse, setup, and per-view render,
-overlay and encode milliseconds to the result as `results.timings`; see
+**Stage timings.** `timings: true` attaches stage and resource data to
+`results.timings`. `presentationBuilds` is `1` for the plan; see
 [`RenderTimings`](../api#rendertimings).

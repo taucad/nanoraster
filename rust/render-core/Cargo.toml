@@ -19,6 +19,7 @@ futures-channel = "0.3.32"
 glam = "0.33.2"
 gltf = { version = "=1.4.1", default-features = false, features = ["utils"] }
 image-webp = { path = "../vendor/image-webp" }
+i_triangle = "=0.48.0"
 # Exactly pinned like `gltf` and `fontdue`: these two decide the bytes every
 # artifact must agree on, and a codec's own defaults are not semver-protected
 # — jpeg-encoder 0.8.0 adds an opt-in `use_wide` SIMD path, which is exactly

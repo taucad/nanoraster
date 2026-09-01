@@ -54,18 +54,27 @@ const sizes = {
 // the shrink is the deleted raw-pixels entry points: the wasm-bindgen glue for
 // the class method and the free function, their JS result object, and the
 // core's format-free pixels request path. Rendered bytes are unchanged.
-// Stable-toolchain build: raw 751,233, gzip-9 307,369, brotli-11 249,284 on
-// macOS with Rust 1.98.0 / LLVM 22.1.8, wasm-pack 0.15.0, and Binaryen 132
-// `-Oz`, against 857,495 / 344,892 / 276,011 from Rust 1.88.0 / LLVM 20.1.5,
-// wasm-pack 0.13.1, and its bundled Binaryen 117 — -106,262 raw (-12.4%),
-// -37,523 gzip-9 (-10.9%), and -26,727 brotli-11 (-9.7%). wasm-pack 0.15 still
-// bundles Binaryen 117, so `scripts/build-wasm.mjs` deliberately skips that
-// optimizer and runs the exact-pinned Binaryen development dependency.
-// Ceilings are the measured figure plus ~1%. The gate runs on Linux CI, whose
-// figure has not been re-measured since the PBR build (315,196 gzip-9 there
-// against 312,881 on macOS) — gzip9 carries extra slack until a CI run
-// re-anchors it.
-const ceilings = { raw: 759_000, gzip9: 311_000, brotli11: 252_000 };
+// Cartesian-camera build: raw 931,986, gzip-9 369,380, brotli-11 294,978 on
+// macOS, against 857,495 / 344,892 / 276,011 for the raw-output build —
+// +74,491 raw (+8.7%), +24,488 gzip-9 (+7.1%), +18,967 brotli-11 (+6.9%).
+// This is the strict fitted/fixed camera request graph and its perspective,
+// orthographic, clipping, and line-width render paths. No post-process pass or
+// antialiasing mode was added; native and browser pixels use the existing 4x
+// MSAA target. The gates below retain ~1% admission slack.
+// Presentation-view build: raw 1,369,523, gzip-9 510,754, brotli-11 396,127 on
+// macOS, against 931,986 / 369,380 / 294,978 for the Cartesian-camera build —
+// +437,537 raw (+46.9%), +141,374 gzip-9 (+38.3%), +101,149 brotli-11 (+34.3%).
+// The increase is the pinned i_triangle/i_overlay exact polygon boolean and
+// triangulation path plus source selection, section cap, clipping, and shader
+// code. The public facade remains below 0.5 KB Brotli; the WASM stays below
+// 400 KB Brotli. Native, WASM, section degeneracy, and route gates cover the
+// admitted dependency before this ratchet moves.
+// Presentation base after the wide-FOV follow-ups: raw 1,253,048, gzip-9
+// 473,792, brotli-11 366,020. Paired-halfedge traversal plus browser-only
+// render-core size optimisation: 1,136,902 / 454,642 / 361,654 (-116,146 raw,
+// -19,150 gzip-9, -4,366 brotli-11). The Brotli ceiling is the base plus the
+// accepted 5 KB P0 budget.
+const ceilings = { raw: 1_270_000, gzip9: 480_000, brotli11: 371_020 };
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {

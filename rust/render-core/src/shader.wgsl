@@ -12,13 +12,18 @@ struct Light {
 struct Frame {
     view_projection: mat4x4<f32>,
     view: mat4x4<f32>,
-    // xy = viewport size in px, z = edge line width in px, w unused.
+    // xy = viewport size in px, z = edge line width in px, w = cap stripe spacing.
     viewport: vec4<f32>,
     lights: array<Light, 8>,
     light_count: u32,
     ambient: f32,
     exposure: f32,
     environment: u32,
+    section_planes: array<vec4<f32>, 6>,
+    section_count: u32,
+    clip_surfaces: u32,
+    clip_lines: u32,
+    _section_padding: u32,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -43,6 +48,7 @@ struct MeshOut {
     @builtin(position) position: vec4<f32>,
     @location(0) view_normal: vec3<f32>,
     @location(1) view_position: vec3<f32>,
+    @location(2) world_position: vec3<f32>,
 }
 
 @vertex
@@ -52,6 +58,7 @@ fn vs_mesh(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>) -> 
     out.position = frame.view_projection * world_position;
     out.view_normal = (frame.view * object.normal_matrix * vec4<f32>(normal, 0.0)).xyz;
     out.view_position = (frame.view * world_position).xyz;
+    out.world_position = world_position.xyz;
     return out;
 }
 
@@ -142,6 +149,14 @@ fn direct_light(
 
 @fragment
 fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    if (frame.clip_surfaces != 0u) {
+        for (var i = 0u; i < frame.section_count; i++) {
+            let plane = frame.section_planes[i];
+            if (dot(plane.xyz, in.world_position) + plane.w < 0.0) {
+                discard;
+            }
+        }
+    }
     let n = normalize(select(-in.view_normal, in.view_normal, front_facing));
     let v = normalize(-in.view_position);
     let metallic = clamp(prim.metallic, 0.0, 1.0);
@@ -170,6 +185,50 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
     return vec4<f32>(tone_map_aces(color, frame.exposure), prim.base_color.a);
 }
 
+struct CapOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) plane_uv: vec2<f32>,
+    @location(1) base_color: vec4<f32>,
+    @location(2) stripe_color: vec4<f32>,
+    @location(3) style: vec4<f32>,
+    @location(4) world_position: vec3<f32>,
+}
+
+@vertex
+fn vs_cap(
+    @location(0) position: vec3<f32>,
+    @location(1) plane_uv: vec2<f32>,
+    @location(2) base_color: vec4<f32>,
+    @location(3) stripe_color: vec4<f32>,
+    @location(4) style: vec4<f32>,
+) -> CapOut {
+    var out: CapOut;
+    out.position = frame.view_projection * vec4<f32>(position, 1.0);
+    out.plane_uv = plane_uv;
+    out.base_color = base_color;
+    out.stripe_color = stripe_color;
+    out.style = style;
+    out.world_position = position;
+    return out;
+}
+
+@fragment
+fn fs_cap(in: CapOut) -> @location(0) vec4<f32> {
+    for (var i = 0u; i < frame.section_count; i++) {
+        let plane = frame.section_planes[i];
+        if (dot(plane.xyz, in.world_position) + plane.w < -0.000001) {
+            discard;
+        }
+    }
+    let coordinate = dot(in.plane_uv, in.style.xy);
+    let phase = fract(coordinate / frame.viewport.w);
+    let distance = min(phase, 1.0 - phase) * frame.viewport.w;
+    let half_width = frame.viewport.w * 0.1;
+    let antialias = max(fwidth(distance), 0.000001);
+    let stripe = 1.0 - smoothstep(half_width - antialias, half_width + antialias, distance);
+    return mix(in.base_color, in.stripe_color, stripe);
+}
+
 // Fat lines: each segment instance is an 8-vertex triangle strip — a body
 // quad plus one cap row half a width beyond each endpoint, the layout of
 // three.js LineSegmentsGeometry. uv.x runs across the stroke and uv.y along
@@ -195,11 +254,46 @@ fn vs_line(
     let at_end = row >= 2u;
     let is_cap = row == 0u || row == 3u;
 
-    let clip_start = frame.view_projection * object.model * vec4<f32>(start, 1.0);
-    let clip_end = frame.view_projection * object.model * vec4<f32>(end, 1.0);
+    var world_start = object.model * vec4<f32>(start, 1.0);
+    var world_end = object.model * vec4<f32>(end, 1.0);
+    if (frame.clip_lines != 0u) {
+        for (var i = 0u; i < frame.section_count; i++) {
+            let plane = frame.section_planes[i];
+            let start_distance = dot(plane.xyz, world_start.xyz) + plane.w;
+            let end_distance = dot(plane.xyz, world_end.xyz) + plane.w;
+            if (start_distance < 0.0 && end_distance < 0.0) {
+                var out: LineOut;
+                out.position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+                out.uv = vec2<f32>(0.0);
+                return out;
+            }
+            if (start_distance < 0.0) {
+                world_start = mix(world_start, world_end, start_distance / (start_distance - end_distance));
+            } else if (end_distance < 0.0) {
+                world_end = mix(world_start, world_end, start_distance / (start_distance - end_distance));
+            }
+        }
+    }
+    var clip_start = frame.view_projection * world_start;
+    var clip_end = frame.view_projection * world_end;
 
-    // The fitted camera keeps all geometry inside the frustum, so both
-    // endpoints have w > 0 and no near-plane trimming is needed.
+    // WebGPU's near clip plane is homogeneous z = 0. Trim before perspective
+    // division so a fixed camera may cross a segment without expanding it to
+    // infinity. A segment wholly behind the plane becomes an off-screen point.
+    if (clip_start.z < 0.0 && clip_end.z < 0.0) {
+        var out: LineOut;
+        out.position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        out.uv = vec2<f32>(0.0);
+        return out;
+    }
+    if (clip_start.z < 0.0) {
+        let amount = -clip_start.z / (clip_end.z - clip_start.z);
+        clip_start = mix(clip_start, clip_end, amount);
+    } else if (clip_end.z < 0.0) {
+        let amount = -clip_end.z / (clip_start.z - clip_end.z);
+        clip_end = mix(clip_end, clip_start, amount);
+    }
+
     let resolution = frame.viewport.xy;
     let aspect = resolution.x / resolution.y;
     var dir = clip_end.xy / clip_end.w - clip_start.xy / clip_start.w;

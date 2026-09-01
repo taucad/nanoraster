@@ -25,11 +25,15 @@ jobs:
         continue-on-error: true # Origin: monthly drift opens an issue; the PR-vs-main gate remains fail-closed.
         env:
           MAX_MEDIAN_MS: '250' # Origin: 10x headroom over the extracted lavapipe spike; lower after five scheduled samples.
-        run: node bench/gated.mjs | tee benchmark.json
+        run: |
+          node bench/gated.mjs | tee benchmark.json
+          node --expose-gc bench/presentation.mjs | tee presentation-benchmark.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: monthly-benchmark
-          path: benchmark.json
+          path: |
+            benchmark.json
+            presentation-benchmark.json
       - if: steps.benchmark.outcome == 'failure'
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,15 +1,20 @@
 ---
 title: Frame the model
-description: Place the camera with two angles, match the model's up axis, choose a projection, and control how tightly the subject fits.
+description: Choose a fitted camera direction, screen-up vector, projection, and margin while nanoraster solves placement from referenced geometry.
 ---
 
-Most renderers ask for a camera position, a target and an up vector. nanoraster
-asks for two angles: the camera sits on a sphere centred on the model's bounds,
-and the radius is solved so the subject fills the frame.
+A fitted camera chooses an orientation while nanoraster solves the optical
+target, distance, and clip planes from indexed geometry that can be drawn. Use
+it for thumbnails, contact sheets, and any capture that must keep the whole
+subject in frame.
 
-### 1. Place the camera with two angles
+## Set direction and screen up
 
-You choose the direction the model is seen from, not the distance.
+`direction` points from the subject toward the camera. `up` establishes screen
+vertical and preserves roll. Both are Cartesian vectors in the GLB's world
+frame; their magnitudes are ignored, and they must not be collinear. Fitting
+may translate the camera and optical target together to balance the subject's
+angular envelope without changing that orientation.
 
 <RenderDemo>
 
@@ -18,108 +23,82 @@ import { renderImage } from 'nanoraster';
 
 const image = await renderImage(glb, {
   format: 'webp',
-  phi: 60,
-  theta: -45,
+  camera: {
+    framing: 'fit',
+    direction: [0.6123724357, 0.5, 0.6123724357],
+  },
 });
 ```
 
 </RenderDemo>
 
-`phi` is the polar angle from the up axis (default `60`); `theta` is the
-right-handed azimuth around it (default `-45`). Because `phi` is measured from
-the up axis it behaves like colatitude, not latitude: `0` looks straight down
-the axis (top), `60` is the default three-quarter view, `90` is level with the
-model (elevation) and `180` looks straight up (bottom). At `phi: 0` only
-`theta` spins the image.
+Those vectors spell the default three-quarter view. Omit `camera` to get the
+same result. For a top view, use `direction: [0, 1, 0]` and a non-collinear
+screen-up such as `[0, 0, 1]`.
 
-Exact ranges for every field named here are in
-[`RenderImageOptions`](../api#renderimageoptions).
+## Choose the fitted projection
 
-### 2. Match the model's up axis
+Perspective is the default. Its `verticalFieldOfView` is the exact rectilinear
+angle in degrees. An orthographic fit uses the same referenced geometry and
+margin but removes depth scaling.
 
-`up` does not rotate the model. It selects the world axis the angles are
-measured against, so changing it reinterprets `phi` and `theta` rather than
-transforming geometry.
+```typescript
+const perspective = {
+  framing: 'fit',
+  direction: [1, 0.4, 1],
+  projection: { kind: 'perspective', verticalFieldOfView: 52 },
+} as const;
 
-<RenderDemo>
+const plan = {
+  framing: 'fit',
+  direction: [0, 1, 0],
+  up: [0, 0, 1],
+  projection: { kind: 'orthographic' },
+} as const;
+```
+
+Fit framing intentionally has no `zoom`: `margin` is its one size control.
+Use a [fixed camera](place-the-camera) when a caller must own magnification.
+
+## Set the empty border
+
+`camera.margin` is the minimum empty fraction around contained fitted geometry,
+from `0` to `0.5`; the default is `0.1`.
 
 ```typescript
 const image = await renderImage(glb, {
   format: 'webp',
-  up: 'x',
-  phi: 60,
-  theta: -45,
+  camera: { framing: 'fit', margin: 0.02 },
 });
 ```
 
-</RenderDemo>
+Fitting uses `width / height`, so set the output size before tuning the margin.
+Annotations may loosen a fitted camera to keep the model clear of their fixed
+screen-space slots, and the non-limiting image axis may have more whitespace.
+A fixed camera is never changed by annotations.
 
-Y-up is the glTF convention and the default. CAD exports are often Z-up;
-render one without saying so and the subject tips onto its side. The demo
-gear's axis runs along X, so `up: 'x'` turns the same two angles into a view
-looking down onto its face.
+### Very wide perspective
 
-### 3. Choose a projection
+The supported `1..179` degree range is rectilinear: 90 degrees is ordinary,
+while values approaching 180 compress most forward rays toward the image
+centre. Nanoraster keeps every referenced point in front of the eye and inside
+the frame, so a deep subject may gain extra whitespace once positive front
+clearance becomes stricter than the requested minimum margin. Use a narrower
+field of view for photographic framing; a fisheye would be a different
+projection model.
 
-<RenderDemo>
+## Batch views
+
+Each view owns an optional complete camera. Omission means the same default fit
+as `renderImage`; there is no shared partial camera or inheritance order.
 
 ```typescript
-const image = await renderImage(glb, {
-  format: 'webp',
-  projection: 'orthographic',
-});
+const views = [
+  { id: 'iso' },
+  { id: 'right', camera: { framing: 'fit', direction: [1, 0, 0] } },
+  {
+    id: 'top',
+    camera: { framing: 'fit', direction: [0, 1, 0], up: [0, 0, 1], projection: { kind: 'orthographic' } },
+  },
+] as const;
 ```
-
-</RenderDemo>
-
-`perspective` is the default; nearer features look larger. Use `orthographic`
-for canonical views where two parts of the model must be comparable at any
-depth. It also makes the [scale annotation](format-and-annotate) depth-invariant.
-
-### 4. Tighten or loosen the fit
-
-`margin` is the fraction of the fitted extent left empty around the subject; the
-camera radius is solved from the bounds and `margin` together.
-
-<RenderDemo>
-
-```typescript
-const image = await renderImage(glb, {
-  format: 'webp',
-  margin: 0.02,
-});
-```
-
-</RenderDemo>
-
-| `margin` | Result                                    |
-| -------- | ----------------------------------------- |
-| `0`      | Subject touches the frame edge            |
-| `0.1`    | Default; a comfortable border             |
-| `0.5`    | Maximum; subject occupies the middle half |
-
-## Variations
-
-**Consistent framing across a set.** In a
-[batch call](render-multiple-views), `phi` and `theta` are per view while `up`,
-`projection` and `margin` are shared, so every tile of a contact sheet is
-framed the same way.
-
-**Very wide or very tall outputs.** Fitting accounts for the aspect ratio you
-request, so a 1920×480 banner frames differently from a 512×512 square; set
-`width` and `height` before tuning `margin`.
-
-## Notes
-
-- **You cannot dolly the camera.** Removing distance from the API removes a
-  class of bad output: no camera inside the model, no subject reduced to a
-  speck. Adjust `margin` if the subject looks too small.
-- **Angles are not portable across up axes.** A view tuned at Y-up needs
-  different numbers at Z-up.
-- **The fit is deterministic.** With identical bounds, angles and fitting
-  options — `margin`, `width` and `height` all feed the fit — the renderer
-  produces an identical camera, a precondition for
-  [reproducible output](../how-it-works#determinism).
-- **Degenerate bounds still render.** A flat or single-point model has
-  degenerate bounds; the fit falls back rather than dividing by zero, though the
-  result is rarely useful.

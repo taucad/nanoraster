@@ -81,8 +81,8 @@ const images = await renderImages(glb, {
     space: 'world',
   },
   views: [
-    { id: 'front', phi: 90, theta: 0 },
-    { id: 'back', phi: 90, theta: 180 },
+    { id: 'front', camera: { framing: 'fit', direction: [1, 0, 0] } },
+    { id: 'back', camera: { framing: 'fit', direction: [-1, 0, 0] } },
   ],
 });
 ```
