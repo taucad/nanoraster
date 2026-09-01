@@ -53,7 +53,7 @@ so recreate the renderer rather than retrying the call.
 const results = await renderer.renderImages(glb, {
   format: 'webp',
   timings: true,
-  views: [{ id: 'iso', phi: 60, theta: -45 }],
+  views: [{ id: 'iso' }],
 });
 
 console.log(results.timings.setup, results.timings.views[0].render);

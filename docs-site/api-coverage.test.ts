@@ -48,25 +48,20 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'width',
     'height',
     'quality',
-    'margin',
-    'up',
-    'projection',
+    'lineWidth',
     'background',
     'axes',
     'scaleBar',
     'lighting',
     'label',
-    'phi',
-    'theta',
+    'camera',
   ],
   RenderImagesOptions: [
     'format',
     'width',
     'height',
     'quality',
-    'margin',
-    'up',
-    'projection',
+    'lineWidth',
     'background',
     'axes',
     'scaleBar',
@@ -74,7 +69,7 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'timings',
     'views',
   ],
-  RenderImageView: ['id', 'label', 'phi', 'theta', 'width', 'height', 'format', 'quality'],
+  RenderImageView: ['id', 'label', 'camera', 'width', 'height', 'format', 'quality'],
   RenderLightingRig: ['lights', 'ambient', 'environment', 'space', 'exposure'],
   RenderLight: ['direction', 'color'],
   CreateRendererOptions: ['powerPreference'],
@@ -86,9 +81,7 @@ const defaults = {
   width: '768',
   height: '432',
   quality: '0.92 (jpeg), 1 (webp)',
-  margin: '0.1',
-  up: "'y'",
-  projection: "'perspective'",
+  lineWidth: '3',
   background: 'transparent',
   axes: 'false',
   scaleBar: 'false',
@@ -150,16 +143,6 @@ describe('API documentation coverage', () => {
         expect(entry?.tags.find(({ name: tagName }) => tagName === 'default')?.text).toBe(expected);
       }
     }
-
-    const singular = await generateDoc('RenderImageOptions');
-    expect(singular.entries.find(({ name }) => name === 'phi')?.tags).toContainEqual({
-      name: 'default',
-      text: '60',
-    });
-    expect(singular.entries.find(({ name }) => name === 'theta')?.tags).toContainEqual({
-      name: 'default',
-      text: '-45',
-    });
   });
 
   it('stringifies exact types as tight CommonMark property lists', async () => {

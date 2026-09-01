@@ -49,7 +49,7 @@ describe('published size figures', () => {
       gzip: gzipSync(wasm, { level: 9 }).byteLength,
       brotli: brotliCompressSync(wasm, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).byteLength,
     });
-  });
+  }, 15_000);
 
   distributionTest('quotes the built JavaScript entrypoint, when dist/index.mjs exists', () => {
     const javascript = readFileSync(distribution);

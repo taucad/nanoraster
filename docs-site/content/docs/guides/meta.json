@@ -2,6 +2,7 @@
   "title": "Guides",
   "pages": [
     "frame-the-model",
+    "place-the-camera",
     "render-multiple-views",
     "reuse-the-renderer",
     "format-and-annotate",

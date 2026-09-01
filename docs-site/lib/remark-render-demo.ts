@@ -1,3 +1,5 @@
+import { createDemoDescriptor } from './demo-source';
+
 type Attribute = { type: 'mdxJsxAttribute'; name: string; value?: unknown };
 type Node = {
   type: string;
@@ -28,6 +30,11 @@ const inject = (node: Node): void => {
       node.attributes.push(
         { type: 'mdxJsxAttribute', name: 'code', value: code.value },
         { type: 'mdxJsxAttribute', name: 'lang', value: code.lang ?? 'typescript' },
+        {
+          type: 'mdxJsxAttribute',
+          name: 'descriptorJson',
+          value: JSON.stringify(createDemoDescriptor(code.value)),
+        },
       );
     }
   }

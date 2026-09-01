@@ -23,20 +23,10 @@ use glb::parse_glb;
 pub use bench::{bench_encodes, bench_multi_view, codec_conformance};
 pub use encode::{ImageFormat, encode, encode_jpeg, encode_png, encode_webp};
 pub use options::{
-    CreateRendererRequest, LightRequest, LightingRequest, LightingRigRequest, RenderImagesRequest,
-    RenderRequest, RenderView,
+    CameraRequest, CreateRendererRequest, LightRequest, LightingRequest, LightingRigRequest,
+    RenderImagesRequest, RenderRequest, RenderView,
 };
 pub use render::{Rendered, Renderer};
-
-/// World axis the camera treats as "up" when placing the spherical eye and
-/// fitting the view. Kernel-exported GLBs are standard Y-up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum UpAxis {
-    X,
-    #[default]
-    Y,
-    Z,
-}
 
 /// Camera projection used for the encoded image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -46,13 +36,100 @@ pub enum Projection {
     Orthographic,
 }
 
+/// Resolved projection values. Fit framing leaves orthographic span to the
+/// bounds solver and always carries zoom 1; fixed framing carries every value
+/// needed to construct the requested frustum.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CameraProjection {
+    Perspective {
+        vertical_field_of_view_deg: f32,
+        zoom: f32,
+    },
+    Orthographic {
+        vertical_span: Option<f32>,
+        zoom: f32,
+    },
+}
+
+impl CameraProjection {
+    #[must_use]
+    pub fn kind(self) -> Projection {
+        match self {
+            Self::Perspective { .. } => Projection::Perspective,
+            Self::Orthographic { .. } => Projection::Orthographic,
+        }
+    }
+}
+
+/// Explicit positive clipping distances for a fixed camera.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClipPlanes {
+    pub near: f32,
+    pub far: f32,
+}
+
+/// Resolved camera framing in glTF world coordinates.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RenderCamera {
+    Fit {
+        /// Direction from bounds centre toward the camera, normalized.
+        direction: [f32; 3],
+        /// Camera screen-up direction, normalized.
+        up: [f32; 3],
+        /// Corner-fit zoom padding (0.9 = 10% margin).
+        padding_factor: f32,
+        projection: CameraProjection,
+    },
+    Fixed {
+        position: [f32; 3],
+        target: [f32; 3],
+        /// Camera screen-up direction, normalized.
+        up: [f32; 3],
+        projection: CameraProjection,
+        clipping: Option<ClipPlanes>,
+    },
+}
+
+impl RenderCamera {
+    #[must_use]
+    pub fn projection(&self) -> CameraProjection {
+        match self {
+            Self::Fit { projection, .. } | Self::Fixed { projection, .. } => *projection,
+        }
+    }
+
+    #[must_use]
+    pub fn projection_kind(&self) -> Projection {
+        self.projection().kind()
+    }
+
+    #[must_use]
+    pub fn is_fit(&self) -> bool {
+        matches!(self, Self::Fit { .. })
+    }
+}
+
+impl Default for RenderCamera {
+    fn default() -> Self {
+        Self::Fit {
+            direction: [0.612_372_46, 0.5, 0.612_372_46],
+            up: [0.0, 1.0, 0.0],
+            padding_factor: 0.9,
+            projection: CameraProjection::Perspective {
+                vertical_field_of_view_deg: 45.0,
+                zoom: 1.0,
+            },
+        }
+    }
+}
+
 /// Frame a rig's light directions are authored in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LightingSpace {
     /// Camera-relative, so every view of a batch is lit identically.
     #[default]
     View,
-    /// glTF world coordinates (regardless of `up`), rotated into view space
+    /// glTF world coordinates, rotated into view space
     /// per view — the light stays fixed to the model while views orbit it.
     World,
 }
@@ -120,24 +197,15 @@ impl Default for ResolvedLighting {
     }
 }
 
-/// Rendering options. Camera angles use a right-handed spherical basis.
+/// Rendering options.
 #[derive(Debug, Clone)]
 pub struct RenderOptions {
     pub width: u32,
     pub height: u32,
-    /// Polar angle from the up axis, degrees.
-    pub phi_deg: f32,
-    /// Right-handed azimuth around the selected up axis, degrees.
-    pub theta_deg: f32,
-    /// Corner-fit zoom padding (0.9 = 10% margin).
-    pub padding_factor: f32,
-    /// Edge line width in pixels at the default 432 px output height; scales
-    /// linearly with height so edges keep the same weight at any size.
+    /// Fitted or fixed camera state.
+    pub camera: RenderCamera,
+    /// Edge line width in output pixels.
     pub line_width: f32,
-    /// World up axis for camera placement and view fitting.
-    pub up: UpAxis,
-    /// Perspective for ordinary renders, orthographic for canonical views.
-    pub projection: Projection,
     /// Background clear color as sRGB straight-alpha `[r, g, b, a]` in 0..=1;
     /// `None` renders on transparent. JPEG output requires an opaque one.
     pub background: Option<[f32; 4]>,
@@ -155,19 +223,13 @@ pub struct RenderOptions {
     pub lighting: ResolvedLighting,
 }
 
-pub(crate) const DEFAULT_HEIGHT: u32 = 432;
-
 impl Default for RenderOptions {
     fn default() -> Self {
         Self {
             width: 768,
-            height: DEFAULT_HEIGHT,
-            phi_deg: 60.0,
-            theta_deg: -45.0,
-            padding_factor: 0.9,
-            line_width: 2.0,
-            up: UpAxis::Y,
-            projection: Projection::Perspective,
+            height: 432,
+            camera: RenderCamera::default(),
+            line_width: 3.0,
             background: None,
             label: None,
             axes: false,
@@ -279,10 +341,117 @@ fn validate_options(options: &RenderOptions) -> Result<(), RenderError> {
             options::ANNOTATED_MIN_DIMENSION
         )));
     }
-    if !options.phi_deg.is_finite() || !options.theta_deg.is_finite() {
-        return Err(RenderError::Parse("camera angles must be finite".into()));
+    if !options.line_width.is_finite() || !(0.25..=16.0).contains(&options.line_width) {
+        return Err(RenderError::Parse(
+            "lineWidth must be between 0.25 and 16".into(),
+        ));
+    }
+    validate_camera(&options.camera)?;
+    Ok(())
+}
+
+fn validated_vector(
+    value: [f32; 3],
+    name: &str,
+    allow_zero: bool,
+) -> Result<glam::Vec3, RenderError> {
+    let vector = glam::Vec3::from(value);
+    if !vector.is_finite() || (!allow_zero && vector.length() < 1e-6) {
+        return Err(RenderError::Parse(format!(
+            "{name} must be a finite non-zero vector"
+        )));
+    }
+    Ok(vector)
+}
+
+fn validate_projection(projection: CameraProjection, fixed: bool) -> Result<(), RenderError> {
+    match projection {
+        CameraProjection::Perspective {
+            vertical_field_of_view_deg,
+            zoom,
+        } => {
+            if !vertical_field_of_view_deg.is_finite()
+                || !(1.0..=179.0).contains(&vertical_field_of_view_deg)
+                || !zoom.is_finite()
+                || !(0.01..=100.0).contains(&zoom)
+                || (!fixed && zoom != 1.0)
+            {
+                return Err(RenderError::Parse("invalid perspective projection".into()));
+            }
+        }
+        CameraProjection::Orthographic {
+            vertical_span,
+            zoom,
+        } => {
+            if !zoom.is_finite()
+                || !(0.01..=100.0).contains(&zoom)
+                || (!fixed && (vertical_span.is_some() || zoom != 1.0))
+                || (fixed && vertical_span.is_none_or(|span| !span.is_finite() || span <= 0.0))
+            {
+                return Err(RenderError::Parse("invalid orthographic projection".into()));
+            }
+        }
     }
     Ok(())
+}
+
+fn validate_camera(camera: &RenderCamera) -> Result<(), RenderError> {
+    let (direction, up, projection) = match camera {
+        RenderCamera::Fit {
+            direction,
+            up,
+            padding_factor,
+            projection,
+        } => {
+            if !padding_factor.is_finite() || !(0.5..=1.0).contains(padding_factor) {
+                return Err(RenderError::Parse(
+                    "camera margin must be between 0 and 0.5".into(),
+                ));
+            }
+            (
+                validated_vector(*direction, "camera direction", false)?,
+                validated_vector(*up, "camera up", false)?,
+                (*projection, false),
+            )
+        }
+        RenderCamera::Fixed {
+            position,
+            target,
+            up,
+            projection,
+            clipping,
+        } => {
+            let position = validated_vector(*position, "camera position", true)?;
+            let target = validated_vector(*target, "camera target", true)?;
+            let direction = position - target;
+            if direction.length() < 1e-6 {
+                return Err(RenderError::Parse(
+                    "camera position and target must not coincide".into(),
+                ));
+            }
+            if clipping.is_some_and(|planes| {
+                !planes.near.is_finite()
+                    || !planes.far.is_finite()
+                    || planes.near <= 0.0
+                    || planes.far <= planes.near
+            }) {
+                return Err(RenderError::Parse(
+                    "camera clipping requires 0 < near < far".into(),
+                ));
+            }
+            (
+                direction.normalize(),
+                validated_vector(*up, "camera up", false)?,
+                (*projection, true),
+            )
+        }
+    };
+    if direction.normalize().cross(up.normalize()).length() < 1e-6 {
+        return Err(RenderError::Parse(
+            "camera direction and up must not be collinear".into(),
+        ));
+    }
+    validate_projection(projection.0, projection.1)
 }
 
 pub(crate) fn with_view(error: RenderError, id: &str) -> RenderError {
@@ -318,8 +487,7 @@ fn clock(now: Option<&TimingsClock>) -> f64 {
 /// Apply one view's camera identity and output overrides to the shared options.
 fn resolved_view_options(options: &RenderOptions, view: &RenderView) -> RenderOptions {
     let mut view_options = options.clone();
-    view_options.phi_deg = view.phi_deg;
-    view_options.theta_deg = view.theta_deg;
+    view_options.camera.clone_from(&view.camera);
     view_options.label.clone_from(&view.label);
     if let Some(width) = view.width {
         view_options.width = width;
@@ -509,8 +677,7 @@ fn singular_view(options: &RenderOptions) -> RenderView {
     RenderView {
         id: String::new(),
         label: options.label.clone(),
-        phi_deg: options.phi_deg,
-        theta_deg: options.theta_deg,
+        camera: options.camera.clone(),
         width: None,
         height: None,
         format: None,
@@ -702,12 +869,11 @@ mod tests {
         .expect("variant GLB")
     }
 
-    fn view(id: &str, phi_deg: f32, theta_deg: f32) -> RenderView {
+    fn view(id: &str) -> RenderView {
         RenderView {
             id: id.into(),
             label: None,
-            phi_deg,
-            theta_deg,
+            camera: RenderCamera::default(),
             width: None,
             height: None,
             format: None,
@@ -719,12 +885,9 @@ mod tests {
         let options = RenderOptions::default();
         assert_eq!(options.width, 768);
         assert_eq!(options.height, 432);
-        assert_eq!(options.phi_deg, 60.0);
-        assert_eq!(options.theta_deg, -45.0);
-        assert_eq!(options.padding_factor, 0.9);
-        assert_eq!(options.line_width, 2.0);
-        assert_eq!(options.up, UpAxis::Y);
-        assert_eq!(options.projection, Projection::Perspective);
+        assert_eq!(options.camera, RenderCamera::default());
+        assert_eq!(options.line_width, 3.0);
+        assert_eq!(options.camera.projection_kind(), Projection::Perspective);
         assert_eq!(options.background, None);
         assert_eq!(options.label, None);
         assert!(!options.axes);
@@ -738,7 +901,6 @@ mod tests {
         assert!(options.lighting.environment);
         assert_eq!(options.lighting.space, LightingSpace::View);
         assert_eq!(LightingSpace::default(), LightingSpace::View);
-        assert_eq!(UpAxis::default(), UpAxis::Y);
         assert_eq!(Projection::default(), Projection::Perspective);
     }
 
@@ -788,11 +950,98 @@ mod tests {
                 ..Default::default()
             },
             RenderOptions {
-                phi_deg: f32::NAN,
+                line_width: f32::NAN,
                 ..Default::default()
             },
             RenderOptions {
-                theta_deg: f32::INFINITY,
+                camera: RenderCamera::Fixed {
+                    position: [0.0, 0.0, 0.0],
+                    target: [0.0, 0.0, 0.0],
+                    up: [0.0, 1.0, 0.0],
+                    projection: CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 45.0,
+                        zoom: 1.0,
+                    },
+                    clipping: None,
+                },
+                ..Default::default()
+            },
+            RenderOptions {
+                camera: RenderCamera::Fit {
+                    direction: [f32::NAN, 0.0, 1.0],
+                    up: [0.0, 1.0, 0.0],
+                    padding_factor: 0.9,
+                    projection: CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 45.0,
+                        zoom: 1.0,
+                    },
+                },
+                ..Default::default()
+            },
+            RenderOptions {
+                camera: RenderCamera::Fit {
+                    direction: [0.612_372_46, 0.5, 0.612_372_46],
+                    up: [0.0, 1.0, 0.0],
+                    padding_factor: 0.49,
+                    projection: CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 45.0,
+                        zoom: 1.0,
+                    },
+                },
+                ..Default::default()
+            },
+            RenderOptions {
+                camera: RenderCamera::Fit {
+                    direction: [0.612_372_46, 0.5, 0.612_372_46],
+                    up: [0.0, 1.0, 0.0],
+                    padding_factor: 0.9,
+                    projection: CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 0.0,
+                        zoom: 1.0,
+                    },
+                },
+                ..Default::default()
+            },
+            RenderOptions {
+                camera: RenderCamera::Fixed {
+                    position: [0.0, 0.0, 2.0],
+                    target: [0.0, 0.0, 0.0],
+                    up: [0.0, 1.0, 0.0],
+                    projection: CameraProjection::Orthographic {
+                        vertical_span: Some(-1.0),
+                        zoom: 1.0,
+                    },
+                    clipping: None,
+                },
+                ..Default::default()
+            },
+            RenderOptions {
+                camera: RenderCamera::Fixed {
+                    position: [0.0, 0.0, 2.0],
+                    target: [0.0, 0.0, 0.0],
+                    up: [0.0, 1.0, 0.0],
+                    projection: CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 45.0,
+                        zoom: 1.0,
+                    },
+                    clipping: Some(ClipPlanes {
+                        near: 1.0,
+                        far: 1.0,
+                    }),
+                },
+                ..Default::default()
+            },
+            RenderOptions {
+                camera: RenderCamera::Fixed {
+                    position: [0.0, 0.0, 2.0],
+                    target: [0.0, 0.0, 0.0],
+                    up: [0.0, 0.0, 1.0],
+                    projection: CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 45.0,
+                        zoom: 1.0,
+                    },
+                    clipping: None,
+                },
                 ..Default::default()
             },
         ];
@@ -800,6 +1049,37 @@ mod tests {
             assert!(validate_options(&options).is_err());
         }
         assert!(validate_options(&RenderOptions::default()).is_ok());
+        assert!(
+            validate_options(&RenderOptions {
+                camera: RenderCamera::Fit {
+                    direction: [0.612_372_46, 0.5, 0.612_372_46],
+                    up: [0.0, 1.0, 0.0],
+                    padding_factor: 0.9,
+                    projection: CameraProjection::Orthographic {
+                        vertical_span: None,
+                        zoom: 1.0,
+                    },
+                },
+                ..Default::default()
+            })
+            .is_ok()
+        );
+        assert!(
+            validate_options(&RenderOptions {
+                camera: RenderCamera::Fixed {
+                    position: [0.0, 0.0, 2.0],
+                    target: [0.0, 0.0, 0.0],
+                    up: [0.0, 1.0, 0.0],
+                    projection: CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 45.0,
+                        zoom: 1.0,
+                    },
+                    clipping: None,
+                },
+                ..Default::default()
+            })
+            .is_ok()
+        );
     }
 
     #[test]
@@ -834,9 +1114,9 @@ mod tests {
     #[test]
     fn view_overrides_resolve_onto_shared_options() {
         let options = RenderOptions::default();
-        let plain = resolved_view_options(&options, &view("front", 90.0, 0.0));
+        let plain = resolved_view_options(&options, &view("front"));
         assert_eq!((plain.width, plain.height), (768, 432));
-        assert_eq!((plain.phi_deg, plain.theta_deg), (90.0, 0.0));
+        assert_eq!(plain.camera, RenderCamera::default());
 
         let overridden = resolved_view_options(
             &options,
@@ -844,7 +1124,7 @@ mod tests {
                 width: Some(1536),
                 height: Some(804),
                 format: Some(ImageFormat::Jpeg { quality: 80 }),
-                ..view("og", 60.0, -45.0)
+                ..view("og")
             },
         );
         assert_eq!((overridden.width, overridden.height), (1536, 804));
@@ -853,7 +1133,7 @@ mod tests {
         // the view's identity attached.
         let bad = RenderView {
             width: Some(8),
-            ..view("tiny", 60.0, -45.0)
+            ..view("tiny")
         };
         let error = pollster::block_on(render_images(
             FIXTURE,
@@ -895,7 +1175,7 @@ mod tests {
                 b"bad",
                 &RenderOptions::default(),
                 ImageFormat::Png,
-                &[view("front", 90.0, 0.0)],
+                &[view("front")],
                 &|| 0.0,
             ))
             .is_err()
@@ -918,7 +1198,7 @@ mod tests {
             .is_err()
         );
 
-        let front = view("bad", 90.0, 0.0);
+        let front = view("bad");
         assert!(
             pollster::block_on(render_images(
                 FIXTURE,
@@ -934,7 +1214,16 @@ mod tests {
                 &RenderOptions::default(),
                 ImageFormat::Png,
                 &[RenderView {
-                    phi_deg: f32::NAN,
+                    camera: RenderCamera::Fixed {
+                        position: [0.0, 0.0, 0.0],
+                        target: [0.0, 0.0, 0.0],
+                        up: [0.0, 1.0, 0.0],
+                        projection: CameraProjection::Perspective {
+                            vertical_field_of_view_deg: 45.0,
+                            zoom: 1.0,
+                        },
+                        clipping: None,
+                    },
                     ..front.clone()
                 }],
             ))
@@ -973,7 +1262,7 @@ mod tests {
         };
         let views = [RenderView {
             label: Some("Front".into()),
-            ..view("front", 90.0, 0.0)
+            ..view("front")
         }];
 
         let rendered = pollster::block_on(render_rgba(FIXTURE, &options)).expect("RGBA render");
@@ -1026,7 +1315,7 @@ mod tests {
 
         let request = r#"{"format":"png","width":192,"height":192,"background":[1,1,1,1]}"#;
         assert!(pollster::block_on(render_image_request(FIXTURE, request)).is_ok());
-        let plural = r#"{"format":"png","width":192,"height":192,"background":[1,1,1,1],"views":[{"id":"front","phi":90,"theta":0}]}"#;
+        let plural = r#"{"format":"png","width":192,"height":192,"background":[1,1,1,1],"views":[{"id":"front"}]}"#;
         assert!(pollster::block_on(render_images_request(FIXTURE, plural, None)).is_ok());
         let raw = pollster::block_on(render_image_request(
             FIXTURE,
@@ -1134,7 +1423,7 @@ mod tests {
             FIXTURE,
             &RenderOptions::default(),
             ImageFormat::Jpeg { quality: 85 },
-            &[view("iso", 60.0, -45.0), view("front", 90.0, 0.0)],
+            &[view("iso"), view("front")],
         ))
         .unwrap_err();
         assert!(batch.to_string().starts_with("encode: view \"iso\":"));
@@ -1160,7 +1449,7 @@ mod tests {
 
         // The second call reuses the device: the timed counters attribute zero
         // adapter/device requests and zero pipeline builds to the call.
-        let plural = r#"{"format":"png","width":192,"height":192,"timings":true,"views":[{"id":"front","phi":90,"theta":0},{"id":"top","phi":0,"theta":0}]}"#;
+        let plural = r#"{"format":"png","width":192,"height":192,"timings":true,"views":[{"id":"front"},{"id":"top"}]}"#;
         let (images, timings) =
             pollster::block_on(renderer.render_images_request(FIXTURE, plural, None))
                 .expect("warm batch");
@@ -1175,19 +1464,18 @@ mod tests {
 
         // R15: per-view output overrides — a mixed-size, mixed-format ladder
         // in one plan call, byte-identical to the equivalent singular calls.
-        let ladder = r#"{"format":"png","width":192,"height":192,"views":[{"id":"card","phi":60,"theta":-45},{"id":"og","phi":60,"theta":-45,"width":256,"height":256},{"id":"hero","phi":60,"theta":-45,"width":256,"height":256,"format":"webp","quality":0.9}]}"#;
+        let ladder = r#"{"format":"png","width":192,"height":192,"views":[{"id":"card"},{"id":"og","width":256,"height":256},{"id":"hero","width":256,"height":256,"format":"webp","quality":0.9}]}"#;
         let (ladder_images, _) =
             pollster::block_on(renderer.render_images_request(FIXTURE, ladder, None))
                 .expect("ladder");
         assert_eq!(ladder_images.len(), 3);
-        let og_singular = pollster::block_on(renderer.render_image_request(
-            FIXTURE,
-            r#"{"format":"png","width":256,"height":256,"phi":60,"theta":-45}"#,
-        ))
+        let og_singular = pollster::block_on(
+            renderer.render_image_request(FIXTURE, r#"{"format":"png","width":256,"height":256}"#),
+        )
         .expect("og singular");
         let hero_singular = pollster::block_on(renderer.render_image_request(
             FIXTURE,
-            r#"{"format":"webp","quality":0.9,"width":256,"height":256,"phi":60,"theta":-45}"#,
+            r#"{"format":"webp","quality":0.9,"width":256,"height":256}"#,
         ))
         .expect("hero singular");
         assert_eq!(ladder_images[0], cold);
@@ -1217,7 +1505,7 @@ mod tests {
         // matches the singular raw call byte for byte.
         let (mixed, _) = pollster::block_on(renderer.render_images_request(
             FIXTURE,
-            r#"{"format":"webp","quality":1,"width":192,"height":192,"views":[{"id":"thumb","phi":60,"theta":-45},{"id":"frame","phi":60,"theta":-45,"format":"raw"}]}"#,
+            r#"{"format":"webp","quality":1,"width":192,"height":192,"views":[{"id":"thumb"},{"id":"frame","format":"raw"}]}"#,
             None,
         ))
         .expect("mixed plan");
@@ -1228,7 +1516,8 @@ mod tests {
         // A caller-supplied clock takes precedence over the native fallback,
         // on both the warm-renderer and one-shot request paths.
         let host_clock = || 42.0;
-        let timed_request = r#"{"format":"png","width":192,"height":192,"timings":true,"views":[{"id":"front","phi":90,"theta":0}]}"#;
+        let timed_request =
+            r#"{"format":"png","width":192,"height":192,"timings":true,"views":[{"id":"front"}]}"#;
         let (_, hosted) = pollster::block_on(renderer.render_images_request(
             FIXTURE,
             timed_request,

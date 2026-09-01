@@ -2,10 +2,10 @@
 
 use crate::encode::ImageFormat;
 use crate::{
-    LightingSpace, MAX_LIGHTS, Projection, RenderError, RenderOptions, ResolvedLight,
-    ResolvedLighting, UpAxis,
+    CameraProjection, ClipPlanes, LightingSpace, MAX_LIGHTS, RenderCamera, RenderError,
+    RenderOptions, ResolvedLight, ResolvedLighting,
 };
-use serde::{Deserialize, Deserializer, de};
+use serde::{Deserialize, Deserializer, de, de::DeserializeOwned};
 use std::collections::HashSet;
 
 pub(crate) const MIN_DIMENSION: u32 = 16;
@@ -14,8 +14,65 @@ pub(crate) const ANNOTATED_MIN_DIMENSION: u32 = 192;
 const MAX_LIGHT_COLOR: f32 = 32.0;
 const MAX_AMBIENT: f32 = 4.0;
 const EXPOSURE_RANGE: std::ops::RangeInclusive<f32> = 0.01..=16.0;
+const FIELD_OF_VIEW_RANGE: std::ops::RangeInclusive<f32> = 1.0..=179.0;
+const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.01..=100.0;
+const LINE_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 0.25..=16.0;
 /// Shorter than this and a direction carries no usable heading.
 const MIN_DIRECTION_LENGTH: f32 = 1e-6;
+
+/// Wire shape for fitted perspective/orthographic projection.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum FitProjectionRequest {
+    Perspective {
+        #[serde(rename = "verticalFieldOfView")]
+        vertical_field_of_view: Option<f32>,
+    },
+    Orthographic,
+}
+
+/// Wire shape for a fixed perspective/orthographic projection.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum FixedProjectionRequest {
+    Perspective {
+        #[serde(rename = "verticalFieldOfView")]
+        vertical_field_of_view: Option<f32>,
+        zoom: Option<f32>,
+    },
+    Orthographic {
+        #[serde(rename = "verticalSpan")]
+        vertical_span: f32,
+        zoom: Option<f32>,
+    },
+}
+
+/// Explicit fixed-camera clipping distances.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClipPlanesRequest {
+    near: f32,
+    far: f32,
+}
+
+/// Tagged fitted or fixed camera request.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "framing", rename_all = "camelCase", deny_unknown_fields)]
+pub enum CameraRequest {
+    Fit {
+        direction: Option<[f32; 3]>,
+        up: Option<[f32; 3]>,
+        margin: Option<f32>,
+        projection: Option<FitProjectionRequest>,
+    },
+    Fixed {
+        position: [f32; 3],
+        target: [f32; 3],
+        up: [f32; 3],
+        projection: Option<FixedProjectionRequest>,
+        clipping: Option<ClipPlanesRequest>,
+    },
+}
 
 /// Wire shape for one directional light.
 #[derive(Debug, Deserialize)]
@@ -69,11 +126,8 @@ pub struct RenderRequest {
     pub height: Option<u32>,
     pub format: Option<String>,
     pub quality: Option<f32>,
-    pub phi: Option<f32>,
-    pub theta: Option<f32>,
-    pub margin: Option<f32>,
-    pub up: Option<String>,
-    pub projection: Option<String>,
+    pub camera: Option<CameraRequest>,
+    pub line_width: Option<f32>,
     pub background: Option<[f32; 4]>,
     pub label: Option<String>,
     pub axes: Option<bool>,
@@ -88,8 +142,7 @@ pub struct RenderRequest {
 pub struct RenderImageViewRequest {
     pub id: String,
     pub label: Option<String>,
-    pub phi: f32,
-    pub theta: f32,
+    pub camera: Option<CameraRequest>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub format: Option<String>,
@@ -104,9 +157,7 @@ pub struct RenderImagesRequest {
     pub height: Option<u32>,
     pub format: Option<String>,
     pub quality: Option<f32>,
-    pub margin: Option<f32>,
-    pub up: Option<String>,
-    pub projection: Option<String>,
+    pub line_width: Option<f32>,
     pub background: Option<[f32; 4]>,
     pub axes: Option<bool>,
     pub scale_bar: Option<bool>,
@@ -121,8 +172,7 @@ pub struct RenderImagesRequest {
 pub struct RenderView {
     pub id: String,
     pub label: Option<String>,
-    pub phi_deg: f32,
-    pub theta_deg: f32,
+    pub camera: RenderCamera,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub format: Option<ImageFormat>,
@@ -158,9 +208,8 @@ impl CreateRendererRequest {
 struct CommonRequest<'a> {
     width: Option<u32>,
     height: Option<u32>,
-    margin: Option<f32>,
-    up: Option<&'a str>,
-    projection: Option<&'a str>,
+    camera: Option<&'a CameraRequest>,
+    line_width: Option<f32>,
     background: Option<[f32; 4]>,
     axes: Option<bool>,
     /// Whether the shared width/height must clear the annotated minimum. Only
@@ -173,7 +222,7 @@ struct CommonRequest<'a> {
 
 impl RenderRequest {
     pub fn from_json(json: &str) -> Result<Self, RenderError> {
-        serde_json::from_str(json).map_err(|error| RenderError::Parse(format!("options: {error}")))
+        parse_render_options(json)
     }
 
     pub fn resolve(&self) -> Result<(RenderOptions, ImageFormat), RenderError> {
@@ -187,8 +236,6 @@ impl RenderRequest {
         let mut options = resolve_common(self.common())?;
         validate_optional_label(self.label.as_deref(), "label")?;
         options.label.clone_from(&self.label);
-        options.phi_deg = finite_or_default(self.phi, options.phi_deg, "phi")?;
-        options.theta_deg = finite_or_default(self.theta, options.theta_deg, "theta")?;
         Ok(options)
     }
 
@@ -196,9 +243,8 @@ impl RenderRequest {
         CommonRequest {
             width: self.width,
             height: self.height,
-            margin: self.margin,
-            up: self.up.as_deref(),
-            projection: self.projection.as_deref(),
+            camera: self.camera.as_ref(),
+            line_width: self.line_width,
             background: self.background,
             axes: self.axes,
             annotated: self.axes.unwrap_or(false)
@@ -212,7 +258,7 @@ impl RenderRequest {
 
 impl RenderImagesRequest {
     pub fn from_json(json: &str) -> Result<Self, RenderError> {
-        serde_json::from_str(json).map_err(|error| RenderError::Parse(format!("options: {error}")))
+        parse_render_options(json)
     }
 
     pub fn resolve(
@@ -241,16 +287,8 @@ impl RenderImagesRequest {
                     view.id
                 )));
             }
-            if !view.phi.is_finite() {
-                return Err(RenderError::Parse(format!(
-                    "views[{index}].phi must be finite"
-                )));
-            }
-            if !view.theta.is_finite() {
-                return Err(RenderError::Parse(format!(
-                    "views[{index}].theta must be finite"
-                )));
-            }
+            let camera = resolve_camera(view.camera.as_ref())
+                .map_err(|error| RenderError::Parse(format!("views[{index}].camera: {error}")))?;
             for (name, value) in [("width", view.width), ("height", view.height)] {
                 if let Some(value) = value
                     && !(MIN_DIMENSION..=MAX_DIMENSION).contains(&value)
@@ -290,8 +328,7 @@ impl RenderImagesRequest {
             views.push(RenderView {
                 id: view.id.clone(),
                 label: view.label.clone(),
-                phi_deg: view.phi,
-                theta_deg: view.theta,
+                camera,
                 width: view.width,
                 height: view.height,
                 format: view_format,
@@ -304,9 +341,8 @@ impl RenderImagesRequest {
         CommonRequest {
             width: self.width,
             height: self.height,
-            margin: self.margin,
-            up: self.up.as_deref(),
-            projection: self.projection.as_deref(),
+            camera: None,
+            line_width: self.line_width,
             background: self.background,
             axes: self.axes,
             annotated: false,
@@ -314,6 +350,40 @@ impl RenderImagesRequest {
             lighting: self.lighting.as_ref(),
         }
     }
+}
+
+fn parse_render_options<T: DeserializeOwned>(json: &str) -> Result<T, RenderError> {
+    let value: serde_json::Value = serde_json::from_str(json)
+        .map_err(|error| RenderError::Parse(format!("options: {error}")))?;
+    reject_legacy_camera_keys(&value)?;
+    serde_json::from_value(value).map_err(|error| RenderError::Parse(format!("options: {error}")))
+}
+
+fn reject_legacy_camera_keys(value: &serde_json::Value) -> Result<(), RenderError> {
+    const REMOVED: [&str; 5] = ["phi", "theta", "up", "projection", "margin"];
+    let reject = |object: &serde_json::Map<String, serde_json::Value>, path: &str| {
+        for key in REMOVED {
+            if object.contains_key(key) {
+                return Err(RenderError::Parse(format!(
+                    "{path}.{key} was removed; use {path}.camera with framing, Cartesian vectors, and a nested projection"
+                )));
+            }
+        }
+        Ok(())
+    };
+    let Some(root) = value.as_object() else {
+        return Err(RenderError::Parse("options must be an object".into()));
+    };
+    reject(root, "options")?;
+    if let Some(views) = root.get("views").and_then(serde_json::Value::as_array) {
+        for (index, view) in views.iter().enumerate() {
+            let Some(view) = view.as_object() else {
+                continue;
+            };
+            reject(view, &format!("views[{index}]"))?;
+        }
+    }
+    Ok(())
 }
 
 fn resolve_common(request: CommonRequest<'_>) -> Result<RenderOptions, RenderError> {
@@ -335,28 +405,15 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<RenderOptions, RenderErr
         )));
     }
 
-    let margin = request.margin.unwrap_or(0.1);
-    if !margin.is_finite() || !(0.0..=0.5).contains(&margin) {
+    let camera = resolve_camera(request.camera).map_err(RenderError::Parse)?;
+    let line_width = request.line_width.unwrap_or(defaults.line_width);
+    if !line_width.is_finite() || !LINE_WIDTH_RANGE.contains(&line_width) {
         return Err(RenderError::Parse(format!(
-            "margin {margin} outside 0..=0.5"
+            "lineWidth {line_width} outside {}..={}",
+            LINE_WIDTH_RANGE.start(),
+            LINE_WIDTH_RANGE.end()
         )));
     }
-    let up = match request.up {
-        None => defaults.up,
-        Some("x") => UpAxis::X,
-        Some("y") => UpAxis::Y,
-        Some("z") => UpAxis::Z,
-        Some(other) => return Err(RenderError::Parse(format!("up axis {other:?} not x/y/z"))),
-    };
-    let projection = match request.projection {
-        None | Some("perspective") => Projection::Perspective,
-        Some("orthographic") => Projection::Orthographic,
-        Some(other) => {
-            return Err(RenderError::Parse(format!(
-                "projection {other:?} not perspective/orthographic"
-            )));
-        }
-    };
     if let Some(background) = request.background
         && background
             .iter()
@@ -372,16 +429,183 @@ fn resolve_common(request: CommonRequest<'_>) -> Result<RenderOptions, RenderErr
     Ok(RenderOptions {
         width,
         height,
-        padding_factor: 1.0 - margin,
-        line_width: defaults.line_width,
-        up,
-        projection,
+        camera,
+        line_width,
         background: request.background,
         axes,
         scale_bar,
         lighting,
         ..defaults
     })
+}
+
+fn finite_vector(value: [f32; 3], name: &str, allow_zero: bool) -> Result<glam::Vec3, String> {
+    let vector = glam::Vec3::from(value);
+    if !vector.is_finite() {
+        return Err(format!("{name} must contain three finite numbers"));
+    }
+    if !allow_zero && vector.length() < MIN_DIRECTION_LENGTH {
+        return Err(format!("{name} must not be zero length"));
+    }
+    Ok(vector)
+}
+
+fn normalized_direction(value: [f32; 3], name: &str) -> Result<glam::Vec3, String> {
+    finite_vector(value, name, false).map(glam::Vec3::normalize)
+}
+
+fn validate_orientation(direction: glam::Vec3, up: glam::Vec3, name: &str) -> Result<(), String> {
+    if direction.cross(up).length() < MIN_DIRECTION_LENGTH {
+        return Err(format!("{name} and up must not be collinear"));
+    }
+    Ok(())
+}
+
+fn resolve_vertical_field_of_view(value: Option<f32>) -> Result<f32, String> {
+    let value = value.unwrap_or(45.0);
+    if !value.is_finite() || !FIELD_OF_VIEW_RANGE.contains(&value) {
+        return Err(format!(
+            "verticalFieldOfView {value} outside {}..={}",
+            FIELD_OF_VIEW_RANGE.start(),
+            FIELD_OF_VIEW_RANGE.end()
+        ));
+    }
+    Ok(value)
+}
+
+fn zoom(value: Option<f32>) -> Result<f32, String> {
+    let value = value.unwrap_or(1.0);
+    if !value.is_finite() || !ZOOM_RANGE.contains(&value) {
+        return Err(format!(
+            "zoom {value} outside {}..={}",
+            ZOOM_RANGE.start(),
+            ZOOM_RANGE.end()
+        ));
+    }
+    Ok(value)
+}
+
+fn resolve_fit_projection(
+    request: Option<&FitProjectionRequest>,
+) -> Result<CameraProjection, String> {
+    match request {
+        None => Ok(CameraProjection::Perspective {
+            vertical_field_of_view_deg: 45.0,
+            zoom: 1.0,
+        }),
+        Some(FitProjectionRequest::Perspective {
+            vertical_field_of_view,
+        }) => Ok(CameraProjection::Perspective {
+            vertical_field_of_view_deg: resolve_vertical_field_of_view(*vertical_field_of_view)?,
+            zoom: 1.0,
+        }),
+        Some(FitProjectionRequest::Orthographic) => Ok(CameraProjection::Orthographic {
+            vertical_span: None,
+            zoom: 1.0,
+        }),
+    }
+}
+
+fn resolve_fixed_projection(
+    request: Option<&FixedProjectionRequest>,
+) -> Result<CameraProjection, String> {
+    match request {
+        None => Ok(CameraProjection::Perspective {
+            vertical_field_of_view_deg: 45.0,
+            zoom: 1.0,
+        }),
+        Some(FixedProjectionRequest::Perspective {
+            vertical_field_of_view,
+            zoom: requested_zoom,
+        }) => Ok(CameraProjection::Perspective {
+            vertical_field_of_view_deg: resolve_vertical_field_of_view(*vertical_field_of_view)?,
+            zoom: zoom(*requested_zoom)?,
+        }),
+        Some(FixedProjectionRequest::Orthographic {
+            vertical_span,
+            zoom: requested_zoom,
+        }) => {
+            if !vertical_span.is_finite() || *vertical_span <= 0.0 {
+                return Err(format!(
+                    "verticalSpan {vertical_span} must be greater than 0"
+                ));
+            }
+            Ok(CameraProjection::Orthographic {
+                vertical_span: Some(*vertical_span),
+                zoom: zoom(*requested_zoom)?,
+            })
+        }
+    }
+}
+
+fn resolve_camera(request: Option<&CameraRequest>) -> Result<RenderCamera, String> {
+    let Some(request) = request else {
+        return Ok(RenderCamera::default());
+    };
+    match request {
+        CameraRequest::Fit {
+            direction,
+            up,
+            margin,
+            projection,
+        } => {
+            let direction = normalized_direction(
+                direction.unwrap_or([0.612_372_46, 0.5, 0.612_372_46]),
+                "direction",
+            )?;
+            let up = normalized_direction(up.unwrap_or([0.0, 1.0, 0.0]), "up")?;
+            validate_orientation(direction, up, "direction")?;
+            let margin = margin.unwrap_or(0.1);
+            if !margin.is_finite() || !(0.0..=0.5).contains(&margin) {
+                return Err(format!("margin {margin} outside 0..=0.5"));
+            }
+            Ok(RenderCamera::Fit {
+                direction: direction.to_array(),
+                up: up.to_array(),
+                padding_factor: 1.0 - margin,
+                projection: resolve_fit_projection(projection.as_ref())?,
+            })
+        }
+        CameraRequest::Fixed {
+            position,
+            target,
+            up,
+            projection,
+            clipping,
+        } => {
+            let position = finite_vector(*position, "position", true)?;
+            let target = finite_vector(*target, "target", true)?;
+            let direction = position - target;
+            if direction.length() < MIN_DIRECTION_LENGTH {
+                return Err("position and target must not coincide".into());
+            }
+            let up = normalized_direction(*up, "up")?;
+            validate_orientation(direction.normalize(), up, "view direction")?;
+            let clipping = clipping
+                .as_ref()
+                .map(|clipping| {
+                    if !clipping.near.is_finite()
+                        || !clipping.far.is_finite()
+                        || clipping.near <= 0.0
+                        || clipping.far <= clipping.near
+                    {
+                        return Err("clipping requires finite 0 < near < far".to_owned());
+                    }
+                    Ok(ClipPlanes {
+                        near: clipping.near,
+                        far: clipping.far,
+                    })
+                })
+                .transpose()?;
+            Ok(RenderCamera::Fixed {
+                position: position.to_array(),
+                target: target.to_array(),
+                up: up.to_array(),
+                projection: resolve_fixed_projection(projection.as_ref())?,
+                clipping,
+            })
+        }
+    }
 }
 
 /// Resolve the request's own format name and encoder settings. `format` is
@@ -534,14 +758,6 @@ fn validate_optional_label(label: Option<&str>, name: &str) -> Result<(), Render
     Ok(())
 }
 
-fn finite_or_default(value: Option<f32>, default: f32, name: &str) -> Result<f32, RenderError> {
-    let value = value.unwrap_or(default);
-    if !value.is_finite() {
-        return Err(RenderError::Parse(format!("{name} must be finite")));
-    }
-    Ok(value)
-}
-
 fn valid_view_id(id: &str) -> bool {
     let bytes = id.as_bytes();
     (1..=64).contains(&bytes.len())
@@ -562,7 +778,7 @@ mod tests {
             .resolve()
             .expect("resolve");
         assert_eq!((options.width, options.height), (768, 432));
-        assert_eq!((options.phi_deg, options.theta_deg), (60.0, -45.0));
+        assert_eq!(options.camera, RenderCamera::default());
         assert!(!options.axes);
         assert!(options.label.is_none());
         assert!(!options.scale_bar);
@@ -586,7 +802,7 @@ mod tests {
         );
         assert_eq!(
             RenderImagesRequest::from_json(
-                r#"{"format":"png","views":[{"id":"front","label":"Front","phi":90,"theta":0,"width":191}]}"#
+                r#"{"format":"png","views":[{"id":"front","label":"Front","width":191}]}"#
             )
             .expect("parse")
             .resolve()
@@ -601,7 +817,7 @@ mod tests {
         // The shared pair is only a default: a view that overrides both is the
         // size that gets rendered and annotated.
         let (options, _, views, _) = RenderImagesRequest::from_json(
-            r#"{"format":"png","axes":true,"width":128,"height":128,"views":[{"id":"front","phi":90,"theta":0,"width":512,"height":512}]}"#
+            r#"{"format":"png","axes":true,"width":128,"height":128,"views":[{"id":"front","width":512,"height":512}]}"#
         )
         .expect("parse")
         .resolve()
@@ -611,7 +827,7 @@ mod tests {
         // A view that inherits the small shared pair still fails on its own size.
         assert_eq!(
             RenderImagesRequest::from_json(
-                r#"{"format":"png","axes":true,"width":128,"height":128,"views":[{"id":"front","phi":90,"theta":0}]}"#
+                r#"{"format":"png","axes":true,"width":128,"height":128,"views":[{"id":"front"}]}"#
             )
             .expect("parse")
             .resolve()
@@ -633,7 +849,7 @@ mod tests {
             assert_eq!(error.to_string(), "parse: format is required", "{json}");
         }
         assert_eq!(
-            RenderImagesRequest::from_json(r#"{"views":[{"id":"front","phi":90,"theta":0}]}"#)
+            RenderImagesRequest::from_json(r#"{"views":[{"id":"front"}]}"#)
                 .expect("parse")
                 .resolve()
                 .unwrap_err()
@@ -662,7 +878,7 @@ mod tests {
         // A per-view override picks it up through the same resolution, so one
         // plan can mix an encoded view with an unencoded one.
         let (_, shared, views, _) = RenderImagesRequest::from_json(
-            r#"{"format":"webp","views":[{"id":"thumb","phi":60,"theta":-45},{"id":"frame","phi":60,"theta":-45,"format":"raw"}]}"#,
+            r#"{"format":"webp","views":[{"id":"thumb"},{"id":"frame","format":"raw"}]}"#,
         )
         .expect("parse")
         .resolve()
@@ -691,7 +907,7 @@ mod tests {
     #[test]
     fn plural_resolves_shared_settings_and_ordered_views() {
         let (options, format, views, timings) = RenderImagesRequest::from_json(
-            r#"{"format":"webp","axes":true,"scaleBar":true,"views":[{"id":"front","label":"Front","phi":90,"theta":0},{"id":"top","label":"Top","phi":0,"theta":0}]}"#,
+            r#"{"format":"webp","axes":true,"scaleBar":true,"views":[{"id":"front","label":"Front"},{"id":"top","label":"Top"}]}"#,
         )
         .expect("parse")
         .resolve()
@@ -711,11 +927,11 @@ mod tests {
     fn plural_resolves_per_view_output_overrides() {
         let (options, format, views, timings) = RenderImagesRequest::from_json(
             r#"{"format":"webp","quality":0.9,"width":768,"height":432,"timings":true,"views":[
-                {"id":"card","phi":60,"theta":-45},
-                {"id":"og","phi":60,"theta":-45,"width":1536,"height":804},
-                {"id":"hero","phi":60,"theta":-45,"format":"png"},
-                {"id":"print","phi":60,"theta":-45,"format":"jpeg","quality":0.8},
-                {"id":"exact","phi":60,"theta":-45,"quality":1}
+                {"id":"card"},
+                {"id":"og","width":1536,"height":804},
+                {"id":"hero","format":"png"},
+                {"id":"print","format":"jpeg","quality":0.8},
+                {"id":"exact","quality":1}
             ]}"#,
         )
         .expect("parse")
@@ -766,11 +982,12 @@ mod tests {
     fn rejects_invalid_plural_views_before_rendering() {
         for json in [
             r#"{"format":"png","views":[]}"#,
-            r#"{"format":"png","views":[{"id":"../front","phi":90,"theta":0}]}"#,
-            r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0},{"id":"front","phi":0,"theta":0}]}"#,
-            r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"zoom":2}]}"#,
-            r#"{"format":"png","phi":90,"views":[{"id":"front","phi":90,"theta":0}]}"#,
-            r#"{"format":"png","label":"shared","views":[{"id":"front","phi":90,"theta":0}]}"#,
+            r#"{"format":"png","views":[{"id":"../front"}]}"#,
+            r#"{"format":"png","views":[{"id":"front"},{"id":"front"}]}"#,
+            r#"{"format":"png","views":[{"id":"front","zoom":2}]}"#,
+            r#"{"format":"png","views":[{"id":"front","camera":{"framing":"fit","direction":[0,0,0]}}]}"#,
+            r#"{"format":"png","phi":90,"views":[{"id":"front"}]}"#,
+            r#"{"format":"png","label":"shared","views":[{"id":"front"}]}"#,
         ] {
             assert!(
                 RenderImagesRequest::from_json(json)
@@ -781,26 +998,47 @@ mod tests {
     }
 
     #[test]
+    fn removed_camera_fields_name_their_replacement() {
+        assert!(RenderRequest::from_json("[]").is_err());
+        assert!(RenderImagesRequest::from_json("not json").is_err());
+        assert!(RenderImagesRequest::from_json(r#"{"views":[null]}"#).is_err());
+        assert_eq!(
+            RenderRequest::from_json(r#"{"format":"png","phi":60}"#)
+                .unwrap_err()
+                .to_string(),
+            "parse: options.phi was removed; use options.camera with framing, Cartesian vectors, and a nested projection"
+        );
+        assert_eq!(
+            RenderImagesRequest::from_json(
+                r#"{"format":"png","views":[{"id":"front","theta":0}]}"#,
+            )
+            .unwrap_err()
+            .to_string(),
+            "parse: views[0].theta was removed; use views[0].camera with framing, Cartesian vectors, and a nested projection"
+        );
+    }
+
+    #[test]
     fn rejects_invalid_per_view_output_overrides_by_name() {
         let cases = [
             (
-                r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"width":15}]}"#,
+                r#"{"format":"png","views":[{"id":"front","width":15}]}"#,
                 "parse: views[0].width 15 outside 16..=4096",
             ),
             (
-                r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"height":4097}]}"#,
+                r#"{"format":"png","views":[{"id":"front","height":4097}]}"#,
                 "parse: views[0].height 4097 outside 16..=4096",
             ),
             (
-                r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"quality":1.5}]}"#,
+                r#"{"format":"png","views":[{"id":"front","quality":1.5}]}"#,
                 "parse: views[0].quality 1.5 outside 0..=1",
             ),
             (
-                r#"{"format":"png","views":[{"id":"front","phi":90,"theta":0,"format":"gif"}]}"#,
+                r#"{"format":"png","views":[{"id":"front","format":"gif"}]}"#,
                 "parse: views[0]: format \"gif\" not png/webp/jpeg/jpg/raw",
             ),
             (
-                r#"{"format":"png","axes":true,"views":[{"id":"front","phi":90,"theta":0,"width":191}]}"#,
+                r#"{"format":"png","axes":true,"views":[{"id":"front","width":191}]}"#,
                 "parse: views[0]: annotated images must be at least 192x192",
             ),
         ];
@@ -855,21 +1093,59 @@ mod tests {
 
     #[test]
     fn resolves_every_common_option_variant() {
-        for up in ["x", "y", "z"] {
-            let json = format!(
-                r#"{{"format":"jpeg","quality":0.8,"width":192,"height":193,"margin":0.2,"up":"{up}","projection":"orthographic","background":[0,0.25,0.5,1],"label":"µ—−","axes":true,"scaleBar":true}}"#
-            );
-            let (options, format) = RenderRequest::from_json(&json)
+        let json = r#"{"format":"jpeg","quality":0.8,"width":192,"height":193,"lineWidth":0.25,"camera":{"framing":"fixed","position":[4,3,2],"target":[0,0,0],"up":[0,0,1],"projection":{"kind":"orthographic","verticalSpan":12,"zoom":1.5},"clipping":{"near":0.1,"far":100}},"background":[0,0.25,0.5,1],"label":"µ—−","axes":true,"scaleBar":true}"#;
+        let (options, format) = RenderRequest::from_json(json)
+            .expect("parse")
+            .resolve()
+            .expect("resolve");
+        assert_eq!(options.width, 192);
+        assert_eq!(options.height, 193);
+        assert_eq!(options.line_width, 0.25);
+        assert!(options.axes);
+        assert!(options.scale_bar);
+        assert_eq!(
+            options.camera.projection_kind(),
+            crate::Projection::Orthographic
+        );
+        assert_eq!(format, ImageFormat::Jpeg { quality: 80 });
+    }
+
+    #[test]
+    fn resolves_every_camera_arm_and_rejects_invalid_combinations() {
+        let cases = [
+            r#"{"format":"png","camera":{"framing":"fit"}}"#,
+            r#"{"format":"png","camera":{"framing":"fit","direction":[1,-1,1],"up":[0,0,1],"margin":0.2,"projection":{"kind":"perspective","verticalFieldOfView":60}}}"#,
+            r#"{"format":"png","camera":{"framing":"fit","projection":{"kind":"orthographic"}}}"#,
+            r#"{"format":"png","camera":{"framing":"fixed","position":[4,3,2],"target":[0,0,0],"up":[0,0,1]}}"#,
+            r#"{"format":"png","camera":{"framing":"fixed","position":[4,3,2],"target":[0,0,0],"up":[0,0,1],"projection":{"kind":"perspective","verticalFieldOfView":35,"zoom":2},"clipping":{"near":0.1,"far":100}}}"#,
+            r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,10],"target":[0,0,0],"up":[0,1,0],"projection":{"kind":"orthographic","verticalSpan":20,"zoom":0.5}}}"#,
+        ];
+        for json in cases {
+            RenderRequest::from_json(json)
                 .expect("parse")
                 .resolve()
                 .expect("resolve");
-            assert_eq!(options.width, 192);
-            assert_eq!(options.height, 193);
-            assert!(options.axes);
-            assert!(options.scale_bar);
-            assert_eq!(options.projection, Projection::Orthographic);
-            assert_eq!(format, ImageFormat::Jpeg { quality: 80 });
         }
+
+        for json in [
+            r#"{"format":"png","camera":{"framing":"fit","direction":[0,0,0]}}"#,
+            r#"{"format":"png","camera":{"framing":"fit","direction":[0,1,0],"up":[0,2,0]}}"#,
+            r#"{"format":"png","camera":{"framing":"fit","margin":0.6}}"#,
+            r#"{"format":"png","camera":{"framing":"fit","projection":{"kind":"perspective","verticalFieldOfView":0}}}"#,
+            r#"{"format":"png","camera":{"framing":"fit","projection":{"kind":"perspective","zoom":2}}}"#,
+            r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,0],"target":[0,0,0],"up":[0,1,0]}}"#,
+            r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,0,1]}}"#,
+            r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,1,0],"projection":{"kind":"orthographic","verticalSpan":0}}}"#,
+            r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,1,0],"projection":{"kind":"perspective","zoom":0}}}"#,
+            r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,1,0],"clipping":{"near":1,"far":1}}}"#,
+        ] {
+            assert!(
+                RenderRequest::from_json(json)
+                    .and_then(|request| request.resolve())
+                    .is_err(),
+            );
+        }
+        assert!(finite_vector([f32::NAN, 0.0, 0.0], "position", true).is_err());
     }
 
     /// Lighting is settled before any encoder is chosen, so these cases go
@@ -893,7 +1169,7 @@ mod tests {
         }
         // The plural request carries the same field.
         let (options, _, _, _) = RenderImagesRequest::from_json(
-            r#"{"format":"png","lighting":"studio","views":[{"id":"front","phi":90,"theta":0}]}"#,
+            r#"{"format":"png","lighting":"studio","views":[{"id":"front"}]}"#,
         )
         .expect("parse")
         .resolve()
@@ -1027,32 +1303,14 @@ mod tests {
 
     #[test]
     fn rejects_non_finite_views_labels_and_common_values() {
-        for (phi, theta) in [(f32::NAN, 0.0), (0.0, f32::INFINITY)] {
-            let request = RenderImagesRequest {
-                format: Some("png".into()),
-                views: vec![RenderImageViewRequest {
-                    id: "front".into(),
-                    label: None,
-                    phi,
-                    theta,
-                    width: None,
-                    height: None,
-                    format: None,
-                    quality: None,
-                }],
-                ..Default::default()
-            };
-            assert!(request.resolve().is_err());
-        }
         for label in ["", " ", &"x".repeat(65)] {
             assert!(validate_optional_label(Some(label), "label").is_err());
         }
-        assert!(finite_or_default(Some(f32::NAN), 0.0, "angle").is_err());
         let png = || Some("png".to_owned());
         for request in [
             RenderRequest {
                 format: png(),
-                margin: Some(f32::NAN),
+                line_width: Some(f32::NAN),
                 ..Default::default()
             },
             RenderRequest {

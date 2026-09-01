@@ -195,11 +195,26 @@ fn vs_line(
     let at_end = row >= 2u;
     let is_cap = row == 0u || row == 3u;
 
-    let clip_start = frame.view_projection * object.model * vec4<f32>(start, 1.0);
-    let clip_end = frame.view_projection * object.model * vec4<f32>(end, 1.0);
+    var clip_start = frame.view_projection * object.model * vec4<f32>(start, 1.0);
+    var clip_end = frame.view_projection * object.model * vec4<f32>(end, 1.0);
 
-    // The fitted camera keeps all geometry inside the frustum, so both
-    // endpoints have w > 0 and no near-plane trimming is needed.
+    // WebGPU's near clip plane is homogeneous z = 0. Trim before perspective
+    // division so a fixed camera may cross a segment without expanding it to
+    // infinity. A segment wholly behind the plane becomes an off-screen point.
+    if (clip_start.z < 0.0 && clip_end.z < 0.0) {
+        var out: LineOut;
+        out.position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        out.uv = vec2<f32>(0.0);
+        return out;
+    }
+    if (clip_start.z < 0.0) {
+        let amount = -clip_start.z / (clip_end.z - clip_start.z);
+        clip_start = mix(clip_start, clip_end, amount);
+    } else if (clip_end.z < 0.0) {
+        let amount = -clip_end.z / (clip_start.z - clip_end.z);
+        clip_end = mix(clip_end, clip_start, amount);
+    }
+
     let resolution = frame.viewport.xy;
     let aspect = resolution.x / resolution.y;
     var dir = clip_end.xy / clip_end.w - clip_start.xy / clip_start.w;

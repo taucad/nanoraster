@@ -48,6 +48,31 @@ pub(crate) struct Scene {
     pub(crate) bounds: Option<([f32; 3], [f32; 3])>,
 }
 
+impl Scene {
+    /// Visit every world-space position referenced by a draw index.
+    pub(crate) fn for_each_position(
+        &self,
+        visit: &mut dyn FnMut(Vec3),
+    ) -> Result<bool, String> {
+        let mut any = false;
+        for instance in &self.instances {
+            for primitive in &self.meshes[instance.mesh_index].primitives {
+                for &index in &primitive.indices {
+                    let offset = index as usize * 3;
+                    let local = Vec3::from_slice(&primitive.positions[offset..offset + 3]);
+                    let world = instance.model.transform_point3(local);
+                    if !world.is_finite() {
+                        return Err("transformed POSITION values must be finite".into());
+                    }
+                    visit(world);
+                    any = true;
+                }
+            }
+        }
+        Ok(any)
+    }
+}
+
 fn validate_document(document: &gltf::Document, bin: &[u8]) -> Result<(), String> {
     if document.animations().next().is_some() {
         return Err("animations are not supported".into());
@@ -200,42 +225,6 @@ fn validate_transform(model: Mat4) -> Result<Mat4, String> {
     Ok(normal_matrix)
 }
 
-fn extend_bounds(
-    bounds: &mut Option<(Vec3, Vec3)>,
-    mesh: &MeshAsset,
-    model: Mat4,
-) -> Result<(), String> {
-    for primitive in &mesh.primitives {
-        // A closed triangle mesh references each vertex ~6 times through its
-        // indices; a visited bitmask transforms each referenced vertex once
-        // while keeping the exact same bounds (min/max over the same set).
-        let vertex_count = primitive.positions.len() / 3;
-        let mut visited = vec![0u64; vertex_count.div_ceil(64)];
-        for &index in &primitive.indices {
-            let vertex = index as usize;
-            let (word, bit) = (vertex / 64, 1u64 << (vertex % 64));
-            if visited[word] & bit != 0 {
-                continue;
-            }
-            visited[word] |= bit;
-            let offset = vertex * 3;
-            let local = Vec3::from_slice(&primitive.positions[offset..offset + 3]);
-            let world = model.transform_point3(local);
-            if !world.is_finite() {
-                return Err("transformed POSITION values must be finite".into());
-            }
-            match bounds {
-                Some((min, max)) => {
-                    *min = min.min(world);
-                    *max = max.max(world);
-                }
-                None => *bounds = Some((world, world)),
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Parse a GLB into shared mesh assets plus deterministic core-node instances.
 pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
     let glb = gltf::binary::Glb::from_slice(bytes).map_err(|error| error.to_string())?;
@@ -265,7 +254,6 @@ pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
     let mut mesh_map = vec![None; mesh_count];
     let mut meshes = Vec::new();
     let mut instances = Vec::new();
-    let mut bounds = None;
     let mut roots: Vec<_> = scene.nodes().collect();
     roots.reverse();
     let mut stack: Vec<_> = roots
@@ -295,7 +283,6 @@ pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
                     index
                 }
             };
-            extend_bounds(&mut bounds, &meshes[mesh_index], model)?;
             instances.push(MeshInstance {
                 mesh_index,
                 model,
@@ -308,11 +295,21 @@ pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
         stack.extend(children.into_iter().map(|child| (child, model)));
     }
 
-    Ok(Scene {
+    let mut scene = Scene {
         meshes,
         instances,
-        bounds: bounds.map(|(min, max)| (min.to_array(), max.to_array())),
-    })
+        bounds: None,
+    };
+    let mut bounds: Option<(Vec3, Vec3)> = None;
+    scene.for_each_position(&mut |position| match &mut bounds {
+        Some((min, max)) => {
+            *min = min.min(position);
+            *max = max.max(position);
+        }
+        None => bounds = Some((position, position)),
+    })?;
+    scene.bounds = bounds.map(|(min, max)| (min.to_array(), max.to_array()));
+    Ok(scene)
 }
 
 #[cfg(test)]
@@ -574,6 +571,37 @@ mod tests {
             [0.0, 0.0, 0.0, 1.0]
         );
         assert_eq!(scene.bounds, Some(([-4.5, -1.95, 0.0], [4.2, 2.15, 0.0])));
+
+        let expected_count = scene
+            .instances
+            .iter()
+            .map(|instance| {
+                scene.meshes[instance.mesh_index]
+                    .primitives
+                    .iter()
+                    .map(|primitive| primitive.indices.len())
+                    .sum::<usize>()
+            })
+            .sum::<usize>();
+        let mut visited = Vec::new();
+        assert!(
+            scene
+                .for_each_position(&mut |position| visited.push(position))
+                .expect("positions")
+        );
+        assert_eq!(visited.len(), expected_count);
+        assert!(visited.iter().all(|position| position.is_finite()));
+        let min = visited
+            .iter()
+            .copied()
+            .reduce(Vec3::min)
+            .expect("positions");
+        let max = visited
+            .iter()
+            .copied()
+            .reduce(Vec3::max)
+            .expect("positions");
+        assert_eq!(Some((min.to_array(), max.to_array())), scene.bounds);
     }
 
     #[test]
@@ -840,23 +868,28 @@ mod tests {
         assert!(validate_transform(Mat4::from_cols_array(&[f32::NAN; 16])).is_err());
         assert!(validate_transform(Mat4::from_scale(Vec3::new(1.0e-39, 1.0e20, 1.0e20))).is_err());
 
-        let mesh = MeshAsset {
-            primitives: vec![Primitive {
-                mode: MODE_TRIANGLES,
-                positions: vec![2.0, 0.0, 0.0],
-                normals: vec![1.0, 0.0, 0.0],
-                indices: vec![0],
-                material: Material {
-                    base_color: [1.0; 4],
-                    metallic: 1.0,
-                    roughness: 1.0,
-                },
+        let scene = Scene {
+            meshes: vec![MeshAsset {
+                primitives: vec![Primitive {
+                    mode: MODE_TRIANGLES,
+                    positions: vec![2.0, 0.0, 0.0],
+                    normals: vec![1.0, 0.0, 0.0],
+                    indices: vec![0],
+                    material: Material {
+                        base_color: [1.0; 4],
+                        metallic: 1.0,
+                        roughness: 1.0,
+                    },
+                }],
             }],
+            instances: vec![MeshInstance {
+                mesh_index: 0,
+                model: Mat4::from_scale(Vec3::splat(f32::MAX)),
+                normal_matrix: Mat4::IDENTITY,
+            }],
+            bounds: None,
         };
-        let mut bounds = None;
-        assert!(
-            extend_bounds(&mut bounds, &mesh, Mat4::from_scale(Vec3::splat(f32::MAX))).is_err()
-        );
+        assert!(scene.for_each_position(&mut drop).is_err());
 
         assert!(std::panic::catch_unwind(|| fixture(Layout::Packed, 0, true)).is_err());
     }

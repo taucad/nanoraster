@@ -26,13 +26,18 @@ export {
   renderImageExposureRange,
   renderImageLabelMaxLength,
   renderImageLabelPattern,
+  renderImageLineWidthRange,
   renderImageLightColorRange,
   renderImageMarginRange,
   renderImageMaxLights,
   renderImageQualityRange,
+  renderImageVerticalFieldOfViewRange,
   renderImageViewIdPattern,
+  renderImageZoomRange,
 } from '#options.js';
 export type {
+  RenderVector3,
+  RenderCamera,
   RenderImageOptions,
   RenderImagesOptions,
   RenderImageView,

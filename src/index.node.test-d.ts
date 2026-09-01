@@ -26,7 +26,7 @@ void nodeModule.renderImage(glb, { format: 'gif' });
 void nodeModule.renderImages(glb, {
   format: 'png',
   // @ts-expect-error unknown per-view output format
-  views: [{ id: 'front', phi: 90, theta: 0, format: 'gif' }],
+  views: [{ id: 'front', format: 'gif' }],
 });
 // @ts-expect-error missing required format
 void ({ axes: true } as const satisfies nodeModule.RenderImageOptions);

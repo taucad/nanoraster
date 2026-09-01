@@ -1,5 +1,5 @@
 // One-off: rotate the demo GLB's root node 90° about Y so the gear axis (+Z as
-// authored) becomes +X. Then `phi: 90, theta: 0` (the tutorial's "front") looks at
+// authored) becomes +X. Then `direction: [1, 0, 0]` (the tutorial's "front") looks at
 // the gear's face. Rewrites only the JSON chunk; vertex data is untouched.
 import { readFileSync, writeFileSync } from 'node:fs';
 

@@ -14,9 +14,9 @@ npm install nanoraster
 pnpm add nanoraster
 ```
 
-Save this as `render.mjs` and run it with `node render.mjs`. The camera angles
-are written out so you can drag them; `phi: 60` and `theta: -45` are the
-defaults. The live tile renders at 960×720, so its byte count differs, and its
+Save this as `render.mjs` and run it with `node render.mjs`. The fitted camera
+direction is written out so you can edit it; omitting `camera` uses the same
+three-quarter default. The live tile renders at 960×720, so its byte count differs, and its
 milliseconds drop after the first frame because dragging reuses one renderer;
 [Reuse the renderer](/docs/guides/reuse-the-renderer) is the same move in your
 own code.
@@ -34,8 +34,7 @@ const image = await renderImage(glb, {
   format: 'webp',
   width: 512,
   height: 512,
-  phi: 60,
-  theta: -45,
+  camera: { framing: 'fit', direction: [0.6123724357, 0.5, 0.6123724357] },
 });
 
 await writeFile(image.name, image.bytes);
