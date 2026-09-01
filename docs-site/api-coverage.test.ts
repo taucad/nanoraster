@@ -48,7 +48,12 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'width',
     'height',
     'quality',
+    'world',
     'lineWidth',
+    'surfaces',
+    'lines',
+    'visiblePrimitives',
+    'sections',
     'background',
     'axes',
     'scaleBar',
@@ -61,7 +66,12 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'width',
     'height',
     'quality',
+    'world',
     'lineWidth',
+    'surfaces',
+    'lines',
+    'visiblePrimitives',
+    'sections',
     'background',
     'axes',
     'scaleBar',
@@ -74,14 +84,32 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
   RenderLight: ['direction', 'color'],
   CreateRendererOptions: ['powerPreference'],
   AdapterInfo: ['backend', 'name', 'deviceType'],
-  RenderTimings: ['parse', 'setup', 'views'],
+  RenderTimings: [
+    'parse',
+    'setup',
+    'capBuild',
+    'upload',
+    'peakReadbackBytes',
+    'glbParses',
+    'adapterDeviceRequests',
+    'pipelineSets',
+    'presentationBuilds',
+    'sceneUploads',
+    'targetAllocations',
+    'views',
+  ],
   RenderViewTimings: ['id', 'render', 'overlay', 'encode'],
 };
 const defaults = {
   width: '768',
   height: '432',
   quality: '0.92 (jpeg), 1 (webp)',
+  world: 'glTF world',
   lineWidth: '3',
+  surfaces: 'true',
+  lines: 'true',
+  visiblePrimitives: 'all',
+  sections: 'disabled',
   background: 'transparent',
   axes: 'false',
   scaleBar: 'false',
@@ -171,6 +199,8 @@ describe('static agent documentation', () => {
       'tutorial',
       'guides/render-multiple-views',
       'guides/frame-the-model',
+      'guides/choose-visible-geometry',
+      'guides/render-section-views',
       'how-it-works',
       'api',
     ];
@@ -225,7 +255,7 @@ describe('static agent documentation', () => {
     }
 
     const apiHtml = resolve(output, 'docs/api.html');
-    expect(statSync(apiHtml).size).toBeLessThan(669_367);
+    expect(statSync(apiHtml).size).toBeLessThan(750_000);
 
     const optionsHtml = readFileSync(apiHtml, 'utf8');
     expect(optionsHtml).toContain('aria-label="RenderImageOptions properties"');

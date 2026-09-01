@@ -8,6 +8,7 @@ import { describeAdapter } from '../../src/describe-adapter.ts';
 import { withPbrFactors } from '../pbr-fixture.mjs';
 
 let glb;
+let cubeGlb;
 
 beforeAll(async () => {
   expect(navigator.gpu, 'WebGPU must be enabled for every supported browser').toBeDefined();
@@ -16,6 +17,9 @@ beforeAll(async () => {
   const response = await fetch(new URL('../fixtures/gear-12.glb', import.meta.url));
   expect(response.ok).toBe(true);
   glb = new Uint8Array(await response.arrayBuffer());
+  const cubeResponse = await fetch(new URL('../fixtures/cube.glb', import.meta.url));
+  expect(cubeResponse.ok).toBe(true);
+  cubeGlb = new Uint8Array(await cubeResponse.arrayBuffer());
 });
 
 test('the façade describes the adapter without loading the wasm', async () => {
@@ -232,6 +236,40 @@ test('should render deterministically through the packed public façade', async 
   expect(first.height).toBe(192);
   expect([...first.bytes.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
   expect(second.bytes).toEqual(first.bytes);
+});
+
+test('the packed façade preserves visibility, sections, and rolled camera data', async () => {
+  const camera = {
+    framing: 'fixed',
+    position: [0.08, 0.06, 0.07],
+    target: [0, 0, 0.02],
+    up: [0.2, 0.1, 1],
+  };
+  const common = { width: 128, height: 128, format: 'raw', background: '#242424', camera };
+  const all = await renderImage(cubeGlb, common);
+  const surfacesOff = await renderImage(cubeGlb, { ...common, surfaces: false });
+  const linesOff = await renderImage(cubeGlb, { ...common, lines: false });
+  const hidden = await renderImage(cubeGlb, { ...common, visiblePrimitives: [] });
+  const planeX = { point: [0, 0, 0.02], normal: [1, 0, 0] };
+  const planeZ = { point: [0, 0, 0.02], normal: [0, 0, 1] };
+  const onePlane = await renderImage(cubeGlb, { ...common, sections: { planes: [planeX] } });
+  const twoPlanes = await renderImage(cubeGlb, {
+    ...common,
+    sections: { planes: [planeX, planeZ] },
+  });
+  const reversedPlanes = await renderImage(cubeGlb, {
+    ...common,
+    sections: { planes: [planeZ, planeX] },
+  });
+
+  expect(linesOff.bytes).toEqual(all.bytes); // cube.glb contains TRIANGLES only
+  expect(surfacesOff.bytes).toEqual(hidden.bytes);
+  expect(onePlane.bytes).not.toEqual(all.bytes);
+  expect(twoPlanes.bytes).not.toEqual(onePlane.bytes);
+  expect(reversedPlanes.bytes).toEqual(twoPlanes.bytes);
+
+  const rolled = await renderImage(cubeGlb, { ...common, camera: { ...camera, up: [0, 0, 1] } });
+  expect(rolled.bytes).not.toEqual(all.bytes);
 });
 
 test('should reject a malformed GLB with a parse error through the packed public façade', async () => {

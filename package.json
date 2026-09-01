@@ -60,6 +60,7 @@
   },
   "scripts": {
     "benchmark": "node bench/gated.mjs",
+    "benchmark:presentation": "node --expose-gc bench/presentation.mjs",
     "build": "pnpm run build:napi && pnpm run build:wasm && tsdown && node scripts/copy-assets.mjs",
     "build:napi": "pnpm exec napi build --platform --release --esm --js index.js --dts index.d.ts --manifest-path rust/render-napi/Cargo.toml --output-dir src/native -- --locked",
     "build:napi:bench": "pnpm exec napi build --platform --release --esm --js index.js --dts index.d.ts --manifest-path rust/render-napi/Cargo.toml --features bench --output-dir tests/out/native-bench -- --locked",

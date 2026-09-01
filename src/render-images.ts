@@ -34,11 +34,29 @@ const parseTimings = (json: string): RenderTimings => {
   const raw = JSON.parse(json) as {
     parse: number;
     setup: number;
+    capBuild: number;
+    upload: number;
+    peakReadbackBytes: number;
+    glbParses: number;
+    adapterDeviceRequests: number;
+    pipelineSets: number;
+    presentationBuilds: number;
+    sceneUploads: number;
+    targetAllocations: number;
     views: Array<{ id: string; render: number; overlay: number; encode: number }>;
   };
   return {
     parse: raw.parse,
     setup: raw.setup,
+    capBuild: raw.capBuild,
+    upload: raw.upload,
+    peakReadbackBytes: raw.peakReadbackBytes,
+    glbParses: raw.glbParses,
+    adapterDeviceRequests: raw.adapterDeviceRequests,
+    pipelineSets: raw.pipelineSets,
+    presentationBuilds: raw.presentationBuilds,
+    sceneUploads: raw.sceneUploads,
+    targetAllocations: raw.targetAllocations,
     views: raw.views.map(({ id, render, overlay, encode }) => ({
       id,
       render,

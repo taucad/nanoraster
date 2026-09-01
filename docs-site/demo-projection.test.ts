@@ -111,6 +111,25 @@ describe('interactive demo projections', () => {
     expect(request).not.toHaveProperty('margin');
   });
 
+  it('binds nested section planes without leaking their vectors to camera controls', () => {
+    const descriptor = createDemoDescriptor(`const image = await renderImage(glb, {
+  format: 'png',
+  camera: { framing: 'fit', direction: [1, 0, 0] },
+  sections: {
+    planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }],
+    clipSurfaces: true,
+    clipLines: false,
+  },
+});`);
+    expect(readDemoOptions(descriptor)).toMatchObject({
+      'camera.direction': [1, 0, 0],
+      'sections.planes.0.point': [0, 0, 0],
+      'sections.planes.0.normal': [1, 0, 0],
+      'sections.clipSurfaces': true,
+      'sections.clipLines': false,
+    });
+  });
+
   it('removes a first-position view label without producing invalid code', () => {
     const descriptor = createDemoDescriptor(`const images = await renderImages(glb, {
   format: 'png',

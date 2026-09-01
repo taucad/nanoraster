@@ -1,0 +1,60 @@
+---
+title: Cut section views
+description: Cut one or more retained half-spaces and render deterministic striped caps and outlines.
+---
+
+A section plane is a point and a normal in the submitted GLB's world frame.
+The normal points into the half-space that remains visible.
+
+## Cut with one or more planes
+
+Use `sections.planes` for one to six simultaneous cuts. The retained subject is
+the intersection of every half-space, so changing plane order does not change
+the image.
+
+<RenderDemo>
+
+```typescript
+import { renderImage } from 'nanoraster';
+
+const image = await renderImage(glb, {
+  format: 'webp',
+  sections: {
+    planes: [
+      { point: [0, 0, 0], normal: [1, 0, 0] },
+      { point: [0, 0, 0], normal: [0, 0, 1] },
+    ],
+    clipSurfaces: true,
+    clipLines: true,
+  },
+});
+```
+
+</RenderDemo>
+
+Normals accept any finite non-zero magnitude and are normalized internally.
+An empty plane list is invalid; omit `sections` to render without a cut.
+
+## Control what each plane clips
+
+`clipSurfaces` and `clipLines` both default to `true`. Turning off
+`clipSurfaces` leaves triangle surfaces unchanged and produces no caps while
+authored lines may still be cut. Turning off `clipLines` leaves authored lines
+unchanged while surfaces, caps, and cap outlines still follow the planes.
+
+## Read the cap
+
+Closed solid cuts receive an unlit striped cap derived from each primitive's
+material colour. Positive-area overlaps between primitive caps use a red field
+with yellow cross-stripes. Black outlines preserve the cut boundary. Open or
+non-manifold intersections remain outlines instead of being filled as a false
+solid.
+
+Cap geometry is computed from the original GLB at fixed precision, then
+clipped with the visible geometry on the GPU. A fixed-precision overflow or
+invalid contour fails with a named `parse` error; nanoraster does not silently
+drop a cap.
+
+Fitted framing follows the visible primitive set but does not refit after a
+plane moves. The cut therefore reveals the interior without making the camera
+jump.

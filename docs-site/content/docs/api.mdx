@@ -17,6 +17,11 @@ const image = await renderImage(glb, {
   height: 432, // default
   quality: 1, // webp default (lossless); jpeg defaults to 0.92; png and raw ignore it
   lineWidth: 3, // output pixels; default
+  surfaces: true, // default
+  lines: true, // default
+  visiblePrimitives: undefined, // default (all reachable primitives)
+  sections: undefined, // default (no section view)
+  world: undefined, // default (glTF +Y up, +Z forward, metres)
   background: undefined, // default (transparent)
   axes: false, // default
   scaleBar: false, // default
@@ -197,9 +202,71 @@ show these fields in use.
 export type RenderVector3 = readonly [x: number, y: number, z: number];
 ```
 
-A Cartesian vector in the submitted GLB's world coordinate frame. Camera
-direction and up vectors accept any finite non-zero magnitude and are
-normalized internally.
+A Cartesian vector in the request's caller-world frame. That frame is glTF
+world space when `world` is omitted. Direction and up vectors accept any finite
+non-zero magnitude and are normalized internally.
+
+### `RenderWorldAxis`
+
+```typescript
+export type RenderWorldAxis = '+x' | '-x' | '+y' | '-y' | '+z' | '-z';
+```
+
+One signed principal axis in the caller-world frame.
+
+### `RenderWorld`
+
+```typescript
+export type RenderWorld = {
+  readonly up?: RenderWorldAxis;
+  readonly forward?: RenderWorldAxis;
+  readonly unit?: 'meter' | 'millimeter';
+};
+```
+
+Declares the coordinate frame used by camera, section, world-light, axes, and
+scale-bar values without changing the submitted GLB. Defaults are glTF `+Y`
+up, `+Z` forward, and metres. Up and forward must name distinct axes and form a
+right-handed frame. The setting is shared by every view in a batch.
+
+### `RenderPrimitiveReference`
+
+```typescript
+export type RenderPrimitiveReference = {
+  readonly nodeIndex: number;
+  readonly meshIndex: number;
+  readonly primitiveIndex: number;
+};
+```
+
+One reachable primitive instance in the submitted glTF document. All three
+indices are non-negative safe integers. See [Choose visible geometry](guides/choose-visible-geometry).
+
+### `RenderSectionPlane`
+
+```typescript
+export type RenderSectionPlane = {
+  readonly point: RenderVector3;
+  readonly normal: RenderVector3;
+};
+```
+
+The normal points into the retained world-space half-space and is normalized
+internally.
+
+### `RenderSections`
+
+```typescript
+export type RenderSections = {
+  readonly planes: readonly [RenderSectionPlane, ...RenderSectionPlane[]];
+  readonly clipSurfaces?: boolean;
+  readonly clipLines?: boolean;
+};
+```
+
+One to `renderImageMaxSections` planes shared by the request. Both clip flags
+default to `true`; [Cut section views](guides/render-section-views) covers caps,
+outlines, and multiple retained half-spaces.
 
 ### `RenderCamera`
 
@@ -236,7 +303,8 @@ minimum margin `0.1`, and perspective field of view `45` with zoom `1`.
 `direction` fixes orientation from the subject toward the camera; fitting may
 translate the optical axis to balance the projected geometry. A fixed camera
 requires non-coincident position/target and a non-collinear up vector. Omitted
-clipping derives safe planes from referenced geometry.
+clipping derives safe planes from referenced geometry. Explicit range outside
+the referenced subject is tightened without changing visible geometry.
 
 ### `RenderImageOptions`
 
@@ -244,7 +312,7 @@ clipping derives safe planes from referenced geometry.
 export type RenderImageOptions = RenderImageSharedOptions & RenderCameraOptions;
 ```
 
-`RenderImageSharedOptions` and `RenderLabelOptions` are internal composition
+`RenderImageSharedOptions` and `RenderCameraOptions` are internal composition
 types; the table is the complete consumer-visible shape.
 
 <auto-type-table path="./props.ts" name="RenderImageOptions" caption="RenderImageOptions properties" />
@@ -319,7 +387,7 @@ field in use.
 
 A rig replaces the studio lights outright and inherits every other studio
 value it leaves out. Directions are view-space by default (`+x` right, `+y` up,
-`+z` toward the viewer); `space: 'world'` authors them in glTF coordinates.
+`+z` toward the viewer); `space: 'world'` uses the declared caller world.
 
 <auto-type-table path="./props.ts" name="RenderLightingRig" caption="RenderLightingRig properties" />
 
@@ -404,9 +472,9 @@ console.log(result[0].file.name, result.timings.parse); // 'render-iso.webp' 0.4
 ### `RenderTimings`
 
 Attached to a plan call's result when the options set `timings: true`. The
-fields map onto the [pipeline stages](how-it-works): parse, setup (device
-acquisition plus geometry upload), then per-view rasterise, annotate and
-encode, all in milliseconds.
+fields map onto the [pipeline stages](how-it-works): parse, shared cap-build,
+source upload, then per-view rasterise, annotate and encode. Resource counters
+show which work the call acquired; `presentationBuilds` is `1` for one plan.
 
 <auto-type-table path="./props.ts" name="RenderTimings" caption="RenderTimings properties" />
 
@@ -509,6 +577,7 @@ import them rather than restating them, so caller-side checks cannot drift.
 | `renderImageViewIdPattern`            | `/^[\dA-Za-z][\w-]{0,63}$/u`              | identifier syntax           | `id`                        |
 | `renderImageBackgroundPattern`        | `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`   | hexadecimal colour          | `background`                |
 | `renderImageMaxLights`                | `8`                                       | lights per rig              | `lighting.lights`           |
+| `renderImageMaxSections`              | `6`                                       | planes per request          | `sections.planes`           |
 | `renderImageLightColorRange`          | `readonly [0, 32]`                        | linear radiance per channel | `lighting.lights[].color`   |
 | `renderImageAmbientRange`             | `readonly [0, 4]`                         | diffuse multiplier          | `lighting.ambient`          |
 | `renderImageExposureRange`            | `readonly [0.01, 16]`                     | linear multiplier           | `lighting.exposure`         |
@@ -573,6 +642,10 @@ character is restricted.
 ### `renderImageMaxLights`
 
 Most directional lights one rig may carry.
+
+### `renderImageMaxSections`
+
+Most simultaneous retained-half-space planes one request may carry.
 
 ### `renderImageLightColorRange`
 

@@ -62,10 +62,12 @@ const planCamera = {
 ## Clipping
 
 Omit `clipping` to derive safe positive near and far planes from the subject
-bounds. Supply it when matching another renderer's exact frustum. `near` must
-be positive and `far` must be greater. Geometry before the near plane or after
-the far plane is intentionally absent; authored fat lines crossing the near
-plane are trimmed before screen-space expansion.
+bounds. Supply it when matching another renderer's visible clipping. `near`
+must be positive and `far` must be greater. Geometry before the near plane or
+after the far plane is intentionally absent. Range outside the subject bounds
+is tightened without changing visible geometry, which preserves depth
+precision when a host camera uses a very broad safety range. Authored fat lines
+crossing the near plane are trimmed before screen-space expansion.
 
 ## Try four preset cameras
 

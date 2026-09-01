@@ -63,6 +63,7 @@ const lowPower = await native.describeAdapter(JSON.stringify({ powerPreference: 
 console.log('low-power adapter:', lowPower === null ? null : JSON.parse(lowPower));
 
 const glb = readFileSync(join(here, 'fixtures', 'gear-12.glb'));
+const cubeGlb = readFileSync(join(here, 'fixtures', 'cube.glb'));
 const interleavedGlb = readFileSync(join(here, 'fixtures', 'interleaved-instanced-lines.glb'));
 const started = Date.now();
 const png = await native.renderImage(glb, JSON.stringify({ width: 768, height: 432, format: 'png' }));
@@ -111,6 +112,130 @@ const jpeg = await native.renderImage(
 );
 if (!(jpeg[0] === 0xff && jpeg[1] === 0xd8)) {
   throw new Error('jpeg output is not a JPEG');
+}
+
+const presentationCamera = {
+  framing: 'fixed',
+  position: [0.08, 0.06, 0.07],
+  target: [0, 0, 0.02],
+  up: [0.2, 0.1, 1],
+};
+const presentationCommon = {
+  width: 192,
+  height: 192,
+  format: 'raw',
+  background: [0.1411764705882353, 0.1411764705882353, 0.1411764705882353, 1],
+  camera: presentationCamera,
+};
+const presented = await native.renderImage(cubeGlb, JSON.stringify(presentationCommon));
+const explicitPresentationDefaults = await native.renderImage(
+  cubeGlb,
+  JSON.stringify({ ...presentationCommon, surfaces: true, lines: true }),
+);
+if (!presented.equals(explicitPresentationDefaults)) {
+  throw new Error('omitted presentation options differ from their explicit defaults');
+}
+const explicitGlTfWorld = await native.renderImage(
+  cubeGlb,
+  JSON.stringify({ ...presentationCommon, world: { up: '+y', forward: '+z', unit: 'meter' } }),
+);
+if (!presented.equals(explicitGlTfWorld)) {
+  throw new Error('omitted world differs from explicit glTF defaults');
+}
+
+const worldParityCommon = {
+  width: 192,
+  height: 192,
+  format: 'raw',
+  background: [0.1411764705882353, 0.1411764705882353, 0.1411764705882353, 1],
+  camera: {
+    framing: 'fixed',
+    position: [0, 4, 0],
+    target: [0, 0, 0],
+    up: [0, 0, -1],
+    projection: { kind: 'orthographic', verticalSpan: 2 },
+    clipping: { near: 0.1, far: 100 },
+  },
+  sections: { planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }] },
+  lighting: {
+    lights: [{ direction: [0, 1, 0], color: [3, 3, 3] }],
+    space: 'world',
+  },
+};
+const tauWorldParityCommon = {
+  ...worldParityCommon,
+  world: { up: '+z', forward: '-y', unit: 'millimeter' },
+  camera: {
+    framing: 'fixed',
+    position: [0, 0, 4000],
+    target: [0, 0, 0],
+    up: [0, 1, 0],
+    projection: { kind: 'orthographic', verticalSpan: 2000 },
+    clipping: { near: 100, far: 100_000 },
+  },
+  sections: { planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }] },
+  lighting: {
+    lights: [{ direction: [0, 0, 1], color: [3, 3, 3] }],
+    space: 'world',
+  },
+};
+const glTfWorldFrame = await native.renderImage(cubeGlb, JSON.stringify(worldParityCommon));
+const tauWorldFrame = await native.renderImage(cubeGlb, JSON.stringify(tauWorldParityCommon));
+if (!glTfWorldFrame.equals(tauWorldFrame)) {
+  throw new Error('Tau caller-world request differs from hand-converted glTF-space pixels');
+}
+
+const glTfAxesFrame = await native.renderImage(cubeGlb, JSON.stringify({ ...worldParityCommon, axes: true }));
+const tauAxesFrame = await native.renderImage(
+  cubeGlb,
+  JSON.stringify({ ...tauWorldParityCommon, axes: true }),
+);
+if (glTfAxesFrame.equals(tauAxesFrame)) {
+  throw new Error('caller-world axes presentation did not change');
+}
+const axesInset = Math.max(Math.round(Math.min(worldParityCommon.width, worldParityCommon.height) * 0.03), 1);
+const axesSide = Math.max(Math.round(Math.min(worldParityCommon.width, worldParityCommon.height) * 0.18), 16);
+const axesStart = worldParityCommon.width - axesInset - axesSide;
+for (let y = 0; y < worldParityCommon.height; y += 1) {
+  for (let x = 0; x < worldParityCommon.width; x += 1) {
+    if (x >= axesStart && y >= axesStart) continue;
+    const offset = (y * worldParityCommon.width + x) * 4;
+    if (!glTfAxesFrame.subarray(offset, offset + 4).equals(tauAxesFrame.subarray(offset, offset + 4))) {
+      throw new Error(`caller-world axes changed a pixel outside the axes overlay at ${x},${y}`);
+    }
+  }
+}
+const noSurfaces = await native.renderImage(
+  cubeGlb,
+  JSON.stringify({ ...presentationCommon, surfaces: false }),
+);
+const noPrimitives = await native.renderImage(
+  cubeGlb,
+  JSON.stringify({ ...presentationCommon, visiblePrimitives: [] }),
+);
+if (!noSurfaces.equals(noPrimitives) || noSurfaces.equals(presented)) {
+  throw new Error('surface visibility or empty primitive selection did not affect the frame');
+}
+const planeX = { point: [0, 0, 0.02], normal: [1, 0, 0] };
+const planeZ = { point: [0, 0, 0.02], normal: [0, 0, 1] };
+const sectionRequest = { ...presentationCommon, sections: { planes: [planeX, planeZ] } };
+const section = await native.renderImage(cubeGlb, JSON.stringify(sectionRequest));
+const reorderedSection = await native.renderImage(
+  cubeGlb,
+  JSON.stringify({ ...presentationCommon, sections: { planes: [planeZ, planeX] } }),
+);
+if (section.equals(presented) || !section.equals(reorderedSection)) {
+  throw new Error('multi-plane section output is absent or depends on plane order');
+}
+const { camera: sectionCamera, ...sectionBatchCommon } = sectionRequest;
+const sectionBatch = (
+  await native.renderImages(
+    cubeGlb,
+    JSON.stringify({ ...sectionBatchCommon, views: [{ id: 'section', camera: sectionCamera }] }),
+  )
+).images;
+if (sectionBatch.length !== 1 || !sectionBatch[0].equals(section)) {
+  throw new Error('shared batch presentation differs from singular bytes');
 }
 
 // The taxonomy contract: jpeg on a transparent background must refuse.
@@ -479,16 +604,26 @@ if (!ladder[1].equals(bigSingular) || !ladder[2].equals(lossySingular)) {
   throw new Error('ladder overrides differ from their singular equivalents');
 }
 if (ladder[2].toString('latin1', 0, 4) !== 'RIFF') throw new Error('per-view webp override missing');
-// R13: timings ride the plan call; a warm renderer reports zero device requests.
+// R13: timings ride the plan call; one batch builds one presentation plan.
 const timed = await renderer.renderImages(glb, JSON.stringify({ ...shared, timings: true, views }));
 const timings = JSON.parse(timed.timings ?? '{}');
-if (timings.adapterDeviceRequests !== 0 || timings.views.length !== views.length) {
-  throw new Error(`warm timings must attribute zero device requests: ${timed.timings}`);
+if (
+  timings.adapterDeviceRequests !== 0 ||
+  timings.presentationBuilds !== 1 ||
+  timings.sceneUploads !== 1 ||
+  timings.views.length !== views.length
+) {
+  throw new Error(`warm timings must attribute one shared presentation: ${timed.timings}`);
 }
 if (timed.images.some((image, index) => !image.equals(batch[index]))) {
   throw new Error('timed bytes differ from untimed bytes');
 }
-if (typeof timings.views[0].encode !== 'number' || typeof timings.parse !== 'number') {
+if (
+  typeof timings.views[0].encode !== 'number' ||
+  typeof timings.parse !== 'number' ||
+  typeof timings.capBuild !== 'number' ||
+  typeof timings.upload !== 'number'
+) {
   throw new Error(`timings fields must be suffix-less durations: ${timed.timings}`);
 }
 // X1: `format: "raw"` is the fourth output format, not a separate entry point.

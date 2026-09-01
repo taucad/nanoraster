@@ -586,6 +586,7 @@ jobs:
         run: |
           pnpm run build:napi:bench
           node bench/gated.mjs > /tmp/current-benchmark.json
+          node --expose-gc bench/presentation.mjs > /tmp/presentation-benchmark.json
       - name: Benchmark main on the same runner
         shell: bash
         run: |

@@ -35,9 +35,9 @@ export type RenderLightingRig = {
   /** Analytic environment supplying specular reflection and diffuse irradiance; `'none'` removes both. @default 'studio' */
   readonly environment?: 'studio' | 'none';
   /**
-   * Frame the directions are authored in. `'world'` fixes the lights to glTF
-   * coordinates whatever camera is used, so views of one subject stop being
-   * comparably lit.
+   * Frame the directions are authored in. `'world'` fixes the lights to the
+   * request's caller world whatever camera is used, so views of one subject
+   * stop being comparably lit.
    *
    * @default 'view'
    */
@@ -54,11 +54,59 @@ export type RenderLightingRig = {
 export type RenderLighting = 'studio' | RenderLightingRig;
 
 /**
- * A three-component vector in glTF world coordinates.
+ * A three-component vector in the request's caller-world coordinates. Those
+ * are glTF world coordinates when `world` is omitted.
  *
  * @public
  */
 export type RenderVector3 = readonly [x: number, y: number, z: number];
+
+/** A signed caller-world axis. @public */
+export type RenderWorldAxis = '+x' | '-x' | '+y' | '-y' | '+z' | '-z';
+
+/**
+ * Coordinate system of request-space values and rendered presentation.
+ * Submitted GLB bytes always remain glTF: right-handed, +Y up, +Z forward,
+ * and metres. Omitted fields use those glTF defaults.
+ *
+ * @public
+ */
+export type RenderWorld = {
+  /** Caller-world up axis. @default '+y' */
+  readonly up?: RenderWorldAxis;
+  /** Caller-world forward axis. @default '+z' */
+  readonly forward?: RenderWorldAxis;
+  /** Length unit of caller-world spatial values. @default 'meter' */
+  readonly unit?: 'meter' | 'millimeter';
+};
+
+/** One source glTF primitive instance. @public */
+export type RenderPrimitiveReference = {
+  /** Source node index, which disambiguates shared mesh instances. */
+  readonly nodeIndex: number;
+  /** Source mesh index referenced by the node. */
+  readonly meshIndex: number;
+  /** Source primitive index within the mesh. */
+  readonly primitiveIndex: number;
+};
+
+/** One world-space retained-half-space plane. @public */
+export type RenderSectionPlane = {
+  /** A point on the plane in caller-world coordinates. */
+  readonly point: RenderVector3;
+  /** Non-zero normal pointing into the retained half-space. */
+  readonly normal: RenderVector3;
+};
+
+/** One or more section planes and the geometry classes they clip. @public */
+export type RenderSections = {
+  /** One to {@link renderImageMaxSections} simultaneous retained half-spaces. */
+  readonly planes: readonly [RenderSectionPlane, ...RenderSectionPlane[]];
+  /** Clip triangle surfaces and draw their caps. @default true */
+  readonly clipSurfaces?: boolean;
+  /** Clip authored line primitives. @default true */
+  readonly clipLines?: boolean;
+};
 
 type RenderPerspectiveProjection = {
   /** Rectilinear perspective projection. */
@@ -81,7 +129,7 @@ type RenderFixedProjection =
   | {
       /** Orthographic projection with an explicit visible vertical span. */
       readonly kind: 'orthographic';
-      /** Visible vertical span in glTF world units before `zoom` is applied. */
+      /** Visible vertical span in caller-world units before `zoom` is applied. */
       readonly verticalSpan: number;
       /** Unitless magnification, from 0.01 to 100. @default 1 */
       readonly zoom?: number;
@@ -112,15 +160,15 @@ export type RenderCamera =
   | {
       /** Preserve an explicit camera pose and projection. */
       readonly framing: 'fixed';
-      /** Camera position in glTF world coordinates. */
+      /** Camera position in caller-world coordinates. */
       readonly position: RenderVector3;
-      /** Point the camera looks at in glTF world coordinates. */
+      /** Point the camera looks at in caller-world coordinates. */
       readonly target: RenderVector3;
       /** Camera screen-up direction. Magnitude is ignored. */
       readonly up: RenderVector3;
       /** Perspective or orthographic projection. @default perspective with a 45° vertical field of view and zoom 1 */
       readonly projection?: RenderFixedProjection;
-      /** Explicit positive clip distances. Omit to derive safe planes from referenced subject geometry. */
+      /** Explicit positive clip distances in caller-world units. Unused range outside referenced subject geometry is tightened to preserve depth precision. */
       readonly clipping?: {
         readonly near: number;
         readonly far: number;
@@ -147,8 +195,24 @@ type RenderImageSharedOptions = {
    * @default 0.92 (jpeg), 1 (webp)
    */
   readonly quality?: number;
+  /** Caller coordinate system for spatial request values and presentation. @default glTF world */
+  readonly world?: RenderWorld;
   /** Edge line width in output pixels, from 0.25 to 16. @default 3 */
   readonly lineWidth?: number;
+  /** Draw triangle primitives. @default true */
+  readonly surfaces?: boolean;
+  /** Draw authored line primitives. @default true */
+  readonly lines?: boolean;
+  /**
+   * Exact source primitive instances to render. Omit for all; an empty array renders none.
+   * @default all
+   */
+  readonly visiblePrimitives?: readonly RenderPrimitiveReference[];
+  /**
+   * World-space section planes. Omit to disable sections.
+   * @default disabled
+   */
+  readonly sections?: RenderSections;
   /** Transparent by default; otherwise `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. @default transparent */
   readonly background?: readonly [number, number, number, number] | string;
   /** Draw the bottom-right camera-aware XYZ indicator and front-on depth marker. @default false */
@@ -219,8 +283,8 @@ export type RenderImageView<Id extends string = string> = {
 export type RenderImagesOptions<Views extends readonly RenderImageView[] = readonly RenderImageView[]> =
   RenderImageSharedOptions & {
     /**
-     * Attach stage timings (parse, setup, per-view render/overlay/encode) to
-     * the result as a `timings` property. Rendering is unchanged.
+     * Attach stage timings and resource counters to the result as a `timings`
+     * property. Rendering is unchanged.
      *
      * @default false
      */
@@ -295,16 +359,33 @@ export type RenderViewTimings = {
 
 /**
  * Stage timings for one timed plan call. The fields map onto the render
- * pipeline's stages: parse, setup (device acquisition and geometry upload),
- * then per-view rasterise, annotation overlay, and encode.
+ * pipeline's stages and reports the resources acquired by this call.
  *
  * @public
  */
 export type RenderTimings = {
   /** Milliseconds. GLB parse, validation, and world-bounds computation. */
   readonly parse: number;
-  /** Milliseconds. Renderer acquisition plus scene upload for this call. */
+  /** Milliseconds. Renderer acquisition plus all presentation and upload work. */
   readonly setup: number;
+  /** Milliseconds. Visibility resolution, section-cap construction, and cap upload. */
+  readonly capBuild: number;
+  /** Milliseconds. Source triangle and authored-line upload. */
+  readonly upload: number;
+  /** Largest readback allocation required by one view, in bytes. */
+  readonly peakReadbackBytes: number;
+  /** GLB parses performed by this call. */
+  readonly glbParses: number;
+  /** Adapter/device acquisitions performed by this call. */
+  readonly adapterDeviceRequests: number;
+  /** Pipeline sets created by this call. */
+  readonly pipelineSets: number;
+  /** Shared presentation plans built by this call. */
+  readonly presentationBuilds: number;
+  /** Source scenes uploaded by this call. */
+  readonly sceneUploads: number;
+  /** Render targets allocated by this call. */
+  readonly targetAllocations: number;
   /** Per-view render/overlay/encode timings in plan order. */
   readonly views: readonly RenderViewTimings[];
 };
@@ -314,6 +395,27 @@ type NoExtraKeys<Value, Shape> = Value & Record<Exclude<keyof Value, keyof Shape
 type StrictLighting<Lighting> = Lighting extends RenderLightingRig
   ? NoExtraKeys<Lighting, RenderLightingRig>
   : Lighting;
+
+type StrictWorld<World> = World extends RenderWorld ? NoExtraKeys<World, RenderWorld> : World;
+
+type StrictSectionPlane<Plane> = Plane extends RenderSectionPlane
+  ? NoExtraKeys<Plane, RenderSectionPlane>
+  : never;
+
+type StrictSectionPlanes<Planes extends readonly RenderSectionPlane[]> = number extends Planes['length']
+  ? readonly StrictSectionPlane<Planes[number]>[]
+  : Planes extends readonly [
+        infer First extends RenderSectionPlane,
+        ...infer Rest extends readonly RenderSectionPlane[],
+      ]
+    ? readonly [StrictSectionPlane<First>, ...StrictSectionPlanes<Rest>]
+    : readonly [];
+
+type StrictSections<Sections> = Sections extends RenderSections
+  ? NoExtraKeys<Sections, RenderSections> & {
+      readonly planes: StrictSectionPlanes<Sections['planes']>;
+    }
+  : Sections;
 
 type StrictProjection<Projection> = Projection extends { readonly kind: 'perspective' }
   ? NoExtraKeys<Projection, RenderPerspectiveProjection>
@@ -363,6 +465,8 @@ export type StrictRenderImagesOptions<Options extends RenderImagesOptions> = NoE
 > & {
   readonly views: StrictViews<Options['views']>;
   readonly lighting?: StrictLighting<Options['lighting']>;
+  readonly sections?: StrictSections<Options['sections']>;
+  readonly world?: StrictWorld<Options['world']>;
 };
 
 const singularKeys = new Set([
@@ -370,8 +474,13 @@ const singularKeys = new Set([
   'width',
   'height',
   'quality',
+  'world',
   'camera',
   'lineWidth',
+  'surfaces',
+  'lines',
+  'visiblePrimitives',
+  'sections',
   'background',
   'label',
   'axes',
@@ -384,7 +493,12 @@ const pluralKeys = new Set([
   'width',
   'height',
   'quality',
+  'world',
   'lineWidth',
+  'surfaces',
+  'lines',
+  'visiblePrimitives',
+  'sections',
   'background',
   'axes',
   'scaleBar',
@@ -413,6 +527,16 @@ const lightingKeys = new Set(['lights', 'ambient', 'environment', 'space', 'expo
 
 const lightKeys = new Set(['direction', 'color']);
 
+const primitiveRefKeys = new Set(['nodeIndex', 'meshIndex', 'primitiveIndex']);
+
+const sectionsKeys = new Set(['planes', 'clipSurfaces', 'clipLines']);
+
+const sectionPlaneKeys = new Set(['point', 'normal']);
+
+const worldKeys = new Set(['up', 'forward', 'unit']);
+
+const worldAxes: readonly RenderWorldAxis[] = ['+x', '-x', '+y', '-y', '+z', '-z'];
+
 /** Inclusive pixel bounds for image width and height. @public */
 export const renderImageDimensionRange = [16, 4096] as const;
 
@@ -430,6 +554,9 @@ export const renderImageZoomRange = [0.01, 100] as const;
 
 /** Inclusive edge line-width bounds in output pixels. @public */
 export const renderImageLineWidthRange = [0.25, 16] as const;
+
+/** Most simultaneous section planes one request may carry. @public */
+export const renderImageMaxSections = 6;
 
 /** Most directional lights one rig may carry. @public */
 export const renderImageMaxLights = 8;
@@ -533,6 +660,52 @@ const assertRange = (
 const assertOptionalEnum = (value: unknown, name: string, allowed: readonly string[]): void => {
   if (value !== undefined && !allowed.some((option) => option === value)) {
     throw new TypeError(`${name} must be ${allowed.join(' or ')}`);
+  }
+};
+
+const worldAxisVector = (axis: RenderWorldAxis): RenderVector3 => {
+  const sign = axis[0] === '+' ? 1 : -1;
+  if (axis.endsWith('x')) {
+    return [sign, 0, 0];
+  }
+  if (axis.endsWith('y')) {
+    return [0, sign, 0];
+  }
+  return [0, 0, sign];
+};
+
+const validateWorld = (world: unknown): void => {
+  if (world === undefined) {
+    return;
+  }
+  if (!isRecord(world)) {
+    throw new TypeError('world must be an object');
+  }
+  assertKnownKeys(world, worldKeys, 'world');
+  const up = (world['up'] ?? '+y') as RenderWorldAxis;
+  const forward = (world['forward'] ?? '+z') as RenderWorldAxis;
+  assertOptionalEnum(up, 'world.up', worldAxes);
+  assertOptionalEnum(forward, 'world.forward', worldAxes);
+  assertOptionalEnum(world['unit'], 'world.unit', ['meter', 'millimeter']);
+  const upName = up.slice(1);
+  const forwardName = forward.slice(1);
+  if (upName === forwardName) {
+    throw new TypeError('world.up and world.forward must name different axes');
+  }
+  const [upX, upY, upZ] = worldAxisVector(up);
+  const [forwardX, forwardY, forwardZ] = worldAxisVector(forward);
+  const remaining: RenderVector3 =
+    upName !== 'x' && forwardName !== 'x'
+      ? [1, 0, 0]
+      : upName !== 'y' && forwardName !== 'y'
+        ? [0, 1, 0]
+        : [0, 0, 1];
+  const handedness =
+    remaining[0] * (upY * forwardZ - upZ * forwardY) +
+    remaining[1] * (upZ * forwardX - upX * forwardZ) +
+    remaining[2] * (upX * forwardY - upY * forwardX);
+  if (handedness !== 1) {
+    throw new TypeError('world.up and world.forward must define a right-handed frame');
   }
 };
 
@@ -719,6 +892,56 @@ const validateLighting = (lighting: unknown): void => {
   assertOptionalEnum(space, 'lighting.space', ['view', 'world']);
 };
 
+const validatePresentation = (options: CameraCommonOptions): void => {
+  assertOptionalBoolean(options.surfaces, 'surfaces');
+  assertOptionalBoolean(options.lines, 'lines');
+  if (options.visiblePrimitives !== undefined) {
+    if (!isUnknownArray(options.visiblePrimitives)) {
+      throw new TypeError('visiblePrimitives must be an array');
+    }
+    const seen = new Set<string>();
+    for (const [index, primitive] of options.visiblePrimitives.entries()) {
+      const name = `visiblePrimitives[${index}]`;
+      if (!isRecord(primitive)) {
+        throw new TypeError(`${name} must be an object`);
+      }
+      assertKnownKeys(primitive, primitiveRefKeys, name);
+      const values = [primitive.nodeIndex, primitive.meshIndex, primitive.primitiveIndex];
+      if (values.some((value) => !Number.isSafeInteger(value) || value < 0)) {
+        throw new TypeError(`${name} indices must be non-negative safe integers`);
+      }
+      const identity = values.join(':');
+      if (seen.has(identity)) {
+        throw new TypeError(`${name} duplicates an earlier primitive reference`);
+      }
+      seen.add(identity);
+    }
+  }
+  if (options.sections === undefined) {
+    return;
+  }
+  const { sections } = options;
+  if (!isRecord(sections)) {
+    throw new TypeError('sections must be an object');
+  }
+  assertKnownKeys(sections, sectionsKeys, 'sections');
+  assertOptionalBoolean(sections['clipSurfaces'], 'sections.clipSurfaces');
+  assertOptionalBoolean(sections['clipLines'], 'sections.clipLines');
+  const planes = sections['planes'];
+  if (!isUnknownArray(planes) || planes.length === 0 || planes.length > renderImageMaxSections) {
+    throw new TypeError(`sections.planes must contain between 1 and ${renderImageMaxSections} planes`);
+  }
+  for (const [index, plane] of planes.entries()) {
+    const name = `sections.planes[${index}]`;
+    if (!isRecord(plane)) {
+      throw new TypeError(`${name} must be an object`);
+    }
+    assertKnownKeys(plane, sectionPlaneKeys, name);
+    cameraVector(plane['point'], `${name}.point`, true);
+    cameraVector(plane['normal'], `${name}.normal`);
+  }
+};
+
 const parseHexColor = (value: string): readonly [number, number, number, number] => {
   if (!renderImageBackgroundPattern.test(value)) {
     throw new TypeError('background must be #RRGGBB or #RRGGBBAA');
@@ -795,11 +1018,13 @@ const validateCameraCommon = (options: CameraCommonOptions, annotated: boolean):
     assertRange(options.lineWidth, 'lineWidth', renderImageLineWidthRange);
   }
   validateCamera(options.camera, 'camera');
+  validateWorld(options.world);
   assertOptionalBoolean(options.axes, 'axes');
   assertOptionalBoolean(options.scaleBar, 'scaleBar');
   validateAnnotatedDimensions(options, annotated);
   validateBackground(options.background);
   validateLighting(options.lighting);
+  validatePresentation(options);
 };
 
 const normalizedBackground = (
@@ -830,8 +1055,13 @@ export const toImageRequestJson = (options: RenderImageOptions): string => {
     width: options.width,
     height: options.height,
     quality: options.quality,
+    world: options.world,
     camera: options.camera,
     lineWidth: options.lineWidth,
+    surfaces: options.surfaces,
+    lines: options.lines,
+    visiblePrimitives: options.visiblePrimitives,
+    sections: options.sections,
     background: normalizedBackground(options.background),
     label: options.label,
     axes: options.axes,
@@ -866,6 +1096,9 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
   for (const [index, view] of views.entries()) {
     if (!isRecord(view)) {
       throw new TypeError(`views[${index}] must be an object`);
+    }
+    if ('world' in view) {
+      throw new TypeError(`views[${index}].world is not allowed; world is shared by every view`);
     }
     assertNoLegacyCameraKeys(view, `views[${index}]`);
     assertKnownKeys(view, viewKeys, `views[${index}]`);
@@ -918,7 +1151,12 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     width: options.width,
     height: options.height,
     quality: options.quality,
+    world: options.world,
     lineWidth: options.lineWidth,
+    surfaces: options.surfaces,
+    lines: options.lines,
+    visiblePrimitives: options.visiblePrimitives,
+    sections: options.sections,
     background: normalizedBackground(options.background),
     axes: options.axes,
     scaleBar: options.scaleBar,

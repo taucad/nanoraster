@@ -85,6 +85,12 @@ export const demoControlCatalogue: Readonly<Record<string, ControlTemplate>> = {
   near: { kind: 'range', min: 0.001, max: 1, step: 0.001 },
   far: { kind: 'range', min: 2, max: 1_000, step: 1 },
   lineWidth: { kind: 'range', min: 0.25, max: 16, step: 0.25 },
+  surfaces: { kind: 'toggle' },
+  lines: { kind: 'toggle' },
+  clipSurfaces: { kind: 'toggle' },
+  clipLines: { kind: 'toggle' },
+  point: { kind: 'vector', min: -20, max: 20, step: 0.1 },
+  normal: { kind: 'vector', min: -1, max: 1, step: 0.1 },
   format: { kind: 'choice', choices: ['png', 'webp', 'jpeg'] },
   quality: { kind: 'range', min: 0, max: 1, step: 0.01 },
   background: {

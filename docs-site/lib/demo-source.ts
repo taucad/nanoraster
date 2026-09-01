@@ -227,6 +227,35 @@ export const createDemoDescriptor = (code: string): DemoDescriptor => {
         });
       }
     }
+    const sections = objectExpression(property(options, 'sections')?.initializer);
+    if (sections !== undefined) {
+      for (const name of ['clipSurfaces', 'clipLines']) {
+        pushBinding(bindings, sections, {
+          key: `sections.${name}`,
+          label: name,
+          name,
+          offset: 0,
+          path: ['sections', name],
+        });
+      }
+      const planeList = property(sections, 'planes')?.initializer;
+      const planes = planeList === undefined ? undefined : unwrap(planeList);
+      if (planes !== undefined && ts.isArrayLiteralExpression(planes)) {
+        for (const [index, item] of planes.elements.entries()) {
+          const plane = objectExpression(item);
+          if (plane === undefined) continue;
+          for (const name of ['point', 'normal']) {
+            pushBinding(bindings, plane, {
+              key: `sections.planes.${index}.${name}`,
+              label: `plane ${index + 1} ${name}`,
+              name,
+              offset: 0,
+              path: ['sections', 'planes', index, name],
+            });
+          }
+        }
+      }
+    }
     const views = property(options, 'views')?.initializer;
     const viewArray = views === undefined ? undefined : unwrap(views);
     if (viewArray !== undefined && ts.isArrayLiteralExpression(viewArray)) {

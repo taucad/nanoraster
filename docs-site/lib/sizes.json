@@ -1,14 +1,14 @@
 {
   "version": "0.4.1",
-  "measuredAt": "2026-08-27T04:48:57.049Z",
+  "measuredAt": "2026-08-27T05:20:49.998Z",
   "wasm": {
-    "raw": 823386,
-    "gzip": 332947,
-    "brotli": 267843
+    "raw": 1253048,
+    "gzip": 473792,
+    "brotli": 366020
   },
   "js": {
-    "raw": 1389,
-    "gzip": 441
+    "raw": 1445,
+    "gzip": 454
   },
   "native": {
     "android-arm-eabi": 3571292,

@@ -5,6 +5,8 @@ export type {
   RenderedImageFile,
   RenderTimings,
   RenderViewTimings,
+  RenderWorld,
+  RenderWorldAxis,
   RenderFailureCode,
   RenderImageOptions,
   RenderImagesOptions,
@@ -12,6 +14,9 @@ export type {
   RenderLight,
   RenderLighting,
   RenderLightingRig,
+  RenderPrimitiveReference,
+  RenderSectionPlane,
+  RenderSections,
   RenderedImage,
   RenderedImages,
 } from 'nanoraster';

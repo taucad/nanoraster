@@ -2,6 +2,7 @@
 //! gltf-rs owns container, accessor, stride, offset, and sparse decoding; this
 //! module only maps supported glTF semantics into the renderer's scene model.
 
+use crate::{PrimitiveRef, RenderOptions};
 use glam::{Mat4, Vec3};
 use gltf::accessor::{DataType, Dimensions};
 use gltf::mesh::{Mode, Semantic};
@@ -19,6 +20,7 @@ pub(crate) struct Material {
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Primitive {
+    pub(crate) source_index: usize,
     /// 4 = TRIANGLES, 1 = LINES.
     pub(crate) mode: u32,
     pub(crate) positions: Vec<f32>,
@@ -30,11 +32,13 @@ pub(crate) struct Primitive {
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct MeshAsset {
+    pub(crate) source_index: usize,
     pub(crate) primitives: Vec<Primitive>,
 }
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct MeshInstance {
+    pub(crate) source_node_index: usize,
     pub(crate) mesh_index: usize,
     pub(crate) model: Mat4,
     pub(crate) normal_matrix: Mat4,
@@ -49,14 +53,19 @@ pub(crate) struct Scene {
 }
 
 impl Scene {
-    /// Visit every world-space position referenced by a draw index.
-    pub(crate) fn for_each_position(
+    fn visit_positions(
         &self,
+        options: Option<&RenderOptions>,
         visit: &mut dyn FnMut(Vec3),
     ) -> Result<bool, String> {
         let mut any = false;
         for instance in &self.instances {
             for primitive in &self.meshes[instance.mesh_index].primitives {
+                if options.is_some_and(|options| {
+                    !self.primitive_is_eligible(instance, primitive, options)
+                }) {
+                    continue;
+                }
                 for &index in &primitive.indices {
                     let offset = index as usize * 3;
                     let local = Vec3::from_slice(&primitive.positions[offset..offset + 3]);
@@ -70,6 +79,84 @@ impl Scene {
             }
         }
         Ok(any)
+    }
+
+    /// Visit every world-space position referenced by an eligible draw index.
+    pub(crate) fn for_each_position(
+        &self,
+        options: &RenderOptions,
+        visit: &mut dyn FnMut(Vec3),
+    ) -> Result<bool, String> {
+        self.visit_positions(Some(options), visit)
+    }
+
+    fn for_each_draw_position(&self, visit: &mut dyn FnMut(Vec3)) -> Result<bool, String> {
+        self.visit_positions(None, visit)
+    }
+
+    pub(crate) fn primitive_ref(
+        &self,
+        instance: &MeshInstance,
+        primitive: &Primitive,
+    ) -> PrimitiveRef {
+        PrimitiveRef {
+            node_index: instance.source_node_index,
+            mesh_index: self.meshes[instance.mesh_index].source_index,
+            primitive_index: primitive.source_index,
+        }
+    }
+
+    pub(crate) fn primitive_is_eligible(
+        &self,
+        instance: &MeshInstance,
+        primitive: &Primitive,
+        options: &RenderOptions,
+    ) -> bool {
+        let class_visible = if primitive.mode == MODE_TRIANGLES {
+            options.surfaces
+        } else {
+            options.lines
+        };
+        class_visible
+            && options
+                .visible_primitives
+                .as_ref()
+                .is_none_or(|visible| visible.contains(&self.primitive_ref(instance, primitive)))
+    }
+
+    pub(crate) fn validate_primitive_refs(&self, options: &RenderOptions) -> Result<(), String> {
+        let Some(visible) = &options.visible_primitives else {
+            return Ok(());
+        };
+        for (index, requested) in visible.iter().enumerate() {
+            let found = self.instances.iter().any(|instance| {
+                instance.source_node_index == requested.node_index
+                    && self.meshes[instance.mesh_index].source_index == requested.mesh_index
+                    && self.meshes[instance.mesh_index]
+                        .primitives
+                        .iter()
+                        .any(|primitive| primitive.source_index == requested.primitive_index)
+            });
+            if !found {
+                return Err(format!(
+                    "visiblePrimitives[{index}] does not match a reachable source node/mesh/primitive"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn presented_bounds(&self, options: &RenderOptions) -> Option<([f32; 3], [f32; 3])> {
+        let mut bounds: Option<(Vec3, Vec3)> = None;
+        self.for_each_position(options, &mut |position| match &mut bounds {
+            Some((min, max)) => {
+                *min = min.min(position);
+                *max = max.max(position);
+            }
+            None => bounds = Some((position, position)),
+        })
+        .expect("parsed draw positions remain finite");
+        bounds.map(|(min, max)| (min.to_array(), max.to_array()))
     }
 }
 
@@ -125,6 +212,7 @@ fn validate_material(material: &gltf::Material<'_>) -> Result<Material, String> 
 }
 
 fn decode_mesh(mesh: gltf::Mesh<'_>, bin: &[u8]) -> Result<MeshAsset, String> {
+    let source_index = mesh.index();
     let mut primitives = Vec::new();
     for primitive in mesh.primitives() {
         let mode = match primitive.mode() {
@@ -201,6 +289,7 @@ fn decode_mesh(mesh: gltf::Mesh<'_>, bin: &[u8]) -> Result<MeshAsset, String> {
             return Err("index out of range".into());
         }
         primitives.push(Primitive {
+            source_index: primitive.index(),
             mode,
             positions,
             normals,
@@ -208,7 +297,10 @@ fn decode_mesh(mesh: gltf::Mesh<'_>, bin: &[u8]) -> Result<MeshAsset, String> {
             material: validate_material(&primitive.material())?,
         });
     }
-    Ok(MeshAsset { primitives })
+    Ok(MeshAsset {
+        source_index,
+        primitives,
+    })
 }
 
 fn validate_transform(model: Mat4) -> Result<Mat4, String> {
@@ -284,6 +376,7 @@ pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
                 }
             };
             instances.push(MeshInstance {
+                source_node_index: node.index(),
                 mesh_index,
                 model,
                 normal_matrix,
@@ -301,7 +394,7 @@ pub(crate) fn parse_glb(bytes: &[u8]) -> Result<Scene, String> {
         bounds: None,
     };
     let mut bounds: Option<(Vec3, Vec3)> = None;
-    scene.for_each_position(&mut |position| match &mut bounds {
+    scene.for_each_draw_position(&mut |position| match &mut bounds {
         Some((min, max)) => {
             *min = min.min(position);
             *max = max.max(position);
@@ -563,7 +656,12 @@ mod tests {
 
         assert_eq!(scene.meshes.len(), 1);
         assert_eq!(scene.instances.len(), 2);
+        assert_eq!(scene.meshes[0].source_index, 0);
+        assert_eq!(scene.instances[0].source_node_index, 1);
+        assert_eq!(scene.instances[1].source_node_index, 2);
         assert_eq!(scene.meshes[0].primitives.len(), 2);
+        assert_eq!(scene.meshes[0].primitives[0].source_index, 0);
+        assert_eq!(scene.meshes[0].primitives[1].source_index, 1);
         assert_eq!(scene.meshes[0].primitives[0].mode, MODE_TRIANGLES);
         assert_eq!(scene.meshes[0].primitives[1].mode, MODE_LINES);
         assert_eq!(
@@ -586,7 +684,7 @@ mod tests {
         let mut visited = Vec::new();
         assert!(
             scene
-                .for_each_position(&mut |position| visited.push(position))
+                .for_each_draw_position(&mut |position| visited.push(position))
                 .expect("positions")
         );
         assert_eq!(visited.len(), expected_count);
@@ -602,6 +700,73 @@ mod tests {
             .reduce(Vec3::max)
             .expect("positions");
         assert_eq!(Some((min.to_array(), max.to_array())), scene.bounds);
+
+        let surfaces_only = RenderOptions {
+            lines: false,
+            ..RenderOptions::default()
+        };
+        let mut surface_positions = Vec::new();
+        scene
+            .for_each_position(&surfaces_only, &mut |position| {
+                surface_positions.push(position)
+            })
+            .expect("surface positions");
+        assert_eq!(
+            surface_positions.len(),
+            scene.instances.len() * scene.meshes[0].primitives[0].indices.len()
+        );
+
+        let lines_only = RenderOptions {
+            surfaces: false,
+            ..RenderOptions::default()
+        };
+        let mut line_positions = Vec::new();
+        scene
+            .for_each_position(&lines_only, &mut |position| line_positions.push(position))
+            .expect("line positions");
+        assert_eq!(
+            line_positions.len(),
+            scene.instances.len() * scene.meshes[0].primitives[1].indices.len()
+        );
+
+        let first_instance = RenderOptions {
+            visible_primitives: Some(vec![PrimitiveRef {
+                node_index: 1,
+                mesh_index: 0,
+                primitive_index: 0,
+            }]),
+            ..RenderOptions::default()
+        };
+        assert_eq!(
+            scene.presented_bounds(&first_instance),
+            Some(([-4.5, -0.25, 0.0], [-1.5, 2.15, 0.0]))
+        );
+        assert!(scene.validate_primitive_refs(&first_instance).is_ok());
+        let mut selected_positions = Vec::new();
+        scene
+            .for_each_position(&first_instance, &mut |position| {
+                selected_positions.push(position)
+            })
+            .expect("selected positions");
+        assert_eq!(
+            selected_positions.len(),
+            scene.meshes[0].primitives[0].indices.len()
+        );
+
+        let wrong_instance = RenderOptions {
+            visible_primitives: Some(vec![PrimitiveRef {
+                node_index: 0,
+                mesh_index: 0,
+                primitive_index: 0,
+            }]),
+            ..RenderOptions::default()
+        };
+        assert_eq!(
+            scene.validate_primitive_refs(&wrong_instance),
+            Err(
+                "visiblePrimitives[0] does not match a reachable source node/mesh/primitive".into()
+            )
+        );
     }
 
     #[test]
@@ -870,7 +1035,9 @@ mod tests {
 
         let scene = Scene {
             meshes: vec![MeshAsset {
+                source_index: 0,
                 primitives: vec![Primitive {
+                    source_index: 0,
                     mode: MODE_TRIANGLES,
                     positions: vec![2.0, 0.0, 0.0],
                     normals: vec![1.0, 0.0, 0.0],
@@ -883,13 +1050,14 @@ mod tests {
                 }],
             }],
             instances: vec![MeshInstance {
+                source_node_index: 0,
                 mesh_index: 0,
                 model: Mat4::from_scale(Vec3::splat(f32::MAX)),
                 normal_matrix: Mat4::IDENTITY,
             }],
             bounds: None,
         };
-        assert!(scene.for_each_position(&mut drop).is_err());
+        assert!(scene.for_each_draw_position(&mut drop).is_err());
 
         assert!(std::panic::catch_unwind(|| fixture(Layout::Packed, 0, true)).is_err());
     }

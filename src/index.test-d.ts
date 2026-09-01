@@ -30,6 +30,7 @@ expectTypeOf<keyof RenderModule>().toEqualTypeOf<
   | 'renderImageLightColorRange'
   | 'renderImageMarginRange'
   | 'renderImageMaxLights'
+  | 'renderImageMaxSections'
   | 'renderImageQualityRange'
   | 'renderImageVerticalFieldOfViewRange'
   | 'renderImageViewIdPattern'
@@ -41,8 +42,36 @@ const glb = new Uint8Array([1, 2, 3]);
 
 const vector: renderModule.RenderVector3 = [1, 2, 3];
 expectTypeOf(vector).toEqualTypeOf<readonly [number, number, number]>();
+const world = {
+  up: '+z',
+  forward: '-y',
+  unit: 'millimeter',
+} as const satisfies renderModule.RenderWorld;
+expectTypeOf(world.up).toEqualTypeOf<'+z'>();
+expectTypeOf<renderModule.RenderWorldAxis>().toEqualTypeOf<'+x' | '-x' | '+y' | '-y' | '+z' | '-z'>();
+void renderImage(glb, { format: 'png', world });
 // @ts-expect-error the unreleased camera-specific tuple name was consolidated
 expectTypeOf<renderModule.CameraVector>();
+
+const primitive: renderModule.RenderPrimitiveReference = {
+  nodeIndex: 2,
+  meshIndex: 1,
+  primitiveIndex: 0,
+};
+const sections = {
+  planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }],
+  clipSurfaces: true,
+} as const satisfies renderModule.RenderSections;
+const adapterSections: renderModule.RenderSections = sections;
+void renderImage(glb, {
+  format: 'png',
+  surfaces: true,
+  lines: false,
+  visiblePrimitives: [primitive],
+  sections,
+});
+void renderImage(glb, { format: 'png', sections: adapterSections });
+expectTypeOf(renderModule.renderImageMaxSections).toEqualTypeOf<number>();
 
 const singular = {
   format: 'webp',
@@ -163,6 +192,21 @@ void renderImages(glb, {
     },
   ],
 });
+void renderImages(glb, {
+  format: 'png',
+  world,
+  views: [{ id: 'front' }],
+});
+void renderImages(glb, {
+  format: 'png',
+  views: [
+    {
+      id: 'front',
+      // @ts-expect-error world is shared, not per view
+      world,
+    },
+  ],
+});
 // A label's presence is its own switch: it stands alone, and a batch labels
 // whichever views it chooses to.
 void ({ format: 'png', label: 'Isometric' } as const satisfies ImageOptions);
@@ -199,6 +243,16 @@ void renderImages(glb, {
       id: 'front',
       // @ts-expect-error scaleBar is shared, not per view
       scaleBar: true,
+    },
+  ],
+});
+void renderImages(glb, {
+  format: 'png',
+  views: [
+    {
+      id: 'front',
+      // @ts-expect-error presentation state is shared across a batch
+      surfaces: false,
     },
   ],
 });

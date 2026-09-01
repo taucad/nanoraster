@@ -90,7 +90,9 @@ pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
     let axis = std::f32::consts::FRAC_1_SQRT_2 * extent;
     let scene = crate::glb::Scene {
         meshes: vec![crate::glb::MeshAsset {
+            source_index: 0,
             primitives: vec![crate::glb::Primitive {
+                source_index: 0,
                 mode: crate::glb::MODE_LINES,
                 positions: vec![-axis, 0.0, axis, axis, 0.0, -axis],
                 normals: Vec::new(),
@@ -103,6 +105,7 @@ pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
             }],
         }],
         instances: vec![crate::glb::MeshInstance {
+            source_node_index: 0,
             mesh_index: 0,
             model: glam::Mat4::IDENTITY,
             normal_matrix: glam::Mat4::IDENTITY,
