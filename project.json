@@ -94,7 +94,7 @@
     },
     "lint": {
       "executor": "nx:run-commands",
-      "dependsOn": ["build:napi"],
+      "dependsOn": ["build"],
       "options": {
         "command": "pnpm run lint"
       }
