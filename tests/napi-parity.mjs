@@ -65,6 +65,7 @@ console.log('low-power adapter:', lowPower === null ? null : JSON.parse(lowPower
 const glb = readFileSync(join(here, 'fixtures', 'gear-12.glb'));
 const cubeGlb = readFileSync(join(here, 'fixtures', 'cube.glb'));
 const interleavedGlb = readFileSync(join(here, 'fixtures', 'interleaved-instanced-lines.glb'));
+const racingDroneGlb = readFileSync(join(here, 'fixtures', 'racing-drone-section-repro.glb'));
 const started = Date.now();
 const png = await native.renderImage(glb, JSON.stringify({ width: 768, height: 432, format: 'png' }));
 console.log(`rendered in ${Date.now() - started}ms, ${png.length} bytes`);
@@ -236,6 +237,33 @@ const sectionBatch = (
 ).images;
 if (sectionBatch.length !== 1 || !sectionBatch[0].equals(section)) {
   throw new Error('shared batch presentation differs from singular bytes');
+}
+
+const racingDroneCommon = {
+  width: 192,
+  height: 192,
+  format: 'raw',
+  world: { up: '+z', forward: '-y', unit: 'meter' },
+};
+const racingDronePlanes = [
+  { point: [0, 0, 0], normal: [1, 0, 0] },
+  { point: [0, 0, 0], normal: [0, 1, 0] },
+  { point: [0, 0, 0], normal: [0, 0, 1] },
+];
+const racingDroneOrdinary = await native.renderImage(racingDroneGlb, JSON.stringify(racingDroneCommon));
+for (let count = 1; count <= racingDronePlanes.length; count += 1) {
+  const options = JSON.stringify({
+    ...racingDroneCommon,
+    sections: { planes: racingDronePlanes.slice(0, count) },
+  });
+  const first = await native.renderImage(racingDroneGlb, options);
+  const second = await native.renderImage(racingDroneGlb, options);
+  if (!first.equals(second)) {
+    throw new Error(`Racing Drone ${count}-plane section is not deterministic`);
+  }
+  if (count === 1 && first.equals(racingDroneOrdinary)) {
+    throw new Error('Racing Drone section did not change the frame');
+  }
 }
 
 // The taxonomy contract: jpeg on a transparent background must refuse.

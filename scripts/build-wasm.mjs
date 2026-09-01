@@ -25,7 +25,13 @@ execFileSync(
     '--out-dir',
     `../../${output}`,
     '--no-opt',
-    ...(bench ? ['--', '--features', 'bench'] : []),
+    '--',
+    // Keep native and codec dependencies at O3. Browser render-core is setup
+    // around WebGPU and O3 dependencies; size-optimising only that package
+    // keeps optional presentation control flow inside the WASM ratchet.
+    '--config',
+    'profile.release.package.render-core.opt-level="z"',
+    ...(bench ? ['--features', 'bench'] : []),
   ],
   {
     cwd: root,

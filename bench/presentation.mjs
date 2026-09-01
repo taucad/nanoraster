@@ -42,7 +42,6 @@ const repeatRootNodes = (glb, copies) => {
 const planetary = fixture('planetary');
 const fixtures = {
   cube: fixture('cube'),
-  gear: fixture('gear-12'),
   planetary,
   'heavy-instanced-planetary': repeatRootNodes(planetary, 4),
 };

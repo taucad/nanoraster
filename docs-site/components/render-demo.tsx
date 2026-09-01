@@ -15,7 +15,7 @@ import {
 } from '@/lib/demo-options';
 import { buildDemoRequest } from '@/lib/demo-request';
 import { hexToLinear, linearToHex, patchMaterialFactors } from '@/lib/glb-material';
-import { hasWebGpu, loadDemoModel, loadWasmRenderer } from '@/lib/wasm-renderer';
+import { demoModelUrl, hasWebGpu, loadDemoModel, loadWasmRenderer } from '@/lib/wasm-renderer';
 
 import styles from './render-demo.module.css';
 
@@ -66,12 +66,14 @@ export const RenderDemo = ({
   descriptor,
   descriptorJson,
   lang = 'typescript',
+  model = demoModelUrl,
 }: {
   readonly code: string;
   readonly codeBelowControls?: boolean;
   readonly descriptor?: DemoDescriptor;
   readonly descriptorJson?: string;
   readonly lang?: string;
+  readonly model?: string;
   /** The MDX fence stays a child for the projection; the block below renders instead. */
   readonly children?: React.ReactNode;
 }): React.JSX.Element => {
@@ -120,7 +122,7 @@ export const RenderDemo = ({
       const render = async (values: Record<string, DemoValue>): Promise<void> => {
         setState('rendering');
         try {
-          const [renderer, source] = await Promise.all([loadWasmRenderer(), loadDemoModel()]);
+          const [renderer, source] = await Promise.all([loadWasmRenderer(), loadDemoModel(model)]);
 
           const { material, request } = buildDemoRequest(parsedDescriptor, values, RENDER_SIZE);
           const glb = Object.keys(material).length > 0 ? patchMaterialFactors(source, material) : source;
@@ -183,7 +185,7 @@ export const RenderDemo = ({
         inFlightRef.current = false;
       }
     },
-    [batch, parsedDescriptor, raw, views],
+    [batch, model, parsedDescriptor, raw, views],
   );
 
   // The canvas only exists once there is a frame to paint, so the paint waits

@@ -12,7 +12,7 @@ struct Light {
 struct Frame {
     view_projection: mat4x4<f32>,
     view: mat4x4<f32>,
-    // xy = viewport size in px, z = edge line width in px, w unused.
+    // xy = viewport size in px, z = edge line width in px, w = cap stripe spacing.
     viewport: vec4<f32>,
     lights: array<Light, 8>,
     light_count: u32,
@@ -221,9 +221,9 @@ fn fs_cap(in: CapOut) -> @location(0) vec4<f32> {
         }
     }
     let coordinate = dot(in.plane_uv, in.style.xy);
-    let phase = fract(coordinate / in.style.z);
-    let distance = min(phase, 1.0 - phase) * in.style.z;
-    let half_width = in.style.w * 0.5;
+    let phase = fract(coordinate / frame.viewport.w);
+    let distance = min(phase, 1.0 - phase) * frame.viewport.w;
+    let half_width = frame.viewport.w * 0.1;
     let antialias = max(fwidth(distance), 0.000001);
     let stripe = 1.0 - smoothstep(half_width - antialias, half_width + antialias, distance);
     return mix(in.base_color, in.stripe_color, stripe);

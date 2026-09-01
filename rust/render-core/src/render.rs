@@ -12,8 +12,8 @@
 use crate::encode::{ImageFormat, encode};
 use crate::glb::{self, MODE_TRIANGLES, Material};
 use crate::{
-    CameraProjection, LightingSpace, MAX_LIGHTS, RenderCamera, RenderError, RenderOptions,
-    with_view_result,
+    CameraProjection, LightingSpace, MAX_LIGHTS, Projection, RenderCamera, RenderError,
+    RenderOptions, with_view_result,
 };
 use glam::{Mat4, Vec3};
 use std::fmt::Display;
@@ -624,27 +624,23 @@ const FRAME_TAIL: usize = 100;
 const FRAME_SECTION_PLANES: usize = 104;
 const FRAME_SECTION_TAIL: usize = 128;
 
-fn frame_uniform(
-    view_projection: Mat4,
-    view: Mat4,
-    options: &RenderOptions,
-) -> [f32; FRAME_FLOATS] {
+fn frame_uniform(camera: CameraState, options: &RenderOptions) -> [f32; FRAME_FLOATS] {
     let lighting = &options.lighting;
     let mut data = [0f32; FRAME_FLOATS];
-    data[..16].copy_from_slice(&view_projection.to_cols_array());
-    data[16..32].copy_from_slice(&view.to_cols_array());
+    data[..16].copy_from_slice(&(camera.projection * camera.view).to_cols_array());
+    data[16..32].copy_from_slice(&camera.view.to_cols_array());
     data[32..FRAME_LIGHTS].copy_from_slice(&[
         options.width as f32,
         options.height as f32,
         line_width_px(options),
-        0.0,
+        crate::section::stripe_spacing(camera, camera_projection_kind(&options.camera)),
     ]);
     for (index, light) in lighting.lights.iter().take(MAX_LIGHTS).enumerate() {
         // World-space rigs are rotated into view space here, once per view,
         // so the shader stays view-space and never learns the difference.
         let direction = match lighting.space {
             LightingSpace::View => Vec3::from(light.direction),
-            LightingSpace::World => view.transform_vector3(Vec3::from(light.direction)),
+            LightingSpace::World => camera.view.transform_vector3(Vec3::from(light.direction)),
         }
         .normalize_or_zero();
         let base = FRAME_LIGHTS + index * FRAME_LIGHT_STRIDE;
@@ -668,6 +664,14 @@ fn frame_uniform(
         data[FRAME_SECTION_TAIL + 2] = f32::from_bits(u32::from(sections.clip_lines));
     }
     data
+}
+
+fn camera_projection_kind(camera: &RenderCamera) -> Projection {
+    match camera {
+        RenderCamera::Fit { projection, .. } | RenderCamera::Fixed { projection, .. } => {
+            projection.kind()
+        }
+    }
 }
 
 fn line_width_px(options: &RenderOptions) -> f32 {
@@ -1423,8 +1427,7 @@ impl Renderer {
         let slot = state.slot;
 
         let camera = entry.prepared.camera;
-        let mvp = camera.projection * camera.view;
-        let frame_data = frame_uniform(mvp, camera.view, options);
+        let frame_data = frame_uniform(camera, options);
         state
             .queue
             .write_buffer(&state.frame_buffer, 0, bytemuck::cast_slice(&frame_data));
@@ -2092,7 +2095,13 @@ mod tests {
             }),
             ..RenderOptions::default()
         };
-        let data = frame_uniform(Mat4::IDENTITY, view, &options);
+        let camera = CameraState {
+            projection: Mat4::IDENTITY,
+            view,
+            forward: Vec3::NEG_Z,
+            target_depth: 1.0,
+        };
+        let data = frame_uniform(camera, &options);
         assert_close(
             Vec3::from_slice(&data[FRAME_LIGHTS..FRAME_LIGHTS + 3]),
             Vec3::NEG_Z,
@@ -2109,10 +2118,11 @@ mod tests {
         assert_eq!(data[FRAME_SECTION_TAIL].to_bits(), 1);
         assert_eq!(data[FRAME_SECTION_TAIL + 1].to_bits(), 1);
         assert_eq!(data[FRAME_SECTION_TAIL + 2].to_bits(), 0);
+        assert!((data[35] - 0.05).abs() < 1.0e-6);
         // Unwritten slots stay zero, and the studio rig fills exactly three.
         assert_eq!(data[FRAME_LIGHTS + FRAME_LIGHT_STRIDE], 0.0);
 
-        let studio = frame_uniform(Mat4::IDENTITY, view, &RenderOptions::default());
+        let studio = frame_uniform(camera, &RenderOptions::default());
         assert_eq!(studio[FRAME_TAIL].to_bits(), 3);
         assert_eq!(studio[FRAME_TAIL + 3].to_bits(), 1);
         // View space ignores the view matrix; the direction is only normalised.
