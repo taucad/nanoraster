@@ -90,7 +90,29 @@ const sizes = {
 // keying the surface polygon offset on line geometry actually drawing (model
 // edges enabled, or a section boundary) instead of on `options.lines` alone,
 // so identical renders of line-free models stay byte-identical.
-const ceilings = { raw: 1_207_843, gzip9: 481_817, brotli11: 377_128 };
+// Speed-first wasm build (Q1): 1,514,440 / 569,303 / 431,218 — +306,597 raw
+// (+25.4%), +87,486 gzip-9 (+18.2%), +54,090 brotli-11 (+14.3%). This entry
+// moves the ratchet the wrong way on purpose. `130ce4e` had added
+// `--config profile.release.package.render-core.opt-level="z"` to
+// `scripts/build-wasm.mjs` on the premise that only optional presentation
+// control flow would shrink; the premise was false. Codec generics
+// monomorphise into `render-core`, per-crate opt-level overrides do not fully
+// apply under fat LTO, and the flag cost 2.4x on lossless-WebP encode and
+// about 6.4 ms on the hero render for output that stayed byte-identical —
+// which is why every correctness gate here passed it. `rust/Cargo.toml:10-12`
+// had already recorded the same measurement for the profile as a whole. The
+// flag is gone; these are the O3 bytes, and `scripts/check-wasm-speed.mjs`
+// now gates the encode cost this ratchet cannot see.
+// Of the increase, 805 raw / 354 brotli-11 is not the opt level: it is the
+// section-plane array growing six to eight vec4s (Q6) and the default fit
+// direction resolving from a world-relative orbit (D4). An O3 build of the
+// tree before those two measured 1,513,635 raw / 430,864 brotli-11.
+// Coverage-gate restructures: 1,515,486 / 569,364 / 431,345 — +1,046 raw,
+// +61 gzip-9, +127 brotli-11 for making the fail-closed ceilings and ray
+// guards in `section.rs`/`glb.rs` reachable by tests (merged work-ceiling
+// accumulator, extracted `ray_crosses_triangle`, explicit accessor-total
+// bound) with behaviour pinned verbatim by the new tests.
+const ceilings = { raw: 1_515_486, gzip9: 569_364, brotli11: 431_345 };
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {
