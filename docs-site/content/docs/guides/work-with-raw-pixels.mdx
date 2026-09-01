@@ -55,7 +55,7 @@ two buffers when you want a diff image.
 ### 3. Render a turntable as one plan
 
 ```typescript
-import { renderDirectionFromOrbit, renderImages } from 'nanoraster';
+import { directionFromOrbit, renderImages } from 'nanoraster';
 
 const frames = await renderImages(glb, {
   format: 'raw',
@@ -65,7 +65,7 @@ const frames = await renderImages(glb, {
     id: `f${step}`,
     camera: {
       framing: 'fit',
-      direction: renderDirectionFromOrbit({ azimuth: step * 10, elevation: 25 }),
+      direction: directionFromOrbit({ azimuth: step * 10, elevation: 25 }),
     },
   })),
 });
@@ -74,7 +74,7 @@ for (const { file } of frames) encoder.stdin.write(file.bytes);
 ```
 
 The turn is around the caller world's up axis, so pass that world as
-[`renderDirectionFromOrbit`](../api#renderdirectionfromorbit)'s second argument
+[`directionFromOrbit`](../api#renderdirectionfromorbit)'s second argument
 whenever the request declares one. One
 [`renderImages`](../api#renderimages) call uploads the GLB once and
 pipelines the views, which a loop of single renders cannot. Pipe the frames, in
@@ -95,13 +95,13 @@ as [Reuse the renderer](reuse-the-renderer) shows.
 <RenderDemo>
 
 ```typescript
-import { renderDirectionFromOrbit, renderImage } from 'nanoraster';
+import { directionFromOrbit, renderImage } from 'nanoraster';
 
 const { bytes, width, height } = await renderImage(glb, {
   format: 'raw',
   camera: {
     framing: 'fit',
-    direction: renderDirectionFromOrbit({ azimuth: 47, elevation: 28 }),
+    direction: directionFromOrbit({ azimuth: 47, elevation: 28 }),
     margin: 0.08,
   },
 });

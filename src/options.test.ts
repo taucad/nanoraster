@@ -11,8 +11,8 @@ import type {
 import {
   imageFileName,
   imageViewFileName,
-  renderDirectionFromOrbit,
-  renderOrbitFromDirection,
+  directionFromOrbit,
+  orbitFromDirection,
   toImageRequestJson,
   toImagesRequestJson,
 } from '#options.js';
@@ -761,9 +761,9 @@ describe('orbit angle conversion', () => {
         up[2] * forward[0] - up[0] * forward[2],
         up[0] * forward[1] - up[1] * forward[0],
       ];
-      expectVectorClose(renderDirectionFromOrbit({ azimuth: 0, elevation: 0 }, world), forward);
-      expectVectorClose(renderDirectionFromOrbit({ azimuth: 90, elevation: 0 }, world), right);
-      expectVectorClose(renderDirectionFromOrbit({ azimuth: 0, elevation: 90 }, world), up);
+      expectVectorClose(directionFromOrbit({ azimuth: 0, elevation: 0 }, world), forward);
+      expectVectorClose(directionFromOrbit({ azimuth: 90, elevation: 0 }, world), right);
+      expectVectorClose(directionFromOrbit({ azimuth: 0, elevation: 90 }, world), up);
     }
   });
 
@@ -775,7 +775,7 @@ describe('orbit angle conversion', () => {
       for (const azimuth of azimuths) {
         for (const elevation of elevations) {
           const orbit: RenderOrbit = { azimuth, elevation };
-          const returned = renderOrbitFromDirection(renderDirectionFromOrbit(orbit, world), world);
+          const returned = orbitFromDirection(directionFromOrbit(orbit, world), world);
           expect(returned.azimuth).toBeCloseTo(azimuth, 9);
           expect(returned.elevation).toBeCloseTo(elevation, 9);
         }
@@ -784,19 +784,19 @@ describe('orbit angle conversion', () => {
   });
 
   it('should default to the glTF world and reproduce the documented fit direction', () => {
-    const direction = renderDirectionFromOrbit({ azimuth: 45, elevation: 30 });
+    const direction = directionFromOrbit({ azimuth: 45, elevation: 30 });
     expectVectorClose(direction, [0.612_372_435_7, 0.5, 0.612_372_435_7]);
-    expectVectorClose(direction, renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }, { unit: 'meter' }));
-    expect(renderOrbitFromDirection([0, 0, 1])).toEqual({ azimuth: 0, elevation: 0 });
-    expect(renderOrbitFromDirection([1, 0, 0]).azimuth).toBeCloseTo(90, 9);
+    expectVectorClose(direction, directionFromOrbit({ azimuth: 45, elevation: 30 }, { unit: 'meter' }));
+    expect(orbitFromDirection([0, 0, 1])).toEqual({ azimuth: 0, elevation: 0 });
+    expect(orbitFromDirection([1, 0, 0]).azimuth).toBeCloseTo(90, 9);
   });
 
   it('should report azimuth zero at either pole', () => {
     for (const world of legalWorlds) {
       const up = axisVector(world.up);
       const down: RenderVector3 = [-up[0], -up[1], -up[2]];
-      const above = renderOrbitFromDirection(up, world);
-      const below = renderOrbitFromDirection(down, world);
+      const above = orbitFromDirection(up, world);
+      const below = orbitFromDirection(down, world);
       // Exactly zero, not a negative zero left behind by `atan2`.
       expect(above.azimuth).toBe(0);
       expect(below.azimuth).toBe(0);
@@ -807,18 +807,17 @@ describe('orbit angle conversion', () => {
 
   it('should normalize azimuth into the half-open -180 to 180 range', () => {
     // Opposite `world.forward` is the boundary: it reports 180, never -180.
-    expect(renderOrbitFromDirection([0, 0, -1]).azimuth).toBeCloseTo(180, 9);
-    expect(
-      renderOrbitFromDirection(renderDirectionFromOrbit({ azimuth: 405, elevation: 0 })).azimuth,
-    ).toBeCloseTo(45, 9);
-    expect(
-      renderOrbitFromDirection(renderDirectionFromOrbit({ azimuth: -270, elevation: 0 })).azimuth,
-    ).toBeCloseTo(90, 9);
+    expect(orbitFromDirection([0, 0, -1]).azimuth).toBeCloseTo(180, 9);
+    expect(orbitFromDirection(directionFromOrbit({ azimuth: 405, elevation: 0 })).azimuth).toBeCloseTo(45, 9);
+    expect(orbitFromDirection(directionFromOrbit({ azimuth: -270, elevation: 0 })).azimuth).toBeCloseTo(
+      90,
+      9,
+    );
   });
 
   it('should ignore direction magnitude', () => {
-    expect(renderOrbitFromDirection([0, 8, 8]).elevation).toBeCloseTo(45, 9);
-    expect(renderOrbitFromDirection([0, 0.001, 0.001]).elevation).toBeCloseTo(45, 9);
+    expect(orbitFromDirection([0, 8, 8]).elevation).toBeCloseTo(45, 9);
+    expect(orbitFromDirection([0, 0.001, 0.001]).elevation).toBeCloseTo(45, 9);
   });
 
   it('should reject invalid orbits, directions, and worlds at their exact path', () => {
@@ -833,8 +832,8 @@ describe('orbit angle conversion', () => {
       [{ azimuth: 0, elevation: -90.1 }, 'orbit.elevation must be between -90 and 90'],
     ];
     for (const [orbit, message] of invalidOrbits) {
-      expect(() => renderDirectionFromOrbit(orbit as RenderOrbit)).toThrow(TypeError);
-      expect(() => renderDirectionFromOrbit(orbit as RenderOrbit)).toThrow(message);
+      expect(() => directionFromOrbit(orbit as RenderOrbit)).toThrow(TypeError);
+      expect(() => directionFromOrbit(orbit as RenderOrbit)).toThrow(message);
     }
 
     const invalidDirections: readonly (readonly [unknown, string])[] = [
@@ -844,15 +843,13 @@ describe('orbit angle conversion', () => {
       [[0, Number.NaN, 1], 'direction must contain three finite numbers'],
     ];
     for (const [direction, message] of invalidDirections) {
-      expect(() => renderOrbitFromDirection(direction as RenderVector3)).toThrow(message);
+      expect(() => orbitFromDirection(direction as RenderVector3)).toThrow(message);
     }
 
     // Both helpers validate the world by the same rule the request does.
     for (const world of [{ up: '-x' }, { up: '+z', forward: '+z' }, { north: '+z' }] as const) {
-      expect(() => renderDirectionFromOrbit({ azimuth: 0, elevation: 0 }, world as RenderWorld)).toThrow(
-        TypeError,
-      );
-      expect(() => renderOrbitFromDirection([0, 0, 1], world as RenderWorld)).toThrow(TypeError);
+      expect(() => directionFromOrbit({ azimuth: 0, elevation: 0 }, world as RenderWorld)).toThrow(TypeError);
+      expect(() => orbitFromDirection([0, 0, 1], world as RenderWorld)).toThrow(TypeError);
     }
   });
 });

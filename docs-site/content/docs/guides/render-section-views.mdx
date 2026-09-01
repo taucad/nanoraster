@@ -15,7 +15,7 @@ the image.
 <RenderDemo model="/demo/overlapping-cubes.glb">
 
 ```typescript
-import { renderDirectionFromOrbit, renderImage } from 'nanoraster';
+import { directionFromOrbit, renderImage } from 'nanoraster';
 
 const world = { up: '+z', forward: '-y', unit: 'meter' } as const;
 
@@ -24,8 +24,8 @@ const image = await renderImage(glb, {
   world,
   sections: {
     planes: [
-      { point: [0, 0, 0], normal: renderDirectionFromOrbit({ azimuth: -90, elevation: 0 }, world) },
-      { point: [0, 0, 0], normal: renderDirectionFromOrbit({ azimuth: 0, elevation: 90 }, world) },
+      { point: [0, 0, 0], normal: directionFromOrbit({ azimuth: -90, elevation: 0 }, world) },
+      { point: [0, 0, 0], normal: directionFromOrbit({ azimuth: 0, elevation: 90 }, world) },
     ],
     clipSurfaces: true,
     clipLines: true,
@@ -36,7 +36,7 @@ const image = await renderImage(glb, {
 </RenderDemo>
 
 Normals take any finite non-zero magnitude, and
-[`renderDirectionFromOrbit`](../api#renderdirectionfromorbit) names one. Omit
+[`directionFromOrbit`](../api#renderdirectionfromorbit) names one. Omit
 `sections` for no cut. Elevation 90 is caller +Z; nanoraster converts the plane
 once.
 

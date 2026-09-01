@@ -111,7 +111,7 @@ All notable changes to nanoraster are recorded here.
   instead of returning an empty cap.
 - Build browser artifacts with Rust 1.98, wasm-pack 0.15, and exact-pinned
   Binaryen 132.
-- Export `renderDirectionFromOrbit` and `renderOrbitFromDirection` beside the
+- Export `directionFromOrbit` and `orbitFromDirection` beside the
   `RenderOrbit` angle type. The pair converts between a fitted camera's
   Cartesian `direction` and azimuth and elevation in degrees, resolving its
   axes from the world the request declares, and each inverts the other exactly.

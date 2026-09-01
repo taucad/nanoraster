@@ -67,7 +67,7 @@ export type RenderWorldAxis = '+x' | '-x' | '+y' | '-y' | '+z' | '-z';
 /**
  * Caller-world orbit angles in degrees — the polar form of a camera
  * {@link RenderVector3} direction, converted by
- * {@link renderDirectionFromOrbit} and {@link renderOrbitFromDirection}.
+ * {@link directionFromOrbit} and {@link orbitFromDirection}.
  *
  * @public
  */
@@ -789,7 +789,7 @@ const orbitBasis = (
  *
  * `azimuth` 0 sits on `world.forward` and turns positively toward the
  * caller's right; `elevation` lifts out of that plane toward `world.up`.
- * The result is the inverse of {@link renderOrbitFromDirection} under the
+ * The result is the inverse of {@link orbitFromDirection} under the
  * same world.
  *
  * @public
@@ -797,7 +797,7 @@ const orbitBasis = (
  * @param world - Caller coordinate system the angles are read in; omit it for the glTF world
  * @returns The unit direction in caller-world coordinates
  */
-export const renderDirectionFromOrbit = (orbit: RenderOrbit, world?: RenderWorld): RenderVector3 => {
+export const directionFromOrbit = (orbit: RenderOrbit, world?: RenderWorld): RenderVector3 => {
   if (!isRecord(orbit)) {
     throw new TypeError('orbit must be an object');
   }
@@ -830,7 +830,7 @@ export const renderDirectionFromOrbit = (orbit: RenderOrbit, world?: RenderWorld
  * @param world - Caller coordinate system the direction is read in; omit it for the glTF world
  * @returns The azimuth and elevation in degrees
  */
-export const renderOrbitFromDirection = (direction: RenderVector3, world?: RenderWorld): RenderOrbit => {
+export const orbitFromDirection = (direction: RenderVector3, world?: RenderWorld): RenderOrbit => {
   const vector = cameraVector(direction, 'direction');
   const [forward, right, up] = orbitBasis(world);
   const alongForward = dot(vector, forward);
@@ -920,7 +920,7 @@ const validateCamera = (camera: unknown, name: string, world?: RenderWorld): voi
     // omitted up is `world.caller_up`. Defaulting either in the glTF basis
     // would make the collinearity verdict disagree with the authority.
     const direction = cameraVector(
-      camera['direction'] ?? renderDirectionFromOrbit(defaultFitOrbit, world),
+      camera['direction'] ?? directionFromOrbit(defaultFitOrbit, world),
       `${name}.direction`,
     );
     const up = cameraVector(camera['up'] ?? worldAxisVector(world?.up ?? '+y'), `${name}.up`);

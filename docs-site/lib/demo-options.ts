@@ -1,6 +1,6 @@
 import {
-  renderDirectionFromOrbit,
-  renderOrbitFromDirection,
+  directionFromOrbit,
+  orbitFromDirection,
   type RenderOrbit,
   type RenderVector3,
   type RenderWorld,
@@ -87,7 +87,7 @@ const world = (declared: unknown): RenderWorld | undefined =>
  * the convention the exported helpers define, which is what the guides teach.
  */
 export const demoDirectionFromOrbit = (orbit: RenderOrbit, declaredWorld?: unknown): DemoVector3 => {
-  const [x, y, z] = renderDirectionFromOrbit(orbit, world(declaredWorld));
+  const [x, y, z] = directionFromOrbit(orbit, world(declaredWorld));
   return [tidy(x), tidy(y), tidy(z)];
 };
 
@@ -98,7 +98,7 @@ export const demoOrbitFromDirection = (
 ): RenderOrbit => {
   const vector: RenderVector3 = [direction[0] ?? 0, direction[1] ?? 0, direction[2] ?? 0];
   if (!vector.some((part) => part !== 0 && Number.isFinite(part))) return { azimuth: 0, elevation: 0 };
-  return renderOrbitFromDirection(vector, world(declaredWorld));
+  return orbitFromDirection(vector, world(declaredWorld));
 };
 
 const dot = (left: readonly number[], right: readonly number[]): number =>
@@ -180,7 +180,7 @@ export type DemoBinding = {
   readonly deleteSpan?: DemoSpan;
   /**
    * Present when the example authors this vector as a
-   * `renderDirectionFromOrbit` call, carrying the source text of the world
+   * `directionFromOrbit` call, carrying the source text of the world
    * argument it passes. Edits are written back in the same form.
    */
   readonly orbit?: { readonly world?: string };
@@ -413,7 +413,7 @@ const orbitCall = (
   const exact = demoDirectionFromOrbit({ azimuth, elevation }, declaredWorld);
   if (exact.some((part, index) => Math.abs(part - (value[index] ?? 0)) > 1e-9)) return undefined;
   const world = worldArgument === undefined ? '' : `, ${worldArgument}`;
-  return `renderDirectionFromOrbit({ azimuth: ${azimuth}, elevation: ${elevation} }${world})`;
+  return `directionFromOrbit({ azimuth: ${azimuth}, elevation: ${elevation} }${world})`;
 };
 
 /**

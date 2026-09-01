@@ -10,7 +10,7 @@ change framing (0.4.x framed a +Z-up caller at ~37.8° elevation); renders in
 the default world stay byte-identical. To keep the 0.4.x framing, pass
 `direction: [0.6123724357, 0.5, 0.6123724357]` explicitly.
 
-Add `renderDirectionFromOrbit` and `renderOrbitFromDirection` with the
+Add `directionFromOrbit` and `orbitFromDirection` with the
 `RenderOrbit` type: world-aware conversion between orbit angles and Cartesian
 `direction`, azimuth zero on `world.forward`. This convention is the pair's
 own, not the removed `phi`/`theta` one.

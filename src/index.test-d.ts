@@ -18,7 +18,7 @@ expectTypeOf<keyof RenderModule>().toEqualTypeOf<
   | 'createRenderer'
   | 'describeAdapter'
   | 'imageMimeTypes'
-  | 'renderDirectionFromOrbit'
+  | 'directionFromOrbit'
   | 'renderImage'
   | 'renderImageAmbientRange'
   | 'renderImageAnnotatedMinDimension'
@@ -37,7 +37,7 @@ expectTypeOf<keyof RenderModule>().toEqualTypeOf<
   | 'renderImageViewIdPattern'
   | 'renderImageZoomRange'
   | 'renderImages'
-  | 'renderOrbitFromDirection'
+  | 'orbitFromDirection'
 >();
 
 const glb = new Uint8Array([1, 2, 3]);
@@ -55,14 +55,14 @@ expectTypeOf<renderModule.RenderWorldAxis>().toEqualTypeOf<'+x' | '-x' | '+y' | 
 // The orbit pair is world-aware and Cartesian on the wire: angles never reach
 // the request, they only produce the `direction` it already accepts.
 const orbit = { azimuth: 45, elevation: 30 } as const satisfies renderModule.RenderOrbit;
-expectTypeOf(renderModule.renderDirectionFromOrbit(orbit)).toEqualTypeOf<renderModule.RenderVector3>();
-expectTypeOf(renderModule.renderDirectionFromOrbit(orbit, world)).toEqualTypeOf<renderModule.RenderVector3>();
-expectTypeOf(renderModule.renderOrbitFromDirection(vector)).toEqualTypeOf<renderModule.RenderOrbit>();
-expectTypeOf(renderModule.renderOrbitFromDirection(vector, world)).toEqualTypeOf<renderModule.RenderOrbit>();
+expectTypeOf(renderModule.directionFromOrbit(orbit)).toEqualTypeOf<renderModule.RenderVector3>();
+expectTypeOf(renderModule.directionFromOrbit(orbit, world)).toEqualTypeOf<renderModule.RenderVector3>();
+expectTypeOf(renderModule.orbitFromDirection(vector)).toEqualTypeOf<renderModule.RenderOrbit>();
+expectTypeOf(renderModule.orbitFromDirection(vector, world)).toEqualTypeOf<renderModule.RenderOrbit>();
 void renderImage(glb, {
   format: 'png',
   world,
-  camera: { framing: 'fit', direction: renderModule.renderDirectionFromOrbit(orbit, world) },
+  camera: { framing: 'fit', direction: renderModule.directionFromOrbit(orbit, world) },
 });
 // @ts-expect-error orbit angles are not a camera field
 void ({ framing: 'fit', azimuth: 45 } as const satisfies renderModule.RenderCamera);

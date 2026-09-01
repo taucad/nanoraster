@@ -324,10 +324,10 @@ A viewing direction as two angles in degrees around the caller world.
 `azimuth` is the angle in that plane, zero on `world.forward` and positive
 toward the viewer's right.
 
-### `renderDirectionFromOrbit`
+### `directionFromOrbit`
 
 ```typescript
-export declare const renderDirectionFromOrbit: (orbit: RenderOrbit, world?: RenderWorld) => RenderVector3;
+export declare const directionFromOrbit: (orbit: RenderOrbit, world?: RenderWorld) => RenderVector3;
 ```
 
 - **Parameters:** orbit angles, and the world they are measured in — the same
@@ -337,22 +337,22 @@ export declare const renderDirectionFromOrbit: (orbit: RenderOrbit, world?: Rend
   `-90` to `90`, or an invalid world.
 
 ```typescript
-import { renderDirectionFromOrbit } from 'nanoraster';
+import { directionFromOrbit } from 'nanoraster';
 
 const world = { up: '+z', forward: '-y' } as const;
-const direction = renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }, world);
+const direction = directionFromOrbit({ azimuth: 45, elevation: 30 }, world);
 ```
 
-### `renderOrbitFromDirection`
+### `orbitFromDirection`
 
 ```typescript
-export declare const renderOrbitFromDirection: (direction: RenderVector3, world?: RenderWorld) => RenderOrbit;
+export declare const orbitFromDirection: (direction: RenderVector3, world?: RenderWorld) => RenderOrbit;
 ```
 
 - **Parameters:** any finite non-zero direction, and the world it is expressed
   in. Magnitude is ignored.
 - **Returns:** the orbit angles that reproduce it, exactly inverting
-  [`renderDirectionFromOrbit`](#renderdirectionfromorbit) in the same world.
+  [`directionFromOrbit`](#renderdirectionfromorbit) in the same world.
   Azimuth comes back above `-180` and up to `180`, and at the poles, elevation
   `-90` or `90`, it is undefined and reported as `0`.
 - **Throws:** `TypeError` for a zero or non-finite direction, or an invalid

@@ -324,7 +324,7 @@ export const RenderDemo = ({
    * `framing: 'fit'` normalises the vector, so its magnitude is not a degree
    * of freedom: a third of a three-box control did nothing. Azimuth is
    * measured from `world.forward` toward the caller's right, which is the
-   * convention `renderDirectionFromOrbit` defines and the guides teach.
+   * convention `directionFromOrbit` defines and the guides teach.
    */
   const orbitRows = (control: DemoControl): React.JSX.Element => {
     const orbit = demoOrbitFromDirection(vectorOf(control.key), declaredWorld);

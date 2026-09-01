@@ -93,15 +93,13 @@ describe('interactive demo projections', () => {
         if (templates[binding.control].kind !== 'orbit') continue;
         expect(binding.orbit, `${path} ${binding.key} is a raw vector`).toBeDefined();
         expect(descriptor.code.slice(binding.valueSpan.start, binding.valueSpan.end)).toMatch(
-          /^renderDirectionFromOrbit\(\{ azimuth: -?\d+, elevation: -?\d+ \}(, \w+)?\)$/u,
+          /^directionFromOrbit\(\{ azimuth: -?\d+, elevation: -?\d+ \}(, \w+)?\)$/u,
         );
       }
       // Copy-pasteable: a fence that imports from the package and calls the
       // helper names the helper in that import.
-      if (/^import \{/mu.test(descriptor.code) && descriptor.code.includes('renderDirectionFromOrbit(')) {
-        expect(descriptor.code, path).toMatch(
-          /import \{[^}]*renderDirectionFromOrbit[^}]*\} from 'nanoraster'/u,
-        );
+      if (/^import \{/mu.test(descriptor.code) && descriptor.code.includes('directionFromOrbit(')) {
+        expect(descriptor.code, path).toMatch(/import \{[^}]*directionFromOrbit[^}]*\} from 'nanoraster'/u);
       }
     }
   });
@@ -116,7 +114,7 @@ const image = await renderImage(glb, {
   world,
   camera: {
     framing: 'fit',
-    direction: renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }, world),
+    direction: directionFromOrbit({ azimuth: 45, elevation: 30 }, world),
   },
 });`,
       gear,
@@ -131,9 +129,7 @@ const image = await renderImage(glb, {
     const seeded = readDemoOptions(descriptor);
     const moved = demoDirectionFromOrbit({ azimuth: -98, elevation: 28 }, world);
     const rewritten = substituteDemoValues(descriptor, { ...seeded, 'camera.direction': moved });
-    expect(rewritten).toContain(
-      'direction: renderDirectionFromOrbit({ azimuth: -98, elevation: 28 }, world),',
-    );
+    expect(rewritten).toContain('direction: directionFromOrbit({ azimuth: -98, elevation: 28 }, world),');
     const recovered = demoOrbitFromDirection(moved, world);
     expect(recovered.azimuth).toBeCloseTo(-98);
     expect(recovered.elevation).toBeCloseTo(28);
@@ -147,7 +143,7 @@ const image = await renderImage(glb, {
     const descriptor = createDemoDescriptor(
       `const image = await renderImage(glb, {
   format: 'png',
-  camera: { framing: 'fit', direction: renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }) },
+  camera: { framing: 'fit', direction: directionFromOrbit({ azimuth: 45, elevation: 30 }) },
 });`,
       gear,
     );

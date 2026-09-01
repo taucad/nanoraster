@@ -24,7 +24,7 @@ own code.
 <RenderDemo>
 
 ```typescript
-import { renderDirectionFromOrbit, renderImage } from 'nanoraster';
+import { directionFromOrbit, renderImage } from 'nanoraster';
 
 import { readFile, writeFile } from 'node:fs/promises';
 
@@ -36,7 +36,7 @@ const image = await renderImage(glb, {
   height: 512,
   camera: {
     framing: 'fit',
-    direction: renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }),
+    direction: directionFromOrbit({ azimuth: 45, elevation: 30 }),
   },
 });
 

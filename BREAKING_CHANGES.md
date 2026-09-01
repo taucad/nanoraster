@@ -42,7 +42,7 @@ The package has no compatibility commitments before its first stable release.
   and re-record byte-locked snapshots of default-camera renders in those
   worlds. Renders in the glTF default world are unchanged, byte for byte.
 
-  The `renderDirectionFromOrbit` and `renderOrbitFromDirection` exports use the
+  The `directionFromOrbit` and `orbitFromDirection` exports use the
   same angles. Their azimuth is zero on `world.forward` and positive toward the
   viewer's right, which is not the convention of the removed `phi` and `theta`
   options; the formulas above remain the migration path for those.

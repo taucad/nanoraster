@@ -12,14 +12,14 @@ lights and inherits every value it leaves out.
 <RenderDemo>
 
 ```typescript
-import { renderDirectionFromOrbit, renderImage } from 'nanoraster';
+import { directionFromOrbit, renderImage } from 'nanoraster';
 
 const image = await renderImage(glb, {
   format: 'webp',
   lighting: {
     lights: [
-      { direction: renderDirectionFromOrbit({ azimuth: -40, elevation: 38 }), color: [3, 2.9, 2.7] },
-      { direction: renderDirectionFromOrbit({ azimuth: 56, elevation: -16 }), color: [0.7, 0.8, 1] },
+      { direction: directionFromOrbit({ azimuth: -40, elevation: 38 }), color: [3, 2.9, 2.7] },
+      { direction: directionFromOrbit({ azimuth: 56, elevation: -16 }), color: [0.7, 0.8, 1] },
     ],
     ambient: 0.02,
     exposure: 1,
@@ -80,19 +80,17 @@ const images = await renderImages(glb, {
   format: 'webp',
   world,
   lighting: {
-    lights: [
-      { direction: renderDirectionFromOrbit({ azimuth: 112, elevation: 0 }, world), color: [3, 2.9, 2.7] },
-    ],
+    lights: [{ direction: directionFromOrbit({ azimuth: 112, elevation: 0 }, world), color: [3, 2.9, 2.7] }],
     space: 'world',
   },
   views: [
     {
       id: 'front',
-      camera: { framing: 'fit', direction: renderDirectionFromOrbit({ azimuth: 90, elevation: 0 }, world) },
+      camera: { framing: 'fit', direction: directionFromOrbit({ azimuth: 90, elevation: 0 }, world) },
     },
     {
       id: 'back',
-      camera: { framing: 'fit', direction: renderDirectionFromOrbit({ azimuth: -90, elevation: 0 }, world) },
+      camera: { framing: 'fit', direction: directionFromOrbit({ azimuth: -90, elevation: 0 }, world) },
     },
   ],
 });

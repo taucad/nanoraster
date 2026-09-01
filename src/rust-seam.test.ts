@@ -10,7 +10,7 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 import type { RenderImageOptions } from '#options.js';
-import { renderDirectionFromOrbit, renderImageMaxSections, toImageRequestJson } from '#options.js';
+import { directionFromOrbit, renderImageMaxSections, toImageRequestJson } from '#options.js';
 
 const root = resolve(import.meta.dirname, '..');
 const read = (path: string): string => readFileSync(resolve(root, path), 'utf8');
@@ -101,10 +101,10 @@ describe('TypeScript mirrors of render-core rules', () => {
     expect(fit({ framing: 'fit', direction: [0, 0, 1] })).toThrow('must not be collinear');
     expect(fit({ framing: 'fit', direction: [0, 1, 0] })).not.toThrow();
     // Defaulted direction: it orbits the declared basis, not the glTF one.
-    expect(fit({ framing: 'fit', up: renderDirectionFromOrbit(defaultFitOrbit, world) })).toThrow(
+    expect(fit({ framing: 'fit', up: directionFromOrbit(defaultFitOrbit, world) })).toThrow(
       'must not be collinear',
     );
-    expect(fit({ framing: 'fit', up: renderDirectionFromOrbit(defaultFitOrbit) })).not.toThrow();
+    expect(fit({ framing: 'fit', up: directionFromOrbit(defaultFitOrbit) })).not.toThrow();
   });
 
   it('derives the documented fit-direction default from render-core orbit angles', () => {
@@ -119,7 +119,7 @@ describe('TypeScript mirrors of render-core rules', () => {
       .split(',')
       .map(Number);
     expect(documented).toHaveLength(3);
-    for (const [index, component] of renderDirectionFromOrbit(defaultFitOrbit).entries()) {
+    for (const [index, component] of directionFromOrbit(defaultFitOrbit).entries()) {
       expect(documented[index]).toBeCloseTo(component, 9);
     }
   });

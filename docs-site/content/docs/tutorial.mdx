@@ -14,7 +14,7 @@ Start with one view so the camera controls are visible on their own.
 <RenderDemo>
 
 ```typescript
-import { renderDirectionFromOrbit, renderImage } from 'nanoraster';
+import { directionFromOrbit, renderImage } from 'nanoraster';
 
 import { readFile, writeFile } from 'node:fs/promises';
 
@@ -26,7 +26,7 @@ const front = await renderImage(glb, {
   height: 512,
   camera: {
     framing: 'fit',
-    direction: renderDirectionFromOrbit({ azimuth: 90, elevation: 0 }),
+    direction: directionFromOrbit({ azimuth: 90, elevation: 0 }),
   },
 });
 
@@ -47,7 +47,7 @@ single hero image, so each preset uses `margin: 0.05`.
 <RenderDemo>
 
 ```typescript
-import { renderDirectionFromOrbit, renderImages } from 'nanoraster';
+import { directionFromOrbit, renderImages } from 'nanoraster';
 
 import { readFile, writeFile } from 'node:fs/promises';
 
@@ -62,7 +62,7 @@ const sheet = await renderImages(glb, {
       id: 'front',
       camera: {
         framing: 'fit',
-        direction: renderDirectionFromOrbit({ azimuth: 90, elevation: 0 }),
+        direction: directionFromOrbit({ azimuth: 90, elevation: 0 }),
         margin: 0.05,
       },
     },
@@ -70,7 +70,7 @@ const sheet = await renderImages(glb, {
       id: 'right',
       camera: {
         framing: 'fit',
-        direction: renderDirectionFromOrbit({ azimuth: 180, elevation: 0 }),
+        direction: directionFromOrbit({ azimuth: 180, elevation: 0 }),
         margin: 0.05,
       },
     },
@@ -114,7 +114,7 @@ const sheet = await renderImages(glb, {
       id: 'front',
       camera: {
         framing: 'fit',
-        direction: renderDirectionFromOrbit({ azimuth: 90, elevation: 0 }),
+        direction: directionFromOrbit({ azimuth: 90, elevation: 0 }),
         margin: 0.05,
       },
     },
@@ -122,7 +122,7 @@ const sheet = await renderImages(glb, {
       id: 'right',
       camera: {
         framing: 'fit',
-        direction: renderDirectionFromOrbit({ azimuth: 180, elevation: 0 }),
+        direction: directionFromOrbit({ azimuth: 180, elevation: 0 }),
         margin: 0.05,
       },
     },
@@ -130,7 +130,7 @@ const sheet = await renderImages(glb, {
       id: 'top',
       camera: {
         framing: 'fit',
-        direction: renderDirectionFromOrbit({ azimuth: 0, elevation: 90 }),
+        direction: directionFromOrbit({ azimuth: 0, elevation: 90 }),
         up: [0, 0, 1],
         margin: 0.05,
       },
@@ -139,7 +139,7 @@ const sheet = await renderImages(glb, {
       id: 'iso',
       camera: {
         framing: 'fit',
-        direction: renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }),
+        direction: directionFromOrbit({ azimuth: 45, elevation: 30 }),
         margin: 0.05,
       },
     },
@@ -174,7 +174,7 @@ const sheet = await renderImages(glb, {
       id: 'front',
       camera: {
         framing: 'fit',
-        direction: renderDirectionFromOrbit({ azimuth: 90, elevation: 0 }),
+        direction: directionFromOrbit({ azimuth: 90, elevation: 0 }),
         margin: 0.05,
       },
       label: 'Front',
@@ -183,7 +183,7 @@ const sheet = await renderImages(glb, {
       id: 'right',
       camera: {
         framing: 'fit',
-        direction: renderDirectionFromOrbit({ azimuth: 180, elevation: 0 }),
+        direction: directionFromOrbit({ azimuth: 180, elevation: 0 }),
         margin: 0.05,
       },
       label: 'Right',
@@ -192,7 +192,7 @@ const sheet = await renderImages(glb, {
       id: 'top',
       camera: {
         framing: 'fit',
-        direction: renderDirectionFromOrbit({ azimuth: 0, elevation: 90 }),
+        direction: directionFromOrbit({ azimuth: 0, elevation: 90 }),
         up: [0, 0, 1],
         margin: 0.05,
       },
@@ -202,7 +202,7 @@ const sheet = await renderImages(glb, {
       id: 'iso',
       camera: {
         framing: 'fit',
-        direction: renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }),
+        direction: directionFromOrbit({ azimuth: 45, elevation: 30 }),
         margin: 0.05,
       },
       label: 'Iso',

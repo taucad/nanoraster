@@ -26,7 +26,7 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // API and site ceilings account only for that new public surface.
 // Caller-world coordinates add the axis and world contracts to that API page.
 //
-// Every angle-driven demo vector is authored through `renderDirectionFromOrbit`
+// Every angle-driven demo vector is authored through `directionFromOrbit`
 // rather than as a float triple, so the six raised rows below pay for the call
 // and the `world` constant it takes, in fences that already existed. No prose
 // was added for it.

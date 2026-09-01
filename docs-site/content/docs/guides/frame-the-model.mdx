@@ -22,7 +22,7 @@ axis, as a plan view does.
 <RenderDemo>
 
 ```typescript
-import { renderDirectionFromOrbit, renderImage } from 'nanoraster';
+import { directionFromOrbit, renderImage } from 'nanoraster';
 
 const world = { up: '+z', forward: '-y', unit: 'meter' } as const;
 
@@ -31,7 +31,7 @@ const image = await renderImage(glb, {
   world,
   camera: {
     framing: 'fit',
-    direction: renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }, world),
+    direction: directionFromOrbit({ azimuth: 45, elevation: 30 }, world),
   },
 });
 ```
@@ -45,16 +45,16 @@ vector entry.
 
 ## Turn angles into directions
 
-[`renderDirectionFromOrbit`](../api#renderdirectionfromorbit) converts orbit
+[`directionFromOrbit`](../api#renderdirectionfromorbit) converts orbit
 angles to the Cartesian `direction` a fitted camera takes, and
-[`renderOrbitFromDirection`](../api#renderorbitfromdirection) inverts it. Both
+[`orbitFromDirection`](../api#renderorbitfromdirection) inverts it. Both
 resolve their axes from the world you pass, so pass the same `world` the request
 declares — as the example above does. Read a direction back the same way:
 
 ```typescript
-import { renderOrbitFromDirection } from 'nanoraster';
+import { orbitFromDirection } from 'nanoraster';
 
-const { azimuth, elevation } = renderOrbitFromDirection([0.61, -0.61, 0.5], world);
+const { azimuth, elevation } = orbitFromDirection([0.61, -0.61, 0.5], world);
 ```
 
 Azimuth is the angle in the world horizontal plane, zero on `world.forward` and

@@ -56,7 +56,7 @@ const declaredConstants = (source: ts.SourceFile): Scope =>
   );
 
 /** The exported orbit pair, as the examples name it. */
-const orbitHelper = 'renderDirectionFromOrbit';
+const orbitHelper = 'directionFromOrbit';
 
 const isOrbitCall = (expression: ts.Expression): ts.CallExpression | undefined => {
   const node = unwrap(expression);
@@ -72,7 +72,7 @@ const orbitWorld = (call: ts.CallExpression): { readonly world?: string } => {
 };
 
 /**
- * Evaluate `renderDirectionFromOrbit(orbit, world?)` where the example writes
+ * Evaluate `directionFromOrbit(orbit, world?)` where the example writes
  * it.
  *
  * The helper is the authoring form only: the vector it names is what the
