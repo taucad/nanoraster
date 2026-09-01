@@ -86,9 +86,19 @@ export type RenderOrbit = {
  * @public
  */
 export type RenderWorld = {
-  /** Caller-world up axis. @default '+y' */
+  /**
+   * Caller-world up axis. Supplied together with `forward` or not at all:
+   * the defaults apply only when both are omitted.
+   *
+   * @default '+y'
+   */
   readonly up?: RenderWorldAxis;
-  /** Caller-world forward axis. @default '+z' */
+  /**
+   * Caller-world forward axis. Supplied together with `up` or not at all:
+   * the defaults apply only when both are omitted.
+   *
+   * @default '+z'
+   */
   readonly forward?: RenderWorldAxis;
   /** Length unit of caller-world spatial values. @default 'meter' */
   readonly unit?: 'meter' | 'millimeter';
@@ -829,6 +839,8 @@ export const orbitFromDirection = (direction: RenderVector3, world?: RenderWorld
   const [forward, right, up] = orbitBasis(world);
   const alongForward = dot(vector, forward);
   const alongRight = dot(vector, right);
+  // Only the up component is normalized: `asin` needs a unit-length sine,
+  // while the `atan2` below is scale-invariant and reads the raw projections.
   const alongUp = dot(vector, up) / Math.hypot(...vector);
   return {
     // `+ 0` folds a negative zero to positive, so a direction opposite

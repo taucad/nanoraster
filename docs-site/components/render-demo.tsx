@@ -402,17 +402,34 @@ export const RenderDemo = ({
   // The bytes the request produced, under the image they produced: the same
   // evidence `image.bytes.length` and `mimeType` carry in the example itself.
   // `note` records what the number leaves out, which only the raw tile needs.
-  const badge = (index: number, note?: string): React.JSX.Element | undefined =>
-    evidence === undefined ? undefined : (
-      <p className={styles.badge} data-badge>
-        <span className={styles.evidence}>
-          {evidence.mime} · {RENDER_SIZE.width}×{RENDER_SIZE.height} ·{' '}
-          {((evidence.sizes[index] ?? 0) / 1024).toFixed(1)} KB · {evidence.ms} ms
-          {note === undefined ? '' : ` · ${note}`}
-        </span>
-        {state === 'rendering' && index === 0 ? <span className={styles.status}>rendering…</span> : undefined}
-      </p>
-    );
+  // The row renders before any evidence exists too, so the first frame lands
+  // in a panel that already reserved the badge's height.
+  const badge = (index: number, note?: string): React.JSX.Element => (
+    <p className={styles.badge} data-badge>
+      <span className={styles.evidence}>
+        {evidence === undefined ? (
+          // A collapsible space would leave the empty row without a line box to size.
+          '\u00A0'
+        ) : (
+          <>
+            {evidence.mime} · {RENDER_SIZE.width}×{RENDER_SIZE.height} ·{' '}
+            {((evidence.sizes[index] ?? 0) / 1024).toFixed(1)} KB · {evidence.ms} ms
+            {note === undefined ? '' : ` · ${note}`}
+          </>
+        )}
+      </span>
+      {state === 'rendering' && index === 0 ? <span className={styles.status}>rendering…</span> : undefined}
+    </p>
+  );
+
+  // The placeholder standing in for a single render that has not arrived:
+  // the frame's own shape plus the badge row that will appear under it.
+  const pending = (
+    <figure className={styles.single}>
+      <p className={`${styles.notice} ${styles.pending}`}>Rendering…</p>
+      {badge(0)}
+    </figure>
+  );
 
   // Raw pixels have no file to point an <img> at, so the frame goes straight
   // into a canvas. What is on screen is the render itself: no encoder ran, and
@@ -463,14 +480,18 @@ export const RenderDemo = ({
             <p className={styles.notice}>{readerFacing(message)}</p>
           ) : raw ? (
             frame === undefined ? (
-              <p className={`${styles.notice} ${styles.pending}`}>Rendering…</p>
+              pending
             ) : (
               painted
             )
           ) : srcs.length > 0 ? (
             sheet
-          ) : (
+          ) : batch ? (
+            // A sheet's height comes from its declared tiles, not one frame's
+            // aspect, so its placeholder keeps the sheet minimum instead.
             <p className={`${styles.notice} ${styles.pending}`}>Rendering…</p>
+          ) : (
+            pending
           )}
         </div>
 
