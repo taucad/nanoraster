@@ -12,8 +12,8 @@
 use crate::encode::{ImageFormat, encode};
 use crate::glb::{self, MODE_TRIANGLES, Material};
 use crate::{
-    CameraProjection, LightingSpace, MAX_LIGHTS, Projection, RenderCamera, RenderError,
-    RenderOptions, with_view_result,
+    CameraProjection, LightingSpace, MAX_LIGHTS, MAX_SECTION_PLANES, Projection, RenderCamera,
+    RenderError, RenderOptions, with_view_result,
 };
 use glam::{Mat4, Vec3};
 use std::fmt::Display;
@@ -623,13 +623,14 @@ fn orthographic_half_extents(
 
 // The one definition of the `Frame` uniform (see `shader.wgsl`): two mat4 and
 // a viewport vec4, then eight Lights at a 32-byte stride, a 16-byte lighting
-// tail, six section planes, and a 16-byte section tail. 528 bytes.
-const FRAME_FLOATS: usize = 132;
+// tail, `MAX_SECTION_PLANES` section planes, and a 16-byte section tail.
+// 560 bytes at eight planes.
 const FRAME_LIGHTS: usize = 36;
 const FRAME_LIGHT_STRIDE: usize = 8;
 const FRAME_TAIL: usize = 100;
 const FRAME_SECTION_PLANES: usize = 104;
-const FRAME_SECTION_TAIL: usize = 128;
+const FRAME_SECTION_TAIL: usize = FRAME_SECTION_PLANES + MAX_SECTION_PLANES * 4;
+const FRAME_FLOATS: usize = FRAME_SECTION_TAIL + 4;
 
 fn frame_uniform(camera: CameraState, options: &RenderOptions) -> [f32; FRAME_FLOATS] {
     let lighting = &options.lighting;
@@ -660,13 +661,16 @@ fn frame_uniform(camera: CameraState, options: &RenderOptions) -> [f32; FRAME_FL
     data[FRAME_TAIL + 2] = lighting.exposure;
     data[FRAME_TAIL + 3] = f32::from_bits(u32::from(lighting.environment));
     if let Some(sections) = &options.sections {
-        for (index, plane) in sections.planes.iter().enumerate() {
+        // Clamped the way the light rig is: `RenderOptions` is public, so the
+        // uniform's fixed array is the authority even when validation is not.
+        for (index, plane) in sections.planes.iter().take(MAX_SECTION_PLANES).enumerate() {
             let base = FRAME_SECTION_PLANES + index * 4;
             let normal = Vec3::from(plane.normal).normalize();
             data[base..base + 3].copy_from_slice(&normal.to_array());
             data[base + 3] = -normal.dot(Vec3::from(plane.point));
         }
-        data[FRAME_SECTION_TAIL] = f32::from_bits(sections.planes.len() as u32);
+        data[FRAME_SECTION_TAIL] =
+            f32::from_bits(sections.planes.len().min(MAX_SECTION_PLANES) as u32);
         data[FRAME_SECTION_TAIL + 1] = f32::from_bits(u32::from(sections.clip_surfaces));
         data[FRAME_SECTION_TAIL + 2] = f32::from_bits(u32::from(sections.clip_lines));
     }
@@ -1437,7 +1441,8 @@ impl Renderer {
         // enabled model edges, or a section boundary (drawn unconditionally).
         // Keying on `options.lines` alone would fork the bytes of otherwise
         // identical renders of line-free models.
-        let wireframe = (options.lines && scene.gpu_assets.iter().any(|asset| !asset.lines.is_empty()))
+        let wireframe = (options.lines
+            && scene.gpu_assets.iter().any(|asset| !asset.lines.is_empty()))
             || presentation.boundary.is_some();
         let pipeline_index = self.ensure_pipelines(line_width_px(options), wireframe);
         let state = &self.state;
@@ -2148,6 +2153,39 @@ mod tests {
         assert!((data[35] - 0.05).abs() < 1.0e-6);
         // Unwritten slots stay zero, and the studio rig fills exactly three.
         assert_eq!(data[FRAME_LIGHTS + FRAME_LIGHT_STRIDE], 0.0);
+
+        // The plane array is the limit: a full rig writes every slot up to the
+        // tail and leaves the tail where `shader.wgsl` declares it.
+        assert_eq!(MAX_SECTION_PLANES, 8);
+        assert_eq!(FRAME_SECTION_TAIL, 136);
+        assert_eq!(FRAME_FLOATS * 4, 560);
+        let full = frame_uniform(
+            camera,
+            &RenderOptions {
+                sections: Some(crate::Sections {
+                    planes: (0..MAX_SECTION_PLANES)
+                        .map(|index| crate::SectionPlane {
+                            point: [index as f32 + 1.0, 0.0, 0.0],
+                            normal: [1.0, 0.0, 0.0],
+                        })
+                        .collect(),
+                    clip_surfaces: true,
+                    clip_lines: true,
+                }),
+                ..RenderOptions::default()
+            },
+        );
+        assert_eq!(
+            full[FRAME_SECTION_TAIL].to_bits(),
+            MAX_SECTION_PLANES as u32
+        );
+        for index in 0..MAX_SECTION_PLANES {
+            let base = FRAME_SECTION_PLANES + index * 4;
+            assert_eq!(
+                &full[base..base + 4],
+                [1.0, 0.0, 0.0, -(index as f32 + 1.0)]
+            );
+        }
 
         let studio = frame_uniform(camera, &RenderOptions::default());
         assert_eq!(studio[FRAME_TAIL].to_bits(), 3);
@@ -2958,6 +2996,69 @@ mod tests {
         let forward = render(&mut renderer, planes.clone());
         let reverse = render(&mut renderer, planes.into_iter().rev().collect());
         assert_eq!(forward.rgba, reverse.rgba);
+        renderer.destroy();
+    }
+
+    #[test]
+    fn seven_and_eight_section_planes_reach_the_shader() {
+        // Q6 grew the uniform's plane array from six to eight. Each plane cuts
+        // one cube corner; the list is ordered by how much the corner faces the
+        // camera, so the seventh and eighth cuts are the two most visible ones
+        // and a slot that never reached the shader would leave their renders
+        // identical to the six-plane one.
+        const CORNERS: [[f32; 3]; MAX_SECTION_PLANES] = [
+            [-1.0, -1.0, -1.0],
+            [-1.0, 1.0, -1.0],
+            [1.0, -1.0, -1.0],
+            [-1.0, -1.0, 1.0],
+            [1.0, 1.0, -1.0],
+            [-1.0, 1.0, 1.0],
+            [1.0, -1.0, 1.0],
+            [1.0, 1.0, 1.0],
+        ];
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let render = |renderer: &mut Renderer, count: usize| {
+            render_test_scene(
+                renderer,
+                cube_scene(),
+                RenderOptions {
+                    width: 256,
+                    height: 256,
+                    background: Some([1.0; 4]),
+                    camera: RenderCamera::Fixed {
+                        position: [4.0, 3.0, 5.0],
+                        target: [0.0; 3],
+                        up: [0.0, 1.0, 0.0],
+                        projection: CameraProjection::Orthographic {
+                            vertical_span: Some(4.5),
+                            zoom: 1.0,
+                        },
+                        clipping: None,
+                    },
+                    sections: Some(crate::Sections {
+                        planes: CORNERS[..count]
+                            .iter()
+                            .map(|corner| crate::SectionPlane {
+                                point: corner.map(|axis| axis * 0.6),
+                                normal: corner.map(|axis| -axis),
+                            })
+                            .collect(),
+                        clip_surfaces: true,
+                        clip_lines: true,
+                    }),
+                    ..RenderOptions::default()
+                },
+            )
+            .rgba
+        };
+        let six = render(&mut renderer, 6);
+        let seven = render(&mut renderer, 7);
+        let eight = render(&mut renderer, MAX_SECTION_PLANES);
+        assert_ne!(seven, six, "the seventh plane must change pixels");
+        assert_ne!(eight, seven, "the eighth plane must change pixels");
+        assert_eq!(render(&mut renderer, MAX_SECTION_PLANES), eight);
         renderer.destroy();
     }
 

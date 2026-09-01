@@ -19,7 +19,7 @@ struct Frame {
     ambient: f32,
     exposure: f32,
     environment: u32,
-    section_planes: array<vec4<f32>, 6>,
+    section_planes: array<vec4<f32>, 8>,
     section_count: u32,
     clip_surfaces: u32,
     clip_lines: u32,

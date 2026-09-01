@@ -63,9 +63,9 @@ fn ensure_batch_matches(batch: &[Vec<u8>], singular: &[Vec<u8>]) -> Result<(), R
     ))
 }
 
-/// GPU-independent codec fixtures used to prove native/wasm byte parity.
-pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
-    let (width, height) = (320u32, 240u32);
+/// The GPU-free frame both codec fixtures below run on: an analytic gradient
+/// with a high-frequency term, so every encoder does real work on it.
+fn fixture_frame(width: u32, height: u32) -> Rendered {
     let mut rgba = Vec::with_capacity((width * height * 4) as usize);
     for y in 0..height {
         for x in 0..width {
@@ -77,11 +77,29 @@ pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
             ]);
         }
     }
-    let base = Rendered {
+    Rendered {
         rgba,
         width,
         height,
-    };
+    }
+}
+
+/// Codec timings without an adapter: the encode stages are pure CPU work over
+/// a frame, so the wasm speed gate (`scripts/check-wasm-speed.mjs`) times them
+/// on a procedural one rather than standing up WebGPU to produce a frame it
+/// would throw away. Same [`bench_encodes`] the browser benchmark reports.
+pub fn bench_fixture_encodes(
+    width: u32,
+    height: u32,
+    now: &dyn Fn() -> f64,
+) -> Result<serde_json::Value, RenderError> {
+    bench_encodes(&fixture_frame(width, height), now)
+}
+
+/// GPU-independent codec fixtures used to prove native/wasm byte parity.
+pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
+    let (width, height) = (320u32, 240u32);
+    let base = fixture_frame(width, height);
     // Keep codec fingerprints independent of fitted-camera changes: a centred
     // horizontal line preserves the established centre-plane scale without
     // intersecting any annotation slot.
@@ -140,7 +158,31 @@ pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
     Ok(report)
 }
 
-/// Compare six separate renders with one six-view batch for every annotation combination.
+/// The section leg of the multi-view benchmark, if this model can carry one.
+///
+/// Cap build is a shared batch stage worth timing, so the benchmark cuts the
+/// model when it can. Certification is fail-closed, though, and plenty of
+/// exported meshes are not watertight — the gear fixture's flat cap faces
+/// leave 72 unfilled sliver loops, so it is one of them. A benchmark that
+/// hard-failed on those would be unusable on most real models, so an
+/// uncertified model runs its remaining stages and reports the reason instead.
+fn certified_sections(glb: &[u8], requested: Sections) -> (Option<Sections>, Option<String>) {
+    // The same certification `prepare_presentation` runs, minus the GPU.
+    let options = RenderOptions {
+        sections: Some(requested.clone()),
+        ..Default::default()
+    };
+    match crate::glb::parse_glb_for_sections(glb)
+        .map_err(RenderError::Parse)
+        .and_then(|scene| crate::section::build(&scene, &options))
+    {
+        Ok(_) => (Some(requested), None),
+        Err(error) => (None, Some(error.to_string())),
+    }
+}
+
+/// Compare six separate renders with one six-view batch for every annotation
+/// combination, cutting the model with one section plane where it certifies.
 pub async fn bench_multi_view(
     glb: &[u8],
     width: u32,
@@ -163,6 +205,17 @@ pub async fn bench_multi_view(
         view("top", "Top", [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
         view("bottom", "Bottom", [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]),
     ];
+    let (sections, sections_skipped) = certified_sections(
+        glb,
+        Sections {
+            planes: vec![SectionPlane {
+                point: [0.0; 3],
+                normal: [1.0, 0.0, 0.0],
+            }],
+            clip_surfaces: true,
+            clip_lines: true,
+        },
+    );
     let mut variants = Vec::new();
     for bits in 0..8 {
         let axes = bits & 1 != 0;
@@ -174,14 +227,7 @@ pub async fn bench_multi_view(
             background: Some([1.0, 1.0, 1.0, 1.0]),
             axes,
             scale_bar,
-            sections: Some(Sections {
-                planes: vec![SectionPlane {
-                    point: [0.0; 3],
-                    normal: [1.0, 0.0, 0.0],
-                }],
-                clip_surfaces: true,
-                clip_lines: true,
-            }),
+            sections: sections.clone(),
             ..Default::default()
         };
         // A label is drawn where one is set, so the label leg strips them
@@ -244,6 +290,7 @@ pub async fn bench_multi_view(
         "width": width,
         "height": height,
         "viewCount": views.len(),
+        "sectionsSkipped": sections_skipped,
         "variants": variants,
     }))
 }
@@ -324,6 +371,17 @@ mod tests {
 
     #[test]
     fn fixed_codec_fixtures_are_deterministic() {
+        // The speed gate's probe shares this frame; it only has to report a
+        // duration per codec, which the mocked clock above already covers.
+        let clock = std::cell::Cell::new(0.0f64);
+        let now = move || {
+            clock.set(clock.get() + 100.0);
+            clock.get()
+        };
+        let timed = bench_fixture_encodes(64, 48, &now).expect("fixture encodes");
+        assert_eq!(timed["width"], serde_json::json!(64));
+        assert!(timed["jpeg"]["ms"].as_f64().expect("ms") > 0.0);
+
         let first = codec_conformance().expect("conformance");
         let second = codec_conformance().expect("conformance");
         assert_eq!(first, second);
@@ -353,6 +411,40 @@ mod tests {
             serde_json::from_str(include_str!("../../../tests/codec-conformance.json"))
                 .expect("committed fingerprints");
         assert_eq!(codec_conformance().expect("conformance"), expected);
+    }
+
+    /// The benchmark's section leg follows certification, which is fail-closed:
+    /// a watertight model keeps the plane, and the gear fixture — whose flat
+    /// cap faces leave unfilled sliver loops — records why it lost it instead
+    /// of failing the whole run.
+    #[test]
+    fn the_section_leg_follows_certification() {
+        let requested = Sections {
+            planes: vec![SectionPlane {
+                point: [0.0; 3],
+                normal: [1.0, 0.0, 0.0],
+            }],
+            clip_surfaces: true,
+            clip_lines: true,
+        };
+        let (certified, skipped) = certified_sections(
+            include_bytes!("../../../tests/fixtures/racing-drone-section-repro.glb"),
+            requested.clone(),
+        );
+        assert_eq!(certified, Some(requested.clone()));
+        assert_eq!(skipped, None);
+
+        let (certified, skipped) = certified_sections(
+            include_bytes!("../../../tests/fixtures/gear-12.glb"),
+            requested,
+        );
+        assert_eq!(certified, None);
+        assert_eq!(
+            skipped.as_deref(),
+            Some(
+                "parse: sections: topology: source node 0/mesh 0/primitive 0 has an open material seam"
+            )
+        );
     }
 
     #[test]

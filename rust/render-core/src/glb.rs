@@ -78,15 +78,11 @@ impl Scene {
     fn visit_positions(
         &self,
         options: Option<&RenderOptions>,
-        mode: Option<u32>,
         visit: &mut dyn FnMut(Vec3),
     ) -> Result<bool, String> {
         let mut any = false;
         for instance in &self.instances {
             for primitive in &self.meshes[instance.mesh_index].primitives {
-                if mode.is_some_and(|mode| primitive.mode != mode) {
-                    continue;
-                }
                 if options.is_some_and(|options| {
                     !self.primitive_is_eligible(instance, primitive, options)
                 }) {
@@ -113,7 +109,7 @@ impl Scene {
         options: &RenderOptions,
         visit: &mut dyn FnMut(Vec3),
     ) -> Result<bool, String> {
-        self.visit_positions(Some(options), None, visit)
+        self.visit_positions(Some(options), visit)
     }
 
     /// Visit only eligible triangle positions, excluding authored line bounds.
@@ -147,7 +143,7 @@ impl Scene {
     }
 
     fn for_each_draw_position(&self, visit: &mut dyn FnMut(Vec3)) -> Result<bool, String> {
-        self.visit_positions(None, None, visit)
+        self.visit_positions(None, visit)
     }
 
     pub(crate) fn primitive_ref(
@@ -226,12 +222,15 @@ fn validate_accessor_counts(
                 "accessor {index} count {count} exceeds {MAX_ACCESSOR_VALUES}"
             ));
         }
-        total = total
-            .checked_add(count)
-            .filter(|total| *total <= MAX_TOTAL_ACCESSOR_VALUES)
-            .ok_or_else(|| {
-                format!("declared accessor values exceed {MAX_TOTAL_ACCESSOR_VALUES}")
-            })?;
+        // Every count is already at most MAX_ACCESSOR_VALUES and the loop
+        // stops the first time the running total passes the ceiling, so the
+        // sum stays far below usize::MAX.
+        total += count;
+        if total > MAX_TOTAL_ACCESSOR_VALUES {
+            return Err(format!(
+                "declared accessor values exceed {MAX_TOTAL_ACCESSOR_VALUES}"
+            ));
+        }
     }
     Ok(())
 }
@@ -1233,18 +1232,22 @@ mod tests {
 
     #[test]
     fn declared_accessor_counts_are_bounded_before_decoding() {
-        assert!(validate_accessor_counts([(0, MAX_ACCESSOR_VALUES)]).is_ok());
+        assert!(validate_accessor_counts(vec![(0, MAX_ACCESSOR_VALUES)]).is_ok());
         assert_eq!(
-            validate_accessor_counts([(7, MAX_ACCESSOR_VALUES + 1)]).unwrap_err(),
+            validate_accessor_counts(vec![(7, MAX_ACCESSOR_VALUES + 1)]).unwrap_err(),
             format!(
                 "accessor 7 count {} exceeds {MAX_ACCESSOR_VALUES}",
                 MAX_ACCESSOR_VALUES + 1
             )
         );
         assert!(
-            validate_accessor_counts([(0, MAX_ACCESSOR_VALUES), (1, MAX_ACCESSOR_VALUES), (2, 1)])
-                .unwrap_err()
-                .contains("declared accessor values")
+            validate_accessor_counts(vec![
+                (0, MAX_ACCESSOR_VALUES),
+                (1, MAX_ACCESSOR_VALUES),
+                (2, 1)
+            ])
+            .unwrap_err()
+            .contains("declared accessor values")
         );
 
         let source = fixture(Layout::Packed, 5125, true);
@@ -1423,6 +1426,14 @@ mod tests {
         let mut invalid_extension = base.clone();
         invalid_extension["meshes"][0]["extensions"]["EXT_mesh_manifold"] = json!({});
         rejects(invalid_extension, bin.clone(), "invalid extension object");
+
+        let mut no_primitives = base.clone();
+        no_primitives["meshes"][0]["primitives"] = json!([]);
+        rejects(
+            no_primitives,
+            bin.clone(),
+            "annotated mesh must contain a TRIANGLES primitive",
+        );
 
         let mut missing_accessor = base.clone();
         missing_accessor["meshes"][0]["extensions"]["EXT_mesh_manifold"]["manifoldPrimitive"]["indices"] =

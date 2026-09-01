@@ -21,7 +21,7 @@ mod section;
 use glb::parse_glb;
 
 #[cfg(feature = "bench")]
-pub use bench::{bench_encodes, bench_multi_view, codec_conformance};
+pub use bench::{bench_encodes, bench_fixture_encodes, bench_multi_view, codec_conformance};
 pub use encode::{ImageFormat, encode, encode_jpeg, encode_png, encode_webp};
 pub use options::{
     CameraRequest, CreateRendererRequest, LightRequest, LightingRequest, LightingRigRequest,
@@ -185,8 +185,10 @@ pub struct Sections {
     pub clip_lines: bool,
 }
 
-/// Maximum number of simultaneous retained-half-space planes.
-pub const MAX_SECTION_PLANES: usize = 6;
+/// Maximum number of simultaneous retained-half-space planes. Eight, so an
+/// axis-aligned box crop (six faces) still has two planes spare; the limit is
+/// the `Frame` uniform's plane array, not the shader's clipping arithmetic.
+pub const MAX_SECTION_PLANES: usize = 8;
 
 impl ResolvedLighting {
     /// The studio preset — the one definition of the built-in rig. `fs_mesh`
@@ -950,6 +952,9 @@ mod tests {
     use super::*;
 
     const FIXTURE: &[u8] = include_bytes!("../../../tests/fixtures/gear-12.glb");
+    /// [`FIXTURE`] is not watertight, so section requests need their own.
+    const SECTION_FIXTURE: &[u8] =
+        include_bytes!("../../../tests/fixtures/racing-drone-section-repro.glb");
 
     fn material_variant(metallic: f32, roughness: f32) -> Vec<u8> {
         let parsed = gltf::binary::Glb::from_slice(FIXTURE).expect("fixture");
@@ -1549,6 +1554,11 @@ mod tests {
         assert!(pollster::block_on(render_image_request(FIXTURE, request)).is_ok());
         let plural = r#"{"format":"png","width":192,"height":192,"background":[1,1,1,1],"views":[{"id":"front"}]}"#;
         assert!(pollster::block_on(render_images_request(FIXTURE, plural, None)).is_ok());
+        // A section request takes the topology-aware parse path, so it needs a
+        // watertight subject: the gear fixture's flat cap faces are not, and
+        // fail certification by design.
+        let sectioned = r#"{"format":"png","width":64,"height":64,"world":{"up":"+z","forward":"-y","unit":"meter"},"sections":{"planes":[{"point":[0,0,0],"normal":[1,0,0]}]}}"#;
+        assert!(pollster::block_on(render_image_request(SECTION_FIXTURE, sectioned)).is_ok());
         let raw = pollster::block_on(render_image_request(
             FIXTURE,
             r#"{"format":"raw","width":192,"height":192}"#,
@@ -1582,6 +1592,13 @@ mod tests {
             let benchmark = pollster::block_on(bench::bench_multi_view(FIXTURE, 192, 192, &clock))
                 .expect("multi-view benchmark");
             assert_eq!(benchmark["variants"].as_array().map(Vec::len), Some(8));
+            // The gear fixture's cap faces are not watertight, so the run
+            // reports the certification it lost rather than failing.
+            assert!(
+                benchmark["sectionsSkipped"]
+                    .as_str()
+                    .is_some_and(|reason| reason.ends_with("has an open material seam"))
+            );
             assert!(
                 benchmark["variants"][0]["batch"]["timings"]["capBuild"]
                     .as_f64()

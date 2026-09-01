@@ -59,7 +59,7 @@ test('the shipped wasm drops the bench surface and renders as its sibling does',
   // Q4's accepted trade: the fingerprints come from a `bench`-enabled sibling
   // build, so the shipped artifact must both lack that surface and produce the
   // same bytes as the build the gate measures.
-  for (const gated of ['bench_codecs', 'bench_multi_view', 'codec_conformance']) {
+  for (const gated of ['bench_codecs', 'bench_fixture_encodes', 'bench_multi_view', 'codec_conformance']) {
     expect(candidate[gated], `shipped wasm exports the gated ${gated}`).toBeUndefined();
   }
 

@@ -143,7 +143,15 @@ struct WorldTransform {
     meters_per_unit: f32,
     axes: [[f32; 3]; 3],
     caller_up: glam::Vec3,
+    caller_forward: glam::Vec3,
 }
+
+/// Orbit of the default fit camera, in the declared world's own basis:
+/// azimuth swings from `world.forward` toward the caller's right, elevation
+/// rises above the caller's horizontal plane. Degrees, and `f64` so the
+/// resolved direction is the correctly rounded `f32` on every target.
+const DEFAULT_FIT_AZIMUTH_DEG: f64 = 45.0;
+const DEFAULT_FIT_ELEVATION_DEG: f64 = 30.0;
 
 impl WorldTransform {
     fn point(self, value: glam::Vec3) -> glam::Vec3 {
@@ -156,6 +164,26 @@ impl WorldTransform {
 
     fn length(self, value: f32) -> f32 {
         value * self.meters_per_unit
+    }
+
+    /// The default fit direction, built from the orbit above in the declared
+    /// basis rather than substituted as a literal, so an omitted `direction`
+    /// frames the same picture in every world. Elevation used to drift with
+    /// the declaration — about 37.8 degrees for a Z-up world. The glTF default
+    /// world still resolves to the historic `[0.612_372_46, 0.5, 0.612_372_46]`
+    /// bit for bit: `rotation` is a signed axis permutation, so the multiply
+    /// only moves and negates exact components.
+    fn default_fit_direction(self) -> glam::Vec3 {
+        let (azimuth, elevation) = (
+            DEFAULT_FIT_AZIMUTH_DEG.to_radians(),
+            DEFAULT_FIT_ELEVATION_DEG.to_radians(),
+        );
+        let right = self.caller_up.cross(self.caller_forward);
+        self.direction(
+            (elevation.cos() * azimuth.cos()) as f32 * self.caller_forward
+                + (elevation.cos() * azimuth.sin()) as f32 * right
+                + elevation.sin() as f32 * self.caller_up,
+        )
     }
 }
 
@@ -652,6 +680,7 @@ fn resolve_world(request: Option<&WorldRequest>) -> Result<WorldTransform, Rende
             (rotation * glam::Vec3::Z).to_array(),
         ],
         caller_up: up,
+        caller_forward: forward,
     })
 }
 
@@ -777,10 +806,10 @@ fn resolve_camera(
             margin,
             projection,
         } => {
-            let direction = world.direction(normalized_direction(
-                direction.unwrap_or([0.612_372_46, 0.5, 0.612_372_46]),
-                "direction",
-            )?);
+            let direction = match direction {
+                Some(direction) => world.direction(normalized_direction(*direction, "direction")?),
+                None => world.default_fit_direction(),
+            };
             let up = world.direction(match up {
                 Some(up) => normalized_direction(*up, "up")?,
                 None => world.caller_up,
@@ -1018,6 +1047,14 @@ mod tests {
         );
     }
 
+    /// `(up, direction)` for a fit camera, `None` for a fixed one.
+    fn fit_orientation(camera: RenderCamera) -> Option<([f32; 3], [f32; 3])> {
+        match camera {
+            RenderCamera::Fit { up, direction, .. } => Some((up, direction)),
+            RenderCamera::Fixed { .. } => None,
+        }
+    }
+
     #[test]
     fn singular_defaults_annotations_off() {
         let (options, format) = RenderRequest::from_json(r#"{"format":"png"}"#)
@@ -1070,6 +1107,16 @@ mod tests {
         for up in axes {
             for forward in axes {
                 if up[1..] == forward[1..] {
+                    let collinear = resolve_world(Some(&WorldRequest {
+                        up: Some(up.into()),
+                        forward: Some(forward.into()),
+                        unit: None,
+                    }))
+                    .expect_err("collinear signed-axis pair");
+                    assert_eq!(
+                        collinear.to_string(),
+                        "parse: world.up and world.forward must name different axes"
+                    );
                     continue;
                 }
                 let world = resolve_world(Some(&WorldRequest {
@@ -1107,18 +1154,43 @@ mod tests {
 
     #[test]
     fn default_fit_camera_uses_the_declared_world_up() {
-        for (up, forward) in [("+y", "+z"), ("+z", "-y"), ("+x", "+z")] {
+        // D4: the default direction is the same 45/30 orbit in every declared
+        // basis, so it resolves to one vector — and that vector is the historic
+        // Y-up literal, bit for bit, so default glTF renders cannot move.
+        const HISTORIC_LITERAL: [f32; 3] = [0.612_372_46, 0.5, 0.612_372_46];
+        for (up, forward) in [
+            ("+y", "+z"),
+            ("+z", "-y"),
+            ("+x", "+z"),
+            ("-y", "+x"),
+            ("-z", "-x"),
+        ] {
             let options = RenderRequest::from_json(&format!(
                 r#"{{"format":"png","world":{{"up":"{up}","forward":"{forward}"}}}}"#
             ))
             .expect("parse")
             .resolve_options()
             .expect("resolve");
-            let RenderCamera::Fit { up, .. } = options.camera else {
-                panic!("default camera must fit");
-            };
-            assert_vec3_near(up.into(), glam::Vec3::Y);
+            let (resolved_up, direction) =
+                fit_orientation(options.camera).expect("default camera must fit");
+            assert_vec3_near(resolved_up.into(), glam::Vec3::Y);
+            assert_eq!(direction, HISTORIC_LITERAL, "world {up}/{forward}");
         }
+        let fixed = RenderRequest::from_json(
+            r#"{"format":"png","camera":{"framing":"fixed","position":[4,3,2],"target":[0,0,0],"up":[0,0,1]}}"#,
+        )
+        .expect("parse")
+        .resolve_options()
+        .expect("resolve");
+        assert!(fit_orientation(fixed.camera).is_none());
+        // Resolved space puts the declared up on Y, so the elevation reads back
+        // as the 30 degrees the orbit asks for — not the ~37.8 the literal
+        // substitution used to hand a Z-up caller.
+        let elevation = glam::Vec3::from(HISTORIC_LITERAL)
+            .dot(glam::Vec3::Y)
+            .asin()
+            .to_degrees();
+        assert!((elevation - DEFAULT_FIT_ELEVATION_DEG as f32).abs() < 1.0e-4);
     }
 
     #[test]
@@ -1502,7 +1574,6 @@ mod tests {
             r#"{"format":"png","visiblePrimitives":[{"nodeIndex":0,"meshIndex":0,"primitiveIndex":0},{"nodeIndex":0,"meshIndex":0,"primitiveIndex":0}]}"#,
             r#"{"format":"png","sections":{"planes":[]}}"#,
             r#"{"format":"png","sections":{"planes":[{"point":[0,0,0],"normal":[0,0,0]}]}}"#,
-            r#"{"format":"png","sections":{"planes":[{"point":[0,0,0],"normal":[1,0,0]},{"point":[0,0,0],"normal":[0,1,0]},{"point":[0,0,0],"normal":[0,0,1]},{"point":[0,0,0],"normal":[-1,0,0]},{"point":[0,0,0],"normal":[0,-1,0]},{"point":[0,0,0],"normal":[0,0,-1]},{"point":[0,0,0],"normal":[1,1,0]}]}}"#,
         ] {
             assert!(
                 RenderRequest::from_json(json)
@@ -1510,6 +1581,26 @@ mod tests {
                     .is_err()
             );
         }
+        // The limit itself resolves; one plane past it does not.
+        let request = |count: usize| {
+            let planes = (1..=count)
+                .map(|index| format!(r#"{{"point":[0,0,0],"normal":[{index},1,0]}}"#))
+                .collect::<Vec<_>>()
+                .join(",");
+            RenderRequest::from_json(&format!(
+                r#"{{"format":"png","sections":{{"planes":[{planes}]}}}}"#
+            ))
+            .and_then(|request| request.resolve())
+        };
+        assert!(request(MAX_SECTION_PLANES).is_ok());
+        assert_eq!(
+            request(MAX_SECTION_PLANES + 1)
+                .err()
+                .map(|error| error.to_string()),
+            Some(format!(
+                "parse: sections.planes must contain between 1 and {MAX_SECTION_PLANES} planes"
+            ))
+        );
     }
 
     #[test]

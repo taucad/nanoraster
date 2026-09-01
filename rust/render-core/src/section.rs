@@ -456,20 +456,19 @@ fn build_topology(
                         epsilon,
                     )
             }) {
-                let work = components[candidate]
-                    .len()
-                    .checked_mul(components[component].len())
-                    .and_then(|work| work.checked_mul(4))
-                    .ok_or_else(|| topology_error(source, "exceeds multi-shell work ceiling"))?;
-                containment_work = bounded_section_work(containment_work.checked_add(work))
-                    .ok_or_else(|| {
-                        topology_error(
-                            source,
-                            format!(
-                                "exceeds multi-shell work ceiling {MAX_QUADRATIC_SECTION_WORK}"
-                            ),
-                        )
-                    })?;
+                containment_work = bounded_section_work(
+                    components[candidate]
+                        .len()
+                        .checked_mul(components[component].len())
+                        .and_then(|work| work.checked_mul(4))
+                        .and_then(|work| work.checked_add(containment_work)),
+                )
+                .ok_or_else(|| {
+                    topology_error(
+                        source,
+                        format!("exceeds multi-shell work ceiling {MAX_QUADRATIC_SECTION_WORK}"),
+                    )
+                })?;
                 let contained = component_is_contained(
                     &components[component],
                     &components[candidate],
@@ -605,40 +604,59 @@ fn point_in_component(
     let ray = glam::DVec3::new(0.785_436_249, 0.291_680_651, 0.545_674_831);
     let mut intersections = 0_usize;
     for triangle in component.iter().map(|index| &triangles[*index]) {
-        let [a, b, c] = triangle.points.map(|vertex| vertex.as_dvec3());
-        let edge_1 = b - a;
-        let edge_2 = c - a;
-        let from_a = point - a;
-        let normal = edge_1.cross(edge_2);
-        let crossed = ray.cross(edge_2);
-        let determinant = edge_1.dot(crossed);
-        if determinant * determinant
-            <= f64::EPSILON * f64::EPSILON * edge_1.length_squared() * edge_2.length_squared()
-        {
-            let plane_distance = from_a.dot(normal);
-            if plane_distance * plane_distance <= epsilon * epsilon * normal.length_squared() {
-                return None;
-            }
-            continue;
-        }
-        let inverse = determinant.recip();
-        let u = from_a.dot(crossed) * inverse;
-        let q = from_a.cross(edge_1);
-        let v = ray.dot(q) * inverse;
-        let distance = edge_2.dot(q) * inverse;
-        if u >= -1.0e-10 && v >= -1.0e-10 && u + v <= 1.0 + 1.0e-10 {
-            if distance.abs() <= epsilon {
-                return None;
-            }
-            if distance > 0.0 {
-                if u.min(v).min(1.0 - u - v) <= 1.0e-10 {
-                    return None;
-                }
-                intersections += 1;
-            }
+        if ray_crosses_triangle(
+            point,
+            ray,
+            triangle.points.map(|vertex| vertex.as_dvec3()),
+            epsilon,
+        )? {
+            intersections += 1;
         }
     }
     Some(!intersections.is_multiple_of(2))
+}
+
+/// `None` whenever the answer would be a coin flip: the point sits on the
+/// triangle's plane while the ray runs along it, the point sits on the
+/// triangle, or the ray leaves through an edge or corner.
+fn ray_crosses_triangle(
+    point: glam::DVec3,
+    ray: glam::DVec3,
+    [a, b, c]: [glam::DVec3; 3],
+    epsilon: f64,
+) -> Option<bool> {
+    let edge_1 = b - a;
+    let edge_2 = c - a;
+    let from_a = point - a;
+    let normal = edge_1.cross(edge_2);
+    let crossed = ray.cross(edge_2);
+    let determinant = edge_1.dot(crossed);
+    if determinant * determinant
+        <= f64::EPSILON * f64::EPSILON * edge_1.length_squared() * edge_2.length_squared()
+    {
+        let plane_distance = from_a.dot(normal);
+        if plane_distance * plane_distance <= epsilon * epsilon * normal.length_squared() {
+            return None;
+        }
+        return Some(false);
+    }
+    let inverse = determinant.recip();
+    let u = from_a.dot(crossed) * inverse;
+    let q = from_a.cross(edge_1);
+    let v = ray.dot(q) * inverse;
+    let distance = edge_2.dot(q) * inverse;
+    if u >= -1.0e-10 && v >= -1.0e-10 && u + v <= 1.0 + 1.0e-10 {
+        if distance.abs() <= epsilon {
+            return None;
+        }
+        if distance > 0.0 {
+            if u.min(v).min(1.0 - u - v) <= 1.0e-10 {
+                return None;
+            }
+            return Some(true);
+        }
+    }
+    Some(false)
 }
 
 fn split_directions(
@@ -1893,6 +1911,73 @@ mod tests {
         }
     }
 
+    /// Outward-oriented faces of the unit tetrahedron.
+    const TETRA_INDICES: [u32; 12] = [0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3];
+
+    /// `(origin, scale, inverted)` shells merged into a single primitive.
+    fn tetra_shells(shells: &[(Vec3, f32, bool)]) -> glb::Primitive {
+        let mut positions = Vec::with_capacity(shells.len() * 12);
+        let mut indices = Vec::with_capacity(shells.len() * 12);
+        for &(origin, scale, inverted) in shells {
+            let base = u32::try_from(positions.len() / 3).expect("small fixture");
+            for corner in [Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::Z] {
+                positions.extend_from_slice(&(origin + corner * scale).to_array());
+            }
+            for face in TETRA_INDICES.as_chunks::<3>().0 {
+                let mut face = face.map(|index| index + base);
+                if inverted {
+                    face.swap(1, 2);
+                }
+                indices.extend_from_slice(&face);
+            }
+        }
+        glb::Primitive {
+            source_index: 0,
+            mode: MODE_TRIANGLES,
+            normals: positions.clone(),
+            positions,
+            indices,
+            material: glb::Material {
+                base_color: [0.5; 4],
+                metallic: 0.0,
+                roughness: 1.0,
+            },
+        }
+    }
+
+    fn shell_scene(instance_count: usize, shells: &[(Vec3, f32, bool)]) -> glb::Scene {
+        glb::Scene {
+            meshes: vec![glb::MeshAsset {
+                source_index: 0,
+                manifold: None,
+                primitives: vec![tetra_shells(shells)],
+            }],
+            instances: (0..instance_count)
+                .map(|source_node_index| glb::MeshInstance {
+                    source_node_index,
+                    mesh_index: 0,
+                    model: Mat4::IDENTITY,
+                    normal_matrix: Mat4::IDENTITY,
+                })
+                .collect(),
+            topology_diagnostics: Vec::new(),
+            bounds: None,
+        }
+    }
+
+    /// `count` unit tetrahedra on a grid starting at `first`.
+    fn shell_grid(count: usize, first: Vec3) -> Vec<(Vec3, f32, bool)> {
+        (0..count)
+            .map(|index| {
+                (
+                    first + Vec3::new(0.0, (index % 64) as f32, (index / 64) as f32) * 2.0,
+                    1.0,
+                    false,
+                )
+            })
+            .collect()
+    }
+
     fn test_triangle(edges: [usize; 3]) -> Triangle {
         Triangle {
             vertices: [0, 1, 2],
@@ -1995,13 +2080,11 @@ mod tests {
             "../../../tests/fixtures/racing-drone-section-repro.glb"
         ))
         .expect("racing drone fixture");
-        for diagnostic in &scene.topology_diagnostics {
-            eprintln!(
-                "{} mesh {}: {}",
-                diagnostic.code, diagnostic.mesh_index, diagnostic.detail
-            );
-        }
-        assert!(scene.topology_diagnostics.is_empty());
+        assert!(
+            scene.topology_diagnostics.is_empty(),
+            "{:?}",
+            scene.topology_diagnostics
+        );
 
         let geometry = build(&scene, &options).expect("certified racing drone section");
         assert!(geometry.indices.len() / 3 > 0);
@@ -2788,5 +2871,161 @@ mod tests {
         assert_eq!(linear_to_srgb(0.0), 0.0);
         assert_eq!(cap_vertex_offset(0).expect("zero offset"), 0);
         assert!(cap_vertex_offset(usize::MAX).is_err());
+    }
+
+    #[test]
+    fn shell_containment_fails_closed_on_grazing_and_coplanar_rays() {
+        let unit = [glam::DVec3::ZERO, glam::DVec3::X, glam::DVec3::Y];
+        // A ray lying in the triangle's own plane cannot cross it, and cannot
+        // decide a point that lies in that plane either.
+        assert_eq!(
+            ray_crosses_triangle(glam::DVec3::Z, glam::DVec3::X, unit, 1.0e-6),
+            Some(false)
+        );
+        assert_eq!(
+            ray_crosses_triangle(
+                glam::DVec3::new(0.25, 0.25, 0.0),
+                glam::DVec3::X,
+                unit,
+                1.0e-6
+            ),
+            None
+        );
+        // Leaving through a corner is undecidable; leaving through the
+        // interior is a crossing.
+        assert_eq!(
+            ray_crosses_triangle(glam::DVec3::NEG_Z, glam::DVec3::Z, unit, 1.0e-6),
+            None
+        );
+        assert_eq!(
+            ray_crosses_triangle(
+                glam::DVec3::new(0.25, 0.25, -1.0),
+                glam::DVec3::Z,
+                unit,
+                1.0e-6
+            ),
+            Some(true)
+        );
+
+        // A shell that is half in and half out of another owns nothing.
+        let corners = [Vec3::ZERO, Vec3::X * 4.0, Vec3::Y * 4.0, Vec3::Z * 4.0];
+        let mut triangles = TETRA_INDICES
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|face| Triangle {
+                points: face.map(|index| corners[index as usize]),
+                ..test_triangle([0, 0, 0])
+            })
+            .collect::<Vec<_>>();
+        triangles.push(Triangle {
+            points: [Vec3::splat(0.5), Vec3::splat(3.0), Vec3::new(0.6, 0.4, 0.5)],
+            ..test_triangle([0, 0, 0])
+        });
+        assert!(component_is_contained(&[4], &[0, 1, 2, 3], &triangles, 1.0e-4).is_none());
+    }
+
+    #[test]
+    fn multi_shell_work_ceilings_are_enforced_before_the_quadratic_scans() {
+        let ceiling = format!("exceeds multi-shell work ceiling {MAX_QUADRATIC_SECTION_WORK}");
+        let topology_error =
+            format!("parse: sections: topology: source node 0/mesh 0/primitive 0 {ceiling}");
+
+        // 4001 shells put the component scan itself over the ceiling.
+        let scan = shell_scene(1, &shell_grid(4001, Vec3::new(-0.3, 0.0, 0.0)));
+        assert_eq!(
+            build(&scan, &section_options())
+                .expect_err("component scan ceiling")
+                .to_string(),
+            topology_error
+        );
+
+        // 4000 shells fit the scan exactly, so the first containment test is
+        // what tips the accumulated budget over.
+        let mut shells = vec![(Vec3::ZERO, 20.0, false), (Vec3::splat(2.0), 10.0, true)];
+        shells.extend(shell_grid(3998, Vec3::new(-0.3, 40.0, 0.0)));
+        assert_eq!(
+            build(&shell_scene(1, &shells), &section_options())
+                .expect_err("containment ceiling")
+                .to_string(),
+            topology_error
+        );
+
+        // 5658 cap regions exceed the pairwise-overlap ceiling; splitting them
+        // over two instances keeps each instance under the component ceiling.
+        let pairs = shell_scene(2, &shell_grid(2829, Vec3::new(-0.3, 0.0, 0.0)));
+        assert_eq!(
+            build(&pairs, &section_options())
+                .expect_err("cap pair ceiling")
+                .to_string(),
+            format!(
+                "parse: sections: cap: sections.planes[0] source node 0/mesh 0/primitive 0 {ceiling}"
+            )
+        );
+    }
+
+    #[test]
+    fn fixed_point_winding_overflow_is_reported_as_a_cap_error() {
+        // A cap outline that sweeps the corners of the fixed-point range five
+        // times over runs the i128 shoelace accumulator out of headroom; the
+        // guard must name the plane instead of panicking.
+        const CORNERS: [(f32, f32); 4] = [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)];
+        const COUNT: usize = 20;
+        let mut edges = (0..COUNT)
+            .map(|index| {
+                let (u, v) = CORNERS[index % 4];
+                let magnitude = 2.25e10 - index as f32 * 1.0e6;
+                CanonicalEdge {
+                    start: Vec3::new(-1.0, u * magnitude, v * magnitude),
+                    end: Vec3::new(1.0, u * magnitude, v * magnitude),
+                    triangles: [(index + COUNT - 1) % COUNT, index],
+                    source: TEST_SOURCE,
+                }
+            })
+            .collect::<Vec<_>>();
+        edges.push(missed_edge());
+        let group = SurfaceGroup {
+            owner: 0,
+            edges,
+            triangles: (0..COUNT)
+                .map(|index| Triangle {
+                    points: [Vec3::X, Vec3::X * 2.0, Vec3::X + Vec3::Y],
+                    ..test_triangle([index, (index + 1) % COUNT, COUNT])
+                })
+                .collect(),
+        };
+        let expected = |plane_index| {
+            format!(
+                "parse: sections: cap: sections.planes[{plane_index}] source node 0/mesh 0/primitive 0 fixed-point winding overflow"
+            )
+        };
+        assert_eq!(
+            trace_cut_rings(&group, plane_basis(Vec3::ZERO, Vec3::X), Vec3::X, 1)
+                .expect_err("true cut winding overflow")
+                .to_string(),
+            expected(1)
+        );
+
+        // The same outline reached through the closed-ring graph, where every
+        // triangle sits on the retained side and only the cap boundary closes.
+        let plane = SectionPlane {
+            point: [0.0; 3],
+            normal: [1.0, 0.0, 0.0],
+        };
+        let mut output = CapGeometry::default();
+        assert_eq!(
+            build_plane(
+                &SectionTopology {
+                    groups: vec![group]
+                },
+                &plane,
+                3,
+                1.0e-6,
+                &mut output
+            )
+            .expect_err("cap outline winding overflow")
+            .to_string(),
+            expected(3)
+        );
     }
 }
