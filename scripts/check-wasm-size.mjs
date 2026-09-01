@@ -120,7 +120,12 @@ const sizes = {
 // selection that excludes every line primitive renders through the same
 // unbiased pipeline as `lines: false`. Only `raw` moves: the compressed
 // figures land inside their existing 0.5% compressor allowance.
-const ceilings = { raw: 1_516_379, gzip9: 569_364, brotli11: 431_345 };
+// World-derived screen-up: 1,516,438 / 570,186 / 432,160 — +59 raw for
+// resolving an `up` collinear with the view direction to a declared world axis
+// (`world.forward`, or `world.up` for a view along it) in place of the parse
+// error that rejected the pair. Two comparisons and a rotate of the declared
+// basis; the compressed figures land inside their 0.5% compressor allowance.
+const ceilings = { raw: 1_516_438, gzip9: 569_364, brotli11: 431_345 };
 
 // `raw` is the artifact and is byte-reproducible, so it is enforced exactly.
 // The compressed figures are not properties of the artifact alone: they are

@@ -333,9 +333,10 @@ describe('image request serialization', () => {
       [{}, 'camera.framing must be fit or fixed'],
       [{ framing: 'orbit' }, 'camera.framing must be fit or fixed'],
       [{ framing: 'fit', direction: [0, 0, 0] }, 'camera.direction must not be zero length'],
+      [{ framing: 'fit', up: [0, 0, 0] }, 'camera.up must not be zero length'],
       [
-        { framing: 'fit', direction: [0, 1, 0], up: [0, 2, 0] },
-        'camera.direction and camera.up must not be collinear',
+        { framing: 'fit', direction: [Number.NaN, 1, 0] },
+        'camera.direction must contain three finite numbers',
       ],
       [
         { framing: 'fit', projection: { kind: 'perspective', zoom: 2 } },
@@ -351,8 +352,8 @@ describe('image request serialization', () => {
         'camera.position and camera.target must not coincide',
       ],
       [
-        { framing: 'fixed', position: [0, 0, 1], target: [0, 0, 0], up: [0, 0, 1] },
-        'camera.view direction and camera.up must not be collinear',
+        { framing: 'fixed', position: [0, 0, 1], target: [0, 0, 0], up: [0, 0, 0] },
+        'camera.up must not be zero length',
       ],
       [
         {
@@ -422,33 +423,37 @@ describe('image request serialization', () => {
     }
   });
 
-  // render-core resolves an omitted fit `up` to `world.caller_up`. The TS
-  // precheck once defaulted it to the glTF `[0, 1, 0]`, so under any other
-  // world it disagreed with the authority in both directions.
-  it('should default an omitted fit up to the declared world up', () => {
+  // render-core substitutes a declared-world axis for an `up` that is
+  // collinear with the view, so the facade forwards those requests rather than
+  // deciding the pair names no camera.
+  it('should forward a camera whose up is collinear with its direction', () => {
     const world = { up: '+z', forward: '-y' } as const;
-    const collinear = 'camera.direction and camera.up must not be collinear';
-    const request = (camera: unknown): string =>
-      toImageRequestJson({ format: 'png', world, camera } as unknown as RenderImageOptions);
+    const camera = (value: unknown): unknown =>
+      parse(toImageRequestJson({ format: 'png', world, camera: value } as unknown as RenderImageOptions))[
+        'camera'
+      ];
 
-    // [0, 1, 0] is collinear with the old glTF-basis default but not with this
-    // world's up, so render-core accepts it and the mirror must too.
-    expect(parse(request({ framing: 'fit', direction: [0, 1, 0] }))).toMatchObject({ world });
-    // A direction along the declared up is what render-core rejects instead.
-    expect(() => request({ framing: 'fit', direction: [0, 0, 2] })).toThrow(collinear);
-    // The glTF world keeps its historic default.
-    expect(() =>
-      toImageRequestJson({ format: 'png', camera: { framing: 'fit', direction: [0, 1, 0] } }),
-    ).toThrow(collinear);
-
-    // Views share the request world, so their cameras resolve in it too.
-    expect(() =>
-      toImagesRequestJson({
-        format: 'png',
-        world,
-        views: [{ id: 'top', camera: { framing: 'fit', direction: [0, 0, 1] } }],
-      } as unknown as RenderImagesOptions),
-    ).toThrow('views[0].camera.direction and views[0].camera.up must not be collinear');
+    // A fitted direction on the declared pole, where an omitted up sits.
+    for (const direction of [
+      [0, 0, 1],
+      [0, 0, -1],
+    ]) {
+      expect(camera({ framing: 'fit', direction })).toEqual({ framing: 'fit', direction });
+    }
+    // An explicit pair that contradicts itself, for either framing.
+    const fit = { framing: 'fit', direction: [0, 2, 0], up: [0, 3, 0] };
+    expect(camera(fit)).toEqual(fit);
+    const fixed = { framing: 'fixed', position: [0, 0, 1], target: [0, 0, 0], up: [0, 0, 1] };
+    expect(camera(fixed)).toEqual(fixed);
+    // And in the glTF default world, through the plural surface's views.
+    expect(
+      parse(
+        toImagesRequestJson({
+          format: 'png',
+          views: [{ id: 'top', camera: { framing: 'fit', direction: [0, 1, 0] } }],
+        } as unknown as RenderImagesOptions),
+      ),
+    ).toMatchObject({ views: [{ id: 'top' }] });
   });
 
   it('should name the replacement for removed angle and axis fields', () => {

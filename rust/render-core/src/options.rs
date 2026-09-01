@@ -729,11 +729,29 @@ fn normalized_direction(value: [f32; 3], name: &str) -> Result<glam::Vec3, Strin
     finite_vector(value, name, false).map(glam::Vec3::normalize)
 }
 
-fn validate_orientation(direction: glam::Vec3, up: glam::Vec3, name: &str) -> Result<(), String> {
-    if direction.cross(up).length() < MIN_DIRECTION_LENGTH {
-        return Err(format!("{name} and up must not be collinear"));
+fn collinear(left: glam::Vec3, right: glam::Vec3) -> bool {
+    left.cross(right).length() < MIN_DIRECTION_LENGTH
+}
+
+/// Screen-up for a view, substituting a declared-world axis where the
+/// requested `up` is collinear with `direction` and so names no roll.
+///
+/// The substitute is `world.forward`, falling back to `world.up` for the one
+/// family of views `world.forward` cannot serve: those running along
+/// `world.forward` itself. Those two exhaust the degeneracy, because the two
+/// axes are orthogonal — a direction collinear with one is perpendicular to
+/// the other — so the caller's right axis is never reached and is not offered.
+/// Both vectors are unit length, and the substitution reads only the declared
+/// world, so one request always resolves to one basis.
+fn resolved_up(direction: glam::Vec3, up: glam::Vec3, world: WorldTransform) -> glam::Vec3 {
+    if !collinear(direction, up) {
+        return up;
     }
-    Ok(())
+    let forward = world.direction(world.caller_forward);
+    if collinear(direction, forward) {
+        return world.direction(world.caller_up);
+    }
+    forward
 }
 
 fn resolve_vertical_field_of_view(value: Option<f32>) -> Result<f32, String> {
@@ -840,11 +858,14 @@ fn resolve_camera(
                 Some(direction) => world.direction(normalized_direction(*direction, "direction")?),
                 None => world.default_fit_direction(),
             };
-            let up = world.direction(match up {
-                Some(up) => normalized_direction(*up, "up")?,
-                None => world.caller_up,
-            });
-            validate_orientation(direction, up, "direction")?;
+            let up = resolved_up(
+                direction,
+                world.direction(match up {
+                    Some(up) => normalized_direction(*up, "up")?,
+                    None => world.caller_up,
+                }),
+                world,
+            );
             let margin = margin.unwrap_or(0.1);
             if !margin.is_finite() || !(0.0..=0.5).contains(&margin) {
                 return Err(format!("margin {margin} outside 0..=0.5"));
@@ -869,8 +890,11 @@ fn resolve_camera(
             if direction.length() < MIN_DIRECTION_LENGTH {
                 return Err("position and target must not coincide".into());
             }
-            let up = world.direction(normalized_direction(*up, "up")?);
-            validate_orientation(direction.normalize(), up, "view direction")?;
+            let up = resolved_up(
+                direction.normalize(),
+                world.direction(normalized_direction(*up, "up")?),
+                world,
+            );
             let clipping = clipping
                 .as_ref()
                 .map(|clipping| {
@@ -1252,6 +1276,96 @@ mod tests {
             .asin()
             .to_degrees();
         assert!((elevation - DEFAULT_FIT_ELEVATION_DEG as f32).abs() < 1.0e-4);
+    }
+
+    /// Resolve one request and hand back its camera's screen-up and direction.
+    /// Resolution maps the declared world onto the engine basis, so a
+    /// substituted `world.forward` reads back as `+Z` and `world.up` as `+Y`
+    /// whichever axes the caller declared.
+    fn resolved_orientation(json: &str) -> ([f32; 3], [f32; 3]) {
+        let camera = RenderRequest::from_json(json)
+            .expect("parse")
+            .resolve_options()
+            .expect("resolve")
+            .camera;
+        match camera {
+            RenderCamera::Fit { up, direction, .. } => (up, direction),
+            RenderCamera::Fixed {
+                up,
+                position,
+                target,
+                ..
+            } => (
+                up,
+                (glam::Vec3::from(position) - glam::Vec3::from(target))
+                    .normalize()
+                    .to_array(),
+            ),
+        }
+    }
+
+    #[test]
+    fn a_degenerate_up_resolves_to_a_declared_world_axis() {
+        const FORWARD: [f32; 3] = [0.0, 0.0, 1.0];
+        const UP: [f32; 3] = [0.0, 1.0, 0.0];
+
+        // Fit at elevation ±90 puts the view on the pole an omitted `up`
+        // already occupies; `world.forward` takes the roll.
+        for direction in ["[0,1,0]", "[0,-1,0]"] {
+            let (up, _) = resolved_orientation(&format!(
+                r#"{{"format":"png","camera":{{"framing":"fit","direction":{direction}}}}}"#
+            ));
+            assert_eq!(up, FORWARD, "fit along {direction}");
+        }
+        // The same view in a declared world reads the same substitution there:
+        // `world.forward` is `-y`, which resolution puts on `+Z`.
+        assert_eq!(
+            resolved_orientation(
+                r#"{"format":"png","world":{"up":"+z","forward":"-y"},"camera":{"framing":"fit","direction":[0,0,1]}}"#
+            ),
+            (FORWARD, UP),
+        );
+        // An explicit `up` that contradicts an explicit `direction` resolves
+        // the same way, for both framings.
+        assert_eq!(
+            resolved_orientation(
+                r#"{"format":"png","camera":{"framing":"fit","direction":[0,2,0],"up":[0,3,0]}}"#
+            ),
+            (FORWARD, UP),
+        );
+        assert_eq!(
+            resolved_orientation(
+                r#"{"format":"png","camera":{"framing":"fixed","position":[0,4,0],"target":[0,0,0],"up":[0,1,0]}}"#
+            ),
+            (FORWARD, UP),
+        );
+        // A view along `world.forward` is the one case `world.forward` cannot
+        // serve, so the second fallback — `world.up` — is taken.
+        assert_eq!(
+            resolved_orientation(
+                r#"{"format":"png","camera":{"framing":"fit","direction":[0,0,1],"up":[0,0,5]}}"#
+            ),
+            (UP, FORWARD),
+        );
+        assert_eq!(
+            resolved_orientation(
+                r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,4],"target":[0,0,0],"up":[0,0,1]}}"#
+            ),
+            (UP, FORWARD),
+        );
+        assert_eq!(
+            resolved_orientation(
+                r#"{"format":"png","world":{"up":"+z","forward":"-y"},"camera":{"framing":"fit","direction":[0,-1,0],"up":[0,-1,0]}}"#
+            ),
+            (UP, FORWARD),
+        );
+        // An `up` that names a roll keeps it, so no accepted request moves.
+        let request =
+            r#"{"format":"png","camera":{"framing":"fit","direction":[0,1,0],"up":[1,0,0]}}"#;
+        assert_eq!(resolved_orientation(request), ([1.0, 0.0, 0.0], UP));
+        // Resolution reads the request and the declared world alone, so the
+        // same request always names the same basis.
+        assert_eq!(resolved_orientation(request), resolved_orientation(request));
     }
 
     #[test]
@@ -1669,6 +1783,9 @@ mod tests {
         let cases = [
             r#"{"format":"png","camera":{"framing":"fit"}}"#,
             r#"{"format":"png","camera":{"framing":"fit","direction":[1,-1,1],"up":[0,0,1],"margin":0.2,"projection":{"kind":"perspective","verticalFieldOfView":60}}}"#,
+            // A degenerate `up` names a substitution, not a mistake.
+            r#"{"format":"png","camera":{"framing":"fit","direction":[0,1,0],"up":[0,2,0]}}"#,
+            r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,0,1]}}"#,
             r#"{"format":"png","camera":{"framing":"fit","projection":{"kind":"orthographic"}}}"#,
             r#"{"format":"png","camera":{"framing":"fixed","position":[4,3,2],"target":[0,0,0],"up":[0,0,1]}}"#,
             r#"{"format":"png","camera":{"framing":"fixed","position":[4,3,2],"target":[0,0,0],"up":[0,0,1],"projection":{"kind":"perspective","verticalFieldOfView":35,"zoom":2},"clipping":{"near":0.1,"far":100}}}"#,
@@ -1683,12 +1800,12 @@ mod tests {
 
         for json in [
             r#"{"format":"png","camera":{"framing":"fit","direction":[0,0,0]}}"#,
-            r#"{"format":"png","camera":{"framing":"fit","direction":[0,1,0],"up":[0,2,0]}}"#,
+            r#"{"format":"png","camera":{"framing":"fit","up":[0,0,0]}}"#,
             r#"{"format":"png","camera":{"framing":"fit","margin":0.6}}"#,
             r#"{"format":"png","camera":{"framing":"fit","projection":{"kind":"perspective","verticalFieldOfView":0}}}"#,
             r#"{"format":"png","camera":{"framing":"fit","projection":{"kind":"perspective","zoom":2}}}"#,
             r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,0],"target":[0,0,0],"up":[0,1,0]}}"#,
-            r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,0,1]}}"#,
+            r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,0,0]}}"#,
             r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,1,0],"projection":{"kind":"orthographic","verticalSpan":0}}}"#,
             r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,1,0],"projection":{"kind":"perspective","zoom":0}}}"#,
             r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,1,0],"clipping":{"near":1,"far":1}}}"#,

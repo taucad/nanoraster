@@ -164,7 +164,7 @@ export type RenderCamera =
       readonly framing: 'fit';
       /** Direction from the subject toward the camera; fit may translate the optical axis. Magnitude is ignored. @default [0.6123724357, 0.5, 0.6123724357] */
       readonly direction?: RenderVector3;
-      /** Camera screen-up direction. Magnitude is ignored. @default [0, 1, 0] */
+      /** Camera screen-up direction. Magnitude is ignored. An up collinear with `direction` names no roll, so screen-up resolves to `world.forward`, or to `world.up` for a `direction` along `world.forward`. @default [0, 1, 0] */
       readonly up?: RenderVector3;
       /** Minimum empty fraction around contained fitted geometry, from 0 to 0.5. Aspect, front clearance, or annotations may add whitespace. @default 0.1 */
       readonly margin?: number;
@@ -178,7 +178,7 @@ export type RenderCamera =
       readonly position: RenderVector3;
       /** Point the camera looks at in caller-world coordinates. */
       readonly target: RenderVector3;
-      /** Camera screen-up direction. Magnitude is ignored. */
+      /** Camera screen-up direction. Magnitude is ignored. An up collinear with the view direction names no roll, so screen-up resolves to `world.forward`, or to `world.up` for a view along `world.forward`. */
       readonly up: RenderVector3;
       /** Perspective or orthographic projection. @default perspective with a 45° vertical field of view and zoom 1 */
       readonly projection?: RenderFixedProjection;
@@ -753,12 +753,6 @@ const degreesPerRadian = 180 / Math.PI;
 
 const orbitElevationRange = [-90, 90] as const;
 
-/**
- * The default fitted three-quarter view. Holding it in orbit form leaves one
- * derivation of the default direction rather than a literal per call site.
- */
-const defaultFitOrbit: RenderOrbit = { azimuth: 45, elevation: 30 };
-
 const dot = (left: RenderVector3, right: RenderVector3): number =>
   left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
 
@@ -847,19 +841,6 @@ export const orbitFromDirection = (direction: RenderVector3, world?: RenderWorld
   };
 };
 
-const normalizedCrossLength = (left: RenderVector3, right: RenderVector3): number => {
-  const leftLength = Math.hypot(...left);
-  const rightLength = Math.hypot(...right);
-  return (
-    Math.hypot(
-      left[1] * right[2] - left[2] * right[1],
-      left[2] * right[0] - left[0] * right[2],
-      left[0] * right[1] - left[1] * right[0],
-    ) /
-    (leftLength * rightLength)
-  );
-};
-
 const validateProjection = (projection: unknown, name: string, framing: RenderCamera['framing']): void => {
   if (projection === undefined) {
     return;
@@ -906,7 +887,7 @@ const validateProjection = (projection: unknown, name: string, framing: RenderCa
   throw new TypeError(`${name}.kind must be perspective or orthographic`);
 };
 
-const validateCamera = (camera: unknown, name: string, world?: RenderWorld): void => {
+const validateCamera = (camera: unknown, name: string): void => {
   if (camera === undefined) {
     return;
   }
@@ -915,17 +896,15 @@ const validateCamera = (camera: unknown, name: string, world?: RenderWorld): voi
   }
   if (camera['framing'] === 'fit') {
     assertKnownKeys(camera, fitCameraKeys, name);
-    // Both fit defaults are read in the declared world, as render-core reads
-    // them: an omitted direction is `world.default_fit_direction()` and an
-    // omitted up is `world.caller_up`. Defaulting either in the glTF basis
-    // would make the collinearity verdict disagree with the authority.
-    const direction = cameraVector(
-      camera['direction'] ?? directionFromOrbit(defaultFitOrbit, world),
-      `${name}.direction`,
-    );
-    const up = cameraVector(camera['up'] ?? worldAxisVector(world?.up ?? '+y'), `${name}.up`);
-    if (normalizedCrossLength(direction, up) < minimumCameraVectorLength) {
-      throw new TypeError(`${name}.direction and ${name}.up must not be collinear`);
+    // Only shape is checked here: both fit vectors are optional and render-core
+    // defaults them in the declared world. A supplied `up` collinear with
+    // `direction` names no roll, which render-core resolves against the
+    // declared world rather than refusing.
+    if (camera['direction'] !== undefined) {
+      cameraVector(camera['direction'], `${name}.direction`);
+    }
+    if (camera['up'] !== undefined) {
+      cameraVector(camera['up'], `${name}.up`);
     }
     if (camera['margin'] !== undefined) {
       assertRange(camera['margin'], `${name}.margin`, renderImageMarginRange);
@@ -939,7 +918,7 @@ const validateCamera = (camera: unknown, name: string, world?: RenderWorld): voi
   assertKnownKeys(camera, fixedCameraKeys, name);
   const position = cameraVector(camera['position'], `${name}.position`, true);
   const target = cameraVector(camera['target'], `${name}.target`, true);
-  const up = cameraVector(camera['up'], `${name}.up`);
+  cameraVector(camera['up'], `${name}.up`);
   const direction: RenderVector3 = [
     position[0] - target[0],
     position[1] - target[1],
@@ -947,9 +926,6 @@ const validateCamera = (camera: unknown, name: string, world?: RenderWorld): voi
   ];
   if (Math.hypot(...direction) < minimumCameraVectorLength) {
     throw new TypeError(`${name}.position and ${name}.target must not coincide`);
-  }
-  if (normalizedCrossLength(direction, up) < minimumCameraVectorLength) {
-    throw new TypeError(`${name}.view direction and ${name}.up must not be collinear`);
   }
   validateProjection(camera['projection'], `${name}.projection`, 'fixed');
   const clipping = camera['clipping'];
@@ -1139,9 +1115,8 @@ const validateCameraCommon = (options: CameraCommonOptions, annotated: boolean):
   if (options.lineWidth !== undefined) {
     assertRange(options.lineWidth, 'lineWidth', renderImageLineWidthRange);
   }
-  // World first: the camera's fit defaults are resolved in it.
   validateWorld(options.world);
-  validateCamera(options.camera, 'camera', options.world);
+  validateCamera(options.camera, 'camera');
   assertOptionalBoolean(options.axes, 'axes');
   assertOptionalBoolean(options.scaleBar, 'scaleBar');
   validateAnnotatedDimensions(options, annotated);
@@ -1233,7 +1208,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
       throw new TypeError(`views contains duplicate id ${JSON.stringify(id)}`);
     }
     ids.add(id);
-    validateCamera(camera, `views[${index}].camera`, options.world);
+    validateCamera(camera, `views[${index}].camera`);
     if (width !== undefined) {
       assertRange(width, `views[${index}].width`, renderImageDimensionRange);
     }

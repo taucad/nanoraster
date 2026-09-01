@@ -102,6 +102,23 @@ if (
 ) {
   throw new Error('interleaved/instanced fixture did not produce a 768x576 PNG');
 }
+// A fitted view along the world pole leaves `up` naming no roll, so screen-up
+// resolves to `world.forward`. That substituted view is the same image as the
+// one spelling the same vector out, which is what the poles above pass.
+for (const direction of [TOP, BOTTOM]) {
+  const poleView = (up) =>
+    JSON.stringify({
+      width: 256,
+      height: 256,
+      format: 'png',
+      camera: { framing: 'fit', direction, up },
+    });
+  const substituted = await native.renderImage(glb, poleView(undefined));
+  if (!substituted.equals(await native.renderImage(glb, poleView([0, 0, 1])))) {
+    throw new Error(`substituted screen-up differs from the explicit one along ${JSON.stringify(direction)}`);
+  }
+}
+
 const webp = await native.renderImage(glb, JSON.stringify({ width: 768, height: 432, format: 'webp' }));
 if (webp.toString('latin1', 0, 4) !== 'RIFF' || webp.toString('latin1', 8, 12) !== 'WEBP') {
   throw new Error('webp output is not a WebP');

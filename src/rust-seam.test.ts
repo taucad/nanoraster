@@ -75,36 +75,30 @@ describe('TypeScript mirrors of render-core rules', () => {
     expect(reject({ up: '+z', forward: '+y' })).not.toThrow();
   });
 
-  it('resolves both omitted fit-camera vectors in the declared world', () => {
-    // render-core defaults the fit direction and up in the caller's declared
-    // basis, so the collinearity precheck has to read them there as well.
+  it('leaves a degenerate camera up to render-core, which substitutes an axis', () => {
+    // render-core resolves an `up` collinear with the view against the
+    // declared world instead of refusing it, so no camera rule here may reject
+    // the pair. The substitution itself is render-core's alone: this seam pins
+    // that the rejection is absent and that the two fallback axes are the
+    // declared world's own.
+    expect(renderCoreOptions).not.toContain('and up must not be collinear');
     expect(
       capture(
         renderCoreOptions,
-        /None => (world\.default_fit_direction\(\)),/u,
-        'the omitted fit-direction default in rust/render-core/src/options.rs',
+        /let forward = (world\.direction\(world\.caller_forward\));/u,
+        'the first screen-up fallback in rust/render-core/src/options.rs',
       ),
-    ).toBe('world.default_fit_direction()');
-    expect(
-      capture(
-        renderCoreOptions,
-        /None => (world\.caller_up),/u,
-        'the omitted fit-up default in rust/render-core/src/options.rs',
-      ),
-    ).toBe('world.caller_up');
+    ).toBe('world.direction(world.caller_forward)');
     const world = { up: '+z', forward: '-y' } as const;
     const fit =
       (camera: unknown): (() => string) =>
       () =>
         toImageRequestJson({ format: 'png', world, camera } as RenderImageOptions);
-    // Defaulted up: collinear with the declared up, not with `[0, 1, 0]`.
-    expect(fit({ framing: 'fit', direction: [0, 0, 1] })).toThrow('must not be collinear');
-    expect(fit({ framing: 'fit', direction: [0, 1, 0] })).not.toThrow();
-    // Defaulted direction: it orbits the declared basis, not the glTF one.
-    expect(fit({ framing: 'fit', up: directionFromOrbit(defaultFitOrbit, world) })).toThrow(
-      'must not be collinear',
-    );
-    expect(fit({ framing: 'fit', up: directionFromOrbit(defaultFitOrbit) })).not.toThrow();
+    // Along the declared up, along the declared forward, and a contradictory
+    // explicit pair: every one of them is render-core's to resolve.
+    expect(fit({ framing: 'fit', direction: [0, 0, 1] })).not.toThrow();
+    expect(fit({ framing: 'fit', direction: [0, -1, 0], up: [0, -2, 0] })).not.toThrow();
+    expect(fit({ framing: 'fit', up: directionFromOrbit(defaultFitOrbit, world) })).not.toThrow();
   });
 
   it('derives the documented fit-direction default from render-core orbit angles', () => {
