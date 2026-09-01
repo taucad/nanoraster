@@ -53,14 +53,15 @@ so recreate the renderer rather than retrying the call.
 const results = await renderer.renderImages(glb, {
   format: 'webp',
   timings: true,
-  views: [{ id: 'iso', phi: 60, theta: -45 }],
+  views: [{ id: 'iso' }],
 });
 
-console.log(results.timings.setup, results.timings.views[0].render);
+console.log(results.timings.capBuild, results.timings.views[0].render);
 ```
 
 `timings: true` on a plan call attaches stage timings: a warm renderer reports
-parse and per-view work while `setup` stays near zero after the first call.
+zero `adapterDeviceRequests`, one shared `presentationBuilds`, and per-view
+work.
 
 ## Variations
 

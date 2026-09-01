@@ -16,21 +16,23 @@ const image = await renderImage(glb, {
   width: 768, // default
   height: 432, // default
   quality: 1, // webp default (lossless); jpeg defaults to 0.92; png and raw ignore it
-  margin: 0.1, // default
-  up: 'y', // default
-  projection: 'perspective', // default
+  lineWidth: 3, // output pixels; default
+  surfaces: true, // default
+  lines: true, // default
+  visiblePrimitives: undefined, // default (all reachable primitives)
+  sections: undefined, // default (no section view)
+  world: undefined, // default (glTF +Y up, +Z forward, metres)
   background: undefined, // default (transparent)
   axes: false, // default
   scaleBar: false, // default
   lighting: 'studio', // default
   label: undefined, // default (no label drawn)
-  phi: 60, // default
-  theta: -45, // default
+  camera: undefined, // default fitted three-quarter perspective camera
 });
 ```
 
-`renderImages` takes the same shared keys, minus `phi`, `theta` and `label`,
-plus `views: [{ id, label?, phi, theta, width?, height?, format?, quality? }]`,
+`renderImages` takes the same shared keys, minus `label` and singular `camera`,
+plus `views: [{ id, label?, camera?, width?, height?, format?, quality? }]`,
 one entry per image in result order, and `timings: true` to attach stage
 timings. `format: 'raw'` skips the encoder and returns the frame itself, at
 call level or per view; see [Work with raw pixels](guides/work-with-raw-pixels).
@@ -84,10 +86,7 @@ import { renderImages } from 'nanoraster';
 
 const [iso, front] = await renderImages(glb, {
   format: 'webp',
-  views: [
-    { id: 'iso', phi: 60, theta: -45 },
-    { id: 'front', phi: 90, theta: 0 },
-  ],
+  views: [{ id: 'iso' }, { id: 'front', camera: { framing: 'fit', direction: [1, 0, 0] } }],
 });
 ```
 
@@ -184,7 +183,7 @@ import { renderImages, type RenderImagesOptions } from 'nanoraster';
 
 const options = {
   format: 'webp',
-  views: [{ id: 'iso', phi: 60, theta: -45 }],
+  views: [{ id: 'iso' }],
 } as const satisfies RenderImagesOptions;
 
 const [iso] = await renderImages(glb, options);
@@ -194,19 +193,127 @@ const [iso] = await renderImages(glb, options);
 
 ## Options
 
-[Frame the model](guides/frame-the-model) shows these fields in use.
+[Frame the model](guides/frame-the-model) and [Place the camera](guides/place-the-camera)
+show these fields in use.
+
+### `RenderVector3`
+
+```typescript
+export type RenderVector3 = readonly [x: number, y: number, z: number];
+```
+
+A Cartesian vector in the request's caller-world frame. That frame is glTF
+world space when `world` is omitted. Direction and up vectors accept any finite
+non-zero magnitude and are normalized internally.
+
+### `RenderWorldAxis`
+
+```typescript
+export type RenderWorldAxis = '+x' | '-x' | '+y' | '-y' | '+z' | '-z';
+```
+
+One signed principal axis in the caller-world frame.
+
+### `RenderWorld`
+
+```typescript
+export type RenderWorld = {
+  readonly up?: RenderWorldAxis;
+  readonly forward?: RenderWorldAxis;
+  readonly unit?: 'meter' | 'millimeter';
+};
+```
+
+Declares the coordinate frame used by camera, section, world-light, axes, and
+scale-bar values without changing the submitted GLB. Defaults are glTF `+Y`
+up, `+Z` forward, and metres. Up and forward must name distinct axes and form a
+right-handed frame. The setting is shared by every view in a batch.
+
+### `RenderPrimitiveReference`
+
+```typescript
+export type RenderPrimitiveReference = {
+  readonly nodeIndex: number;
+  readonly meshIndex: number;
+  readonly primitiveIndex: number;
+};
+```
+
+One reachable primitive instance in the submitted glTF document. All three
+indices are non-negative safe integers. See [Choose visible geometry](guides/choose-visible-geometry).
+
+### `RenderSectionPlane`
+
+```typescript
+export type RenderSectionPlane = {
+  readonly point: RenderVector3;
+  readonly normal: RenderVector3;
+};
+```
+
+The normal points into the retained world-space half-space and is normalized
+internally.
+
+### `RenderSections`
+
+```typescript
+export type RenderSections = {
+  readonly planes: readonly [RenderSectionPlane, ...RenderSectionPlane[]];
+  readonly clipSurfaces?: boolean;
+  readonly clipLines?: boolean;
+};
+```
+
+One to `renderImageMaxSections` planes shared by the request. Both clip flags
+default to `true`; [Cut section views](guides/render-section-views) covers caps,
+outlines, and multiple retained half-spaces. Successful closed-surface cuts
+contain every cap; failures return `parse`.
+
+### `RenderCamera`
+
+The tagged camera contract. A fit camera supplies orientation and lets
+nanoraster solve a geometry-tight optical target, distance, and clipping; a
+fixed camera preserves caller-owned pose and projection. Perspective is a
+rectilinear projection whose requested field of view is preserved exactly.
+
+```typescript
+export type RenderCamera =
+  | {
+      readonly framing: 'fit';
+      readonly direction?: RenderVector3;
+      readonly up?: RenderVector3;
+      readonly margin?: number;
+      readonly projection?:
+        | { readonly kind: 'perspective'; readonly verticalFieldOfView?: number }
+        | { readonly kind: 'orthographic' };
+    }
+  | {
+      readonly framing: 'fixed';
+      readonly position: RenderVector3;
+      readonly target: RenderVector3;
+      readonly up: RenderVector3;
+      readonly projection?:
+        | { readonly kind: 'perspective'; readonly verticalFieldOfView?: number; readonly zoom?: number }
+        | { readonly kind: 'orthographic'; readonly verticalSpan: number; readonly zoom?: number };
+      readonly clipping?: { readonly near: number; readonly far: number };
+    };
+```
+
+Defaults are fit direction `[0.6123724357, 0.5, 0.6123724357]`, up `[0, 1, 0]`,
+minimum margin `0.1`, and perspective field of view `45` with zoom `1`.
+`direction` fixes orientation from the subject toward the camera; fitting may
+translate the optical axis to balance the projected geometry. A fixed camera
+requires non-coincident position/target and a non-collinear up vector. Omitted
+clipping derives safe planes from referenced geometry. Explicit range outside
+the referenced subject is tightened without changing visible geometry.
 
 ### `RenderImageOptions`
 
 ```typescript
-export type RenderImageOptions = RenderImageSharedOptions &
-  RenderLabelOptions & {
-    readonly phi?: number;
-    readonly theta?: number;
-  };
+export type RenderImageOptions = RenderImageSharedOptions & RenderCameraOptions;
 ```
 
-`RenderImageSharedOptions` and `RenderLabelOptions` are internal composition
+`RenderImageSharedOptions` and `RenderCameraOptions` are internal composition
 types; the table is the complete consumer-visible shape.
 
 <auto-type-table path="./props.ts" name="RenderImageOptions" caption="RenderImageOptions properties" />
@@ -217,8 +324,7 @@ types; the table is the complete consumer-visible shape.
 export type RenderImageView<Id extends string = string> = {
   readonly id: Id;
   readonly label?: string;
-  readonly phi: number;
-  readonly theta: number;
+  readonly camera?: RenderCamera;
   readonly width?: number;
   readonly height?: number;
   readonly format?: 'png' | 'webp' | 'jpeg' | 'jpg' | 'raw';
@@ -229,7 +335,7 @@ export type RenderImageView<Id extends string = string> = {
 IDs must be unique within a request. The four output fields are per-view
 overrides: each defaults to the shared value, follows the same validation, and
 flows into that entry's filename and MIME type; `format: 'raw'` is accepted
-here too.
+here too. Omitted `camera` means the default fitted camera.
 
 <auto-type-table path="./props.ts" name="RenderImageView" caption="RenderImageView properties" />
 
@@ -282,7 +388,7 @@ field in use.
 
 A rig replaces the studio lights outright and inherits every other studio
 value it leaves out. Directions are view-space by default (`+x` right, `+y` up,
-`+z` toward the viewer); `space: 'world'` authors them in glTF coordinates.
+`+z` toward the viewer); `space: 'world'` uses the declared caller world.
 
 <auto-type-table path="./props.ts" name="RenderLightingRig" caption="RenderLightingRig properties" />
 
@@ -357,7 +463,7 @@ import { renderImages, type RenderedImagesResult, type RenderImagesOptions } fro
 const options = {
   format: 'webp',
   timings: true,
-  views: [{ id: 'iso', phi: 60, theta: -45 }],
+  views: [{ id: 'iso' }],
 } as const satisfies RenderImagesOptions;
 
 const result: RenderedImagesResult<typeof options> = await renderImages(glb, options);
@@ -367,9 +473,9 @@ console.log(result[0].file.name, result.timings.parse); // 'render-iso.webp' 0.4
 ### `RenderTimings`
 
 Attached to a plan call's result when the options set `timings: true`. The
-fields map onto the [pipeline stages](how-it-works): parse, setup (device
-acquisition plus geometry upload), then per-view rasterise, annotate and
-encode, all in milliseconds.
+fields map onto the [pipeline stages](how-it-works): parse, shared cap-build,
+source upload, then per-view rasterise, annotate and encode. Resource counters
+show which work the call acquired; `presentationBuilds` is `1` for one plan.
 
 <auto-type-table path="./props.ts" name="RenderTimings" caption="RenderTimings properties" />
 
@@ -458,20 +564,24 @@ try {
 Every bound and pattern the validator applies, as the exact runtime values;
 import them rather than restating them, so caller-side checks cannot drift.
 
-| Export                             | Runtime value                             | Unit or syntax              | Affected field              |
-| ---------------------------------- | ----------------------------------------- | --------------------------- | --------------------------- |
-| `renderImageDimensionRange`        | `readonly [16, 4096]`                     | pixels                      | `width`, `height`           |
-| `renderImageQualityRange`          | `readonly [0, 1]`                         | normalised encoder quality  | `quality`                   |
-| `renderImageMarginRange`           | `readonly [0, 0.5]`                       | fraction of fitted extent   | `margin`                    |
-| `renderImageAnnotatedMinDimension` | `192`                                     | pixels                      | annotated `width`, `height` |
-| `renderImageLabelMaxLength`        | `64`                                      | Unicode code points         | `label`                     |
-| `renderImageLabelPattern`          | `/^[\u0020-\u007E\u00B5\u2014\u2212]+$/u` | supported characters        | `label`                     |
-| `renderImageViewIdPattern`         | `/^[\dA-Za-z][\w-]{0,63}$/u`              | identifier syntax           | `id`                        |
-| `renderImageBackgroundPattern`     | `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`   | hexadecimal colour          | `background`                |
-| `renderImageMaxLights`             | `8`                                       | lights per rig              | `lighting.lights`           |
-| `renderImageLightColorRange`       | `readonly [0, 32]`                        | linear radiance per channel | `lighting.lights[].color`   |
-| `renderImageAmbientRange`          | `readonly [0, 4]`                         | diffuse multiplier          | `lighting.ambient`          |
-| `renderImageExposureRange`         | `readonly [0.01, 16]`                     | linear multiplier           | `lighting.exposure`         |
+| Export                                | Runtime value                             | Unit or syntax              | Affected field              |
+| ------------------------------------- | ----------------------------------------- | --------------------------- | --------------------------- |
+| `renderImageDimensionRange`           | `readonly [16, 4096]`                     | pixels                      | `width`, `height`           |
+| `renderImageQualityRange`             | `readonly [0, 1]`                         | normalised encoder quality  | `quality`                   |
+| `renderImageMarginRange`              | `readonly [0, 0.5]`                       | minimum empty fraction      | `camera.margin`             |
+| `renderImageVerticalFieldOfViewRange` | `readonly [1, 179]`                       | degrees                     | `verticalFieldOfView`       |
+| `renderImageZoomRange`                | `readonly [0.01, 100]`                    | magnification               | `zoom`                      |
+| `renderImageLineWidthRange`           | `readonly [0.25, 16]`                     | output pixels               | `lineWidth`                 |
+| `renderImageAnnotatedMinDimension`    | `192`                                     | pixels                      | annotated `width`, `height` |
+| `renderImageLabelMaxLength`           | `64`                                      | Unicode code points         | `label`                     |
+| `renderImageLabelPattern`             | `/^[\u0020-\u007E\u00B5\u2014\u2212]+$/u` | supported characters        | `label`                     |
+| `renderImageViewIdPattern`            | `/^[\dA-Za-z][\w-]{0,63}$/u`              | identifier syntax           | `id`                        |
+| `renderImageBackgroundPattern`        | `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`   | hexadecimal colour          | `background`                |
+| `renderImageMaxLights`                | `8`                                       | lights per rig              | `lighting.lights`           |
+| `renderImageMaxSections`              | `6`                                       | planes per request          | `sections.planes`           |
+| `renderImageLightColorRange`          | `readonly [0, 32]`                        | linear radiance per channel | `lighting.lights[].color`   |
+| `renderImageAmbientRange`             | `readonly [0, 4]`                         | diffuse multiplier          | `lighting.ambient`          |
+| `renderImageExposureRange`            | `readonly [0.01, 16]`                     | linear multiplier           | `lighting.exposure`         |
 
 ```typescript
 import { renderImageDimensionRange } from 'nanoraster';
@@ -487,7 +597,19 @@ Inclusive pixel bounds for both image dimensions.
 
 ### `renderImageMarginRange`
 
-Inclusive corner-fit margin bounds.
+Inclusive minimum fitted-margin bounds.
+
+### `renderImageVerticalFieldOfViewRange`
+
+Inclusive vertical perspective field-of-view bounds in degrees.
+
+### `renderImageZoomRange`
+
+Inclusive perspective and orthographic magnification bounds.
+
+### `renderImageLineWidthRange`
+
+Inclusive authored-edge line width in output pixels.
 
 ### `renderImageAnnotatedMinDimension`
 
@@ -521,6 +643,10 @@ character is restricted.
 ### `renderImageMaxLights`
 
 Most directional lights one rig may carry.
+
+### `renderImageMaxSections`
+
+Most simultaneous retained-half-space planes one request may carry.
 
 ### `renderImageLightColorRange`
 

@@ -1,0 +1,64 @@
+---
+title: Choose visible geometry
+description: Show surfaces, authored lines, or exact glTF primitive instances without changing the submitted model.
+---
+
+Presentation filters decide which submitted primitives reach the draw plan.
+They do not rewrite the GLB, and they apply to every camera in a batch.
+
+## Switch surfaces and lines independently
+
+`surfaces` controls `TRIANGLES` primitives. `lines` controls authored `LINES`
+primitives. Both default to `true`.
+
+<RenderDemo>
+
+```typescript
+import { renderImage } from 'nanoraster';
+
+const image = await renderImage(glb, {
+  format: 'webp',
+  surfaces: true,
+  lines: true,
+  visiblePrimitives: [
+    { nodeIndex: 0, meshIndex: 0, primitiveIndex: 0 },
+    { nodeIndex: 0, meshIndex: 0, primitiveIndex: 1 },
+  ],
+});
+```
+
+</RenderDemo>
+
+Turn off `lines` for a shaded render or turn off `surfaces` for an authored
+line drawing. Section-cap outlines remain part of a shown section surface;
+they are not authored line primitives.
+
+## Select primitive instances
+
+`visiblePrimitives` is an allowlist of source glTF indices. `nodeIndex`
+identifies the instance, `meshIndex` identifies its referenced source mesh,
+and `primitiveIndex` identifies the primitive inside that mesh. The node index
+matters when several nodes instance one mesh.
+
+Omit the option to admit every reachable primitive. Pass `[]` to admit none.
+Unknown, mismatched, or duplicate references fail with `RenderError` code
+`parse` rather than producing an incomplete image.
+
+```typescript
+const edges = await renderImage(glb, {
+  format: 'png',
+  visiblePrimitives: [{ nodeIndex: 0, meshIndex: 0, primitiveIndex: 1 }],
+});
+```
+
+A fitted camera frames the admitted surfaces and lines. If no geometry is
+admitted, fitted framing fails because there is no subject; a fixed camera may
+still render a background and annotations.
+
+## Resolve product identity before rendering
+
+The renderer accepts document identity, not application component IDs. Keep
+the mapping from assemblies, layers, hide state, or isolation state in the
+caller that owns those concepts, then send one final allowlist. This keeps the
+request serializable and makes the same render portable to a worker or remote
+renderer.

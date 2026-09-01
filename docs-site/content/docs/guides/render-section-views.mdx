@@ -1,0 +1,60 @@
+---
+title: Cut section views
+description: Cut one or more retained half-spaces and render deterministic striped caps and outlines.
+---
+
+A section plane is a point and a normal in the submitted GLB's world frame.
+The normal points into the half-space that remains visible.
+
+## Cut with one or more planes
+
+Use `sections.planes` for one to six simultaneous cuts. The retained subject is
+the intersection of every half-space, so changing plane order does not change
+the image.
+
+<RenderDemo model="/demo/overlapping-cubes.glb">
+
+```typescript
+import { renderImage } from 'nanoraster';
+
+const image = await renderImage(glb, {
+  format: 'webp',
+  sections: {
+    planes: [
+      { point: [0, 0, 0], normal: [-1, 0, 0] },
+      { point: [0, 0, 0], normal: [0, 0, 1] },
+    ],
+    clipSurfaces: true,
+    clipLines: true,
+  },
+});
+```
+
+</RenderDemo>
+
+Normals accept any finite non-zero magnitude and are normalized internally.
+An empty plane list is invalid; omit `sections` to render without a cut.
+
+## Control what each plane clips
+
+`clipSurfaces` and `clipLines` both default to `true`. Turning off
+`clipSurfaces` leaves triangle surfaces unchanged and produces no caps while
+authored lines may still be cut. Turning off `clipLines` leaves authored lines
+unchanged while surfaces, caps, and cap outlines still follow the planes.
+
+## Read the cap
+
+Closed, orientable triangle surfaces receive striped material-colour caps and
+black outlines. Overlapping caps are red with yellow cross-stripes; touching
+regions retain their material style.
+
+A successful render contains every true cap. Open or non-manifold topology and
+fixed-precision overflow return a source-and-plane `parse` error. Tangent planes
+may yield an outline without a cap. nanoraster pairs duplicated glTF seams but
+does not repair meshes.
+
+Hatch direction follows the section plane; spacing follows the camera.
+
+Fitted framing follows the visible primitive set but does not refit after a
+plane moves. The cut therefore reveals the interior without making the camera
+jump.

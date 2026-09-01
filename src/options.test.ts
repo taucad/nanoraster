@@ -19,11 +19,22 @@ describe('image request serialization', () => {
       width: 1920,
       height: 1080,
       quality: 0.8,
-      phi: 45,
-      theta: 90,
-      margin: 0.25,
-      up: 'z',
-      projection: 'orthographic',
+      camera: {
+        framing: 'fixed',
+        position: [4, 3, 2],
+        target: [1, 0, -1],
+        up: [0, 0, 1],
+        projection: { kind: 'orthographic', verticalSpan: 12, zoom: 1.5 },
+        clipping: { near: 0.1, far: 100 },
+      },
+      lineWidth: 1.25,
+      surfaces: false,
+      lines: true,
+      visiblePrimitives: [{ nodeIndex: 2, meshIndex: 1, primitiveIndex: 0 }],
+      sections: {
+        planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }],
+        clipLines: false,
+      },
       background: '#FF800040',
       label: 'Front',
       axes: true,
@@ -35,11 +46,22 @@ describe('image request serialization', () => {
       width: 1920,
       height: 1080,
       quality: 0.8,
-      phi: 45,
-      theta: 90,
-      margin: 0.25,
-      up: 'z',
-      projection: 'orthographic',
+      camera: {
+        framing: 'fixed',
+        position: [4, 3, 2],
+        target: [1, 0, -1],
+        up: [0, 0, 1],
+        projection: { kind: 'orthographic', verticalSpan: 12, zoom: 1.5 },
+        clipping: { near: 0.1, far: 100 },
+      },
+      lineWidth: 1.25,
+      surfaces: false,
+      lines: true,
+      visiblePrimitives: [{ nodeIndex: 2, meshIndex: 1, primitiveIndex: 0 }],
+      sections: {
+        planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }],
+        clipLines: false,
+      },
       background: [1, 128 / 255, 0, 64 / 255],
       label: 'Front',
       axes: true,
@@ -47,24 +69,125 @@ describe('image request serialization', () => {
     });
   });
 
+  it('should validate and serialize one shared caller world', () => {
+    const world = { up: '+z', forward: '-y', unit: 'millimeter' } as const;
+    expect(parse(toImageRequestJson({ format: 'png', world }))).toEqual({ format: 'png', world });
+    expect(parse(toImagesRequestJson({ format: 'png', world, views: [{ id: 'front' }] }))).toEqual({
+      format: 'png',
+      world,
+      views: [{ id: 'front' }],
+    });
+
+    for (const frame of [
+      { up: '+x', forward: '+y' },
+      { up: '-x', forward: '+z' },
+      { up: '+z', forward: '-y' },
+      { up: '-z', forward: '+y' },
+    ] as const) {
+      expect(parse(toImageRequestJson({ format: 'png', world: frame }))).toMatchObject({ world: frame });
+    }
+  });
+
+  it('should reject invalid, left-handed, and per-view worlds', () => {
+    const invalid: readonly (readonly [unknown, string])[] = [
+      [null, 'world must be an object'],
+      [{ north: '+z' }, 'world contains unknown property "north"'],
+      [{ up: 'z' }, 'world.up must be +x or -x or +y or -y or +z or -z'],
+      [{ forward: '+x', unit: 'inch' }, 'world.unit must be meter or millimeter'],
+      [{ up: '+z' }, 'world.up and world.forward must name different axes'],
+      [{ up: '+z', forward: '+y' }, 'world.up and world.forward must define a right-handed frame'],
+    ];
+    for (const [world, message] of invalid) {
+      expect(() => toImageRequestJson({ format: 'png', world } as unknown as RenderImageOptions)).toThrow(
+        message,
+      );
+    }
+    expect(() =>
+      toImagesRequestJson({
+        format: 'png',
+        views: [{ id: 'front', world: { up: '+y', forward: '+z' } }],
+      } as unknown as RenderImagesOptions),
+    ).toThrow('views[0].world is not allowed; world is shared by every view');
+  });
+
+  it('should reject invalid presentation state at its exact path', () => {
+    const invalid: readonly (readonly [Record<string, unknown>, string])[] = [
+      [{ surfaces: 'yes' }, 'surfaces must be a boolean'],
+      [{ lines: 1 }, 'lines must be a boolean'],
+      [{ visiblePrimitives: {} }, 'visiblePrimitives must be an array'],
+      [{ visiblePrimitives: [null] }, 'visiblePrimitives[0] must be an object'],
+      [
+        { visiblePrimitives: [{ nodeIndex: 0, meshIndex: 0, primitiveIndex: -1 }] },
+        'visiblePrimitives[0] indices must be non-negative safe integers',
+      ],
+      [
+        {
+          visiblePrimitives: [
+            { nodeIndex: 0, meshIndex: 0, primitiveIndex: 0 },
+            { nodeIndex: 0, meshIndex: 0, primitiveIndex: 0 },
+          ],
+        },
+        'visiblePrimitives[1] duplicates an earlier primitive reference',
+      ],
+      [{ sections: null }, 'sections must be an object'],
+      [{ sections: { planes: [] } }, 'sections.planes must contain between 1 and 6 planes'],
+      [{ sections: { planes: [null] } }, 'sections.planes[0] must be an object'],
+      [
+        { sections: { planes: Array.from({ length: 7 }, () => ({ point: [0, 0, 0], normal: [1, 0, 0] })) } },
+        'sections.planes must contain between 1 and 6 planes',
+      ],
+      [
+        { sections: { planes: [{ point: [0, 0, 0], normal: [0, 0, 0] }] } },
+        'sections.planes[0].normal must not be zero length',
+      ],
+      [
+        { sections: { planes: [{ point: [0, 0, Number.NaN], normal: [1, 0, 0] }] } },
+        'sections.planes[0].point must contain three finite numbers',
+      ],
+      [
+        { sections: { planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }], clipSurfaces: 'yes' } },
+        'sections.clipSurfaces must be a boolean',
+      ],
+    ];
+    for (const [presentation, message] of invalid) {
+      expect(() => toImageRequestJson({ format: 'png', ...presentation })).toThrow(message);
+    }
+  });
+
   it('should serialize ordered plural views and shared settings', () => {
     expect(
       parse(
         toImagesRequestJson({
           format: 'png',
-          projection: 'orthographic',
           views: [
-            { id: 'front', label: 'Front', phi: 90, theta: 0 },
-            { id: 'top', label: 'Top', phi: 0, theta: 0 },
+            {
+              id: 'front',
+              label: 'Front',
+              camera: {
+                framing: 'fit',
+                direction: [0, 0, 1],
+                up: [0, 1, 0],
+                projection: { kind: 'orthographic' },
+              },
+            },
+            { id: 'top', label: 'Top' },
           ],
         }),
       ),
     ).toEqual({
       format: 'png',
-      projection: 'orthographic',
       views: [
-        { id: 'front', label: 'Front', phi: 90, theta: 0 },
-        { id: 'top', label: 'Top', phi: 0, theta: 0 },
+        {
+          id: 'front',
+          label: 'Front',
+          camera: {
+            framing: 'fit',
+            direction: [0, 0, 1],
+            up: [0, 1, 0],
+            projection: { kind: 'orthographic' },
+          },
+        },
+        { id: 'top', label: 'Top' },
       ],
     });
   });
@@ -78,6 +201,7 @@ describe('image request serialization', () => {
       { format: 'png', width: 4097 },
       { format: 'png', height: 4097 },
       { format: 'png', quality: -0.1 },
+      { format: 'png', lineWidth: 0.2 },
       { format: 'png', margin: 0.6 },
       { format: 'png', phi: Number.NaN },
       { format: 'png', theta: 'north' },
@@ -93,6 +217,7 @@ describe('image request serialization', () => {
       { format: 'png', axes: 'yes' },
       { format: 'png', scaleBar: 'yes' },
       { format: 'png', scaleBar: true, width: 191 },
+      { format: 'png', label: 1 },
       { format: 'png', label: ' ' },
       { format: 'png', label: 'x'.repeat(65) },
       { format: 'png', label: 'snowman ☃' },
@@ -108,14 +233,11 @@ describe('image request serialization', () => {
       null,
       [],
       [null],
-      [{ id: 1, phi: 90, theta: 0 }],
-      [{ id: '../front', phi: 90, theta: 0 }],
-      [
-        { id: 'front', phi: 90, theta: 0 },
-        { id: 'front', phi: 0, theta: 0 },
-      ],
-      [{ id: 'front', phi: Number.POSITIVE_INFINITY, theta: 0 }],
-      [{ id: 'front', phi: 90, theta: 0, zoom: 2 }],
+      [{ id: 1 }],
+      [{ id: '../front' }],
+      [{ id: 'front' }, { id: 'front' }],
+      [{ id: 'front', zoom: 2 }],
+      [{ id: 'front', camera: { framing: 'fit', direction: [0, 0, 0] } }],
     ];
     for (const views of invalid) {
       expect(() => toImagesRequestJson({ format: 'png', views } as unknown as RenderImagesOptions)).toThrow(
@@ -125,6 +247,150 @@ describe('image request serialization', () => {
     expect(() => toImagesRequestJson(null as unknown as RenderImagesOptions)).toThrow(
       'options must be an object',
     );
+  });
+
+  it('should serialize every fitted and fixed camera projection arm', () => {
+    const cameras = [
+      {
+        framing: 'fit',
+        direction: [1, -1, 1],
+        up: [0, 0, 1],
+        margin: 0.2,
+        projection: { kind: 'perspective', verticalFieldOfView: 60 },
+      },
+      {
+        framing: 'fit',
+        projection: { kind: 'orthographic' },
+      },
+      {
+        framing: 'fixed',
+        position: [4, 3, 2],
+        target: [1, 0, -1],
+        up: [0, 0, 1],
+        projection: { kind: 'perspective', verticalFieldOfView: 35, zoom: 2 },
+        clipping: { near: 0.05, far: 500 },
+      },
+      {
+        framing: 'fixed',
+        position: [0, 0, 10],
+        target: [0, 0, 0],
+        up: [0, 1, 0],
+        projection: { kind: 'orthographic', verticalSpan: 20 },
+      },
+    ] as const;
+
+    for (const camera of cameras) {
+      expect(parse(toImageRequestJson({ format: 'png', camera }))['camera']).toEqual(camera);
+    }
+  });
+
+  it('should reject invalid cameras with a precise nested path', () => {
+    const invalid: readonly (readonly [unknown, string])[] = [
+      [null, 'camera must be an object'],
+      [{}, 'camera.framing must be fit or fixed'],
+      [{ framing: 'orbit' }, 'camera.framing must be fit or fixed'],
+      [{ framing: 'fit', direction: [0, 0, 0] }, 'camera.direction must not be zero length'],
+      [
+        { framing: 'fit', direction: [0, 1, 0], up: [0, 2, 0] },
+        'camera.direction and camera.up must not be collinear',
+      ],
+      [
+        { framing: 'fit', projection: { kind: 'perspective', zoom: 2 } },
+        'camera.projection contains unknown property "zoom"',
+      ],
+      [
+        { framing: 'fit', projection: { kind: 'panoramic' } },
+        'camera.projection.kind must be perspective or orthographic',
+      ],
+      [{ framing: 'fit', projection: 'perspective' }, 'camera.projection must be an object'],
+      [
+        { framing: 'fixed', position: [0, 0, 0], target: [0, 0, 0], up: [0, 1, 0] },
+        'camera.position and camera.target must not coincide',
+      ],
+      [
+        { framing: 'fixed', position: [0, 0, 1], target: [0, 0, 0], up: [0, 0, 1] },
+        'camera.view direction and camera.up must not be collinear',
+      ],
+      [
+        {
+          framing: 'fixed',
+          position: [0, 0, 1],
+          target: [0, 0, 0],
+          up: [0, 1, 0],
+          projection: { kind: 'perspective', verticalFieldOfView: 180 },
+        },
+        'camera.projection.verticalFieldOfView must be between 1 and 179',
+      ],
+      [
+        {
+          framing: 'fixed',
+          position: [0, 0, 1],
+          target: [0, 0, 0],
+          up: [0, 1, 0],
+          projection: { kind: 'orthographic' },
+        },
+        'camera.projection.verticalSpan must be a finite number',
+      ],
+      [
+        {
+          framing: 'fixed',
+          position: [0, 0, 1],
+          target: [0, 0, 0],
+          up: [0, 1, 0],
+          projection: { kind: 'orthographic', verticalSpan: 0 },
+        },
+        'camera.projection.verticalSpan must be greater than 0',
+      ],
+      [
+        {
+          framing: 'fixed',
+          position: [0, 0, 1],
+          target: [0, 0, 0],
+          up: [0, 1, 0],
+          clipping: { near: 1, far: 1 },
+        },
+        'camera.clipping.far must be greater than camera.clipping.near',
+      ],
+      [
+        {
+          framing: 'fixed',
+          position: [0, 0, 1],
+          target: [0, 0, 0],
+          up: [0, 1, 0],
+          clipping: null,
+        },
+        'camera.clipping must be an object',
+      ],
+      [
+        {
+          framing: 'fixed',
+          position: [0, 0, 1],
+          target: [0, 0, 0],
+          up: [0, 1, 0],
+          clipping: { near: 0, far: 1 },
+        },
+        'camera.clipping.near must be greater than 0',
+      ],
+    ];
+    for (const [camera, message] of invalid) {
+      expect(() => toImageRequestJson({ format: 'png', camera } as unknown as RenderImageOptions)).toThrow(
+        message,
+      );
+    }
+  });
+
+  it('should name the replacement for removed angle and axis fields', () => {
+    for (const removed of ['phi', 'theta', 'up', 'projection', 'margin']) {
+      expect(() =>
+        toImageRequestJson({ format: 'png', [removed]: 1 } as unknown as RenderImageOptions),
+      ).toThrow(`options.${removed} was removed; use options.camera`);
+      expect(() =>
+        toImagesRequestJson({
+          format: 'png',
+          views: [{ id: 'front', [removed]: 1 }],
+        } as unknown as RenderImagesOptions),
+      ).toThrow(`views[0].${removed} was removed; use views[0].camera`);
+    }
   });
 
   it('should normalize opaque hex and preserve tuple backgrounds', () => {
@@ -162,7 +428,7 @@ describe('image request serialization', () => {
             space: 'world',
             exposure: 0.01,
           },
-          views: [{ id: 'front', phi: 90, theta: 0 }],
+          views: [{ id: 'front' }],
         }),
       )['lighting'],
     ).toEqual({
@@ -241,37 +507,36 @@ describe('image request serialization', () => {
         toImagesRequestJson({
           format: 'webp',
           quality: 0.9,
+          lineWidth: 0.75,
           timings: true,
           views: [
-            { id: 'card', phi: 60, theta: -45 },
-            { id: 'og', phi: 60, theta: -45, width: 1536, height: 804 },
-            { id: 'hero', phi: 60, theta: -45, format: 'png' },
-            { id: 'exact', phi: 60, theta: -45, quality: 1 },
+            { id: 'card' },
+            { id: 'og', width: 1536, height: 804 },
+            { id: 'hero', format: 'png' },
+            { id: 'exact', quality: 1 },
           ],
         }),
       ),
     ).toEqual({
       format: 'webp',
       quality: 0.9,
+      lineWidth: 0.75,
       timings: true,
       views: [
-        { id: 'card', phi: 60, theta: -45 },
-        { id: 'og', phi: 60, theta: -45, width: 1536, height: 804 },
-        { id: 'hero', phi: 60, theta: -45, format: 'png' },
-        { id: 'exact', phi: 60, theta: -45, quality: 1 },
+        { id: 'card' },
+        { id: 'og', width: 1536, height: 804 },
+        { id: 'hero', format: 'png' },
+        { id: 'exact', quality: 1 },
       ],
     });
   });
 
   it('should reject invalid per-view overrides and timings values by path', () => {
     const cases: readonly (readonly [Record<string, unknown>, string])[] = [
-      [{ id: 'front', phi: 90, theta: 0, width: 15 }, 'views[0].width must be between 16 and 4096'],
-      [{ id: 'front', phi: 90, theta: 0, height: 4097 }, 'views[0].height must be between 16 and 4096'],
-      [
-        { id: 'front', phi: 90, theta: 0, format: 'gif' },
-        'views[0].format must be png, webp, jpeg, jpg, or raw',
-      ],
-      [{ id: 'front', phi: 90, theta: 0, quality: 1.5 }, 'views[0].quality must be between 0 and 1'],
+      [{ id: 'front', width: 15 }, 'views[0].width must be between 16 and 4096'],
+      [{ id: 'front', height: 4097 }, 'views[0].height must be between 16 and 4096'],
+      [{ id: 'front', format: 'gif' }, 'views[0].format must be png, webp, jpeg, jpg, or raw'],
+      [{ id: 'front', quality: 1.5 }, 'views[0].quality must be between 0 and 1'],
     ];
     for (const [view, message] of cases) {
       expect(() =>
@@ -282,21 +547,21 @@ describe('image request serialization', () => {
       toImagesRequestJson({
         format: 'png',
         axes: true,
-        views: [{ id: 'front', phi: 90, theta: 0, width: 191 }],
+        views: [{ id: 'front', width: 191 }],
       } as unknown as RenderImagesOptions),
     ).toThrow('views[0]: annotated images must be at least 192x192');
     expect(() =>
       toImagesRequestJson({
         format: 'png',
         timings: 'yes',
-        views: [{ id: 'front', phi: 90, theta: 0 }],
+        views: [{ id: 'front' }],
       } as unknown as RenderImagesOptions),
     ).toThrow('timings must be a boolean');
     expect(() =>
       toImagesRequestJson({
         format: 'png',
         profile: true,
-        views: [{ id: 'front', phi: 90, theta: 0 }],
+        views: [{ id: 'front' }],
       } as unknown as RenderImagesOptions),
     ).toThrow('options contains unknown property "profile"');
   });
@@ -311,7 +576,7 @@ describe('image request serialization', () => {
           axes: true,
           width: 128,
           height: 128,
-          views: [{ id: 'front', phi: 90, theta: 0, width: 512, height: 512 }],
+          views: [{ id: 'front', width: 512, height: 512 }],
         }),
       )['width'],
     ).toBe(128);
@@ -322,7 +587,7 @@ describe('image request serialization', () => {
         axes: true,
         width: 128,
         height: 128,
-        views: [{ id: 'front', phi: 90, theta: 0 }],
+        views: [{ id: 'front' }],
       }),
     ).toThrow('views[0]: annotated images must be at least 192x192');
   });
@@ -337,16 +602,10 @@ describe('image request serialization', () => {
       parse(
         toImagesRequestJson({
           format: 'webp',
-          views: [
-            { id: 'thumb', phi: 60, theta: -45 },
-            { id: 'frame', phi: 60, theta: -45, format: 'raw' },
-          ],
+          views: [{ id: 'thumb' }, { id: 'frame', format: 'raw' }],
         }),
       )['views'],
-    ).toEqual([
-      { id: 'thumb', phi: 60, theta: -45 },
-      { id: 'frame', phi: 60, theta: -45, format: 'raw' },
-    ]);
+    ).toEqual([{ id: 'thumb' }, { id: 'frame', format: 'raw' }]);
   });
 });
 
@@ -362,7 +621,7 @@ describe('label presence as the annotation switch', () => {
     expect(() =>
       toImagesRequestJson({
         format: 'png',
-        views: [{ id: 'front', label: 'Front', phi: 90, theta: 0, width: 191 }],
+        views: [{ id: 'front', label: 'Front', width: 191 }],
       }),
     ).toThrow('views[0]: annotated images must be at least 192x192');
   });
@@ -373,14 +632,14 @@ describe('label presence as the annotation switch', () => {
         toImagesRequestJson({
           format: 'png',
           views: [
-            { id: 'front', label: 'Front', phi: 90, theta: 0 },
-            { id: 'thumb', phi: 0, theta: 0, width: 64, height: 64 },
+            { id: 'front', label: 'Front' },
+            { id: 'thumb', width: 64, height: 64 },
           ],
         }),
       )['views'],
     ).toEqual([
-      { id: 'front', label: 'Front', phi: 90, theta: 0 },
-      { id: 'thumb', phi: 0, theta: 0, width: 64, height: 64 },
+      { id: 'front', label: 'Front' },
+      { id: 'thumb', width: 64, height: 64 },
     ]);
   });
 });

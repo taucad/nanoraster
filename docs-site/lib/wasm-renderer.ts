@@ -34,10 +34,10 @@ export const serializeRenders = (handle: WasmRendererHandle): WasmRendererHandle
 };
 
 let renderer: Promise<WasmRendererHandle> | undefined;
-let model: Promise<Uint8Array<ArrayBuffer>> | undefined;
+const models = new Map<string, Promise<Uint8Array<ArrayBuffer>>>();
 
 /** The subject every documentation demo renders. */
-const demoModelUrl = '/demo/gear-12-metal.glb';
+export const demoModelUrl = '/demo/gear-12-metal.glb';
 
 /**
  * Load the browser binding and create one persistent renderer per document:
@@ -62,15 +62,17 @@ export const loadWasmRenderer = async (): Promise<WasmRendererHandle> => {
 };
 
 /** Fetch and cache the demo GLB. */
-export const loadDemoModel = async (): Promise<Uint8Array<ArrayBuffer>> => {
+export const loadDemoModel = async (url = demoModelUrl): Promise<Uint8Array<ArrayBuffer>> => {
+  let model = models.get(url);
   model ??= (async () => {
-    const response = await fetch(demoModelUrl);
-    if (!response.ok) throw new Error(`Could not load ${demoModelUrl}`);
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Could not load ${url}`);
     return new Uint8Array(await response.arrayBuffer());
   })().catch((error: unknown) => {
-    model = undefined;
+    models.delete(url);
     throw error;
   });
+  models.set(url, model);
   return model;
 };
 

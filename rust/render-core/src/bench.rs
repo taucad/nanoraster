@@ -4,9 +4,21 @@
 //! images around.
 
 use crate::{
-    ImageFormat, RenderError, RenderOptions, RenderView, Rendered, encode, render_image,
-    render_images_timed,
+    CameraProjection, ImageFormat, RenderCamera, RenderError, RenderOptions, RenderView, Rendered,
+    encode, render_image, render_images_timed,
 };
+
+fn fit_camera(direction: [f32; 3], up: [f32; 3]) -> RenderCamera {
+    RenderCamera::Fit {
+        direction,
+        up,
+        padding_factor: 0.9,
+        projection: CameraProjection::Perspective {
+            vertical_field_of_view_deg: 45.0,
+            zoom: 1.0,
+        },
+    }
+}
 
 /// FNV-1a 64 — enough to compare artifacts for equality across legs.
 pub fn fnv64(bytes: &[u8]) -> u64 {
@@ -70,9 +82,34 @@ pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
         width,
         height,
     };
+    // Keep codec fingerprints independent of fitted-camera changes: a centred
+    // horizontal line preserves the established centre-plane scale without
+    // intersecting any annotation slot.
+    let horizontal_tangent = 22.5_f32.to_radians().tan() * 0.9 * width as f32 / height as f32;
+    let extent = 4.944_608_7 * horizontal_tangent;
+    let axis = std::f32::consts::FRAC_1_SQRT_2 * extent;
     let scene = crate::glb::Scene {
-        meshes: Vec::new(),
-        instances: Vec::new(),
+        meshes: vec![crate::glb::MeshAsset {
+            source_index: 0,
+            primitives: vec![crate::glb::Primitive {
+                source_index: 0,
+                mode: crate::glb::MODE_LINES,
+                positions: vec![-axis, 0.0, axis, axis, 0.0, -axis],
+                normals: Vec::new(),
+                indices: vec![0, 1],
+                material: crate::glb::Material {
+                    base_color: [0.0, 0.0, 0.0, 1.0],
+                    metallic: 0.0,
+                    roughness: 1.0,
+                },
+            }],
+        }],
+        instances: vec![crate::glb::MeshInstance {
+            source_node_index: 0,
+            mesh_index: 0,
+            model: glam::Mat4::IDENTITY,
+            normal_matrix: glam::Mat4::IDENTITY,
+        }],
         bounds: None,
     };
     let mut report = serde_json::json!({
@@ -108,22 +145,21 @@ pub async fn bench_multi_view(
     height: u32,
     now: &crate::TimingsClock,
 ) -> Result<serde_json::Value, RenderError> {
-    let view = |id: &str, label: &str, phi_deg: f32, theta_deg: f32| RenderView {
+    let view = |id: &str, label: &str, direction: [f32; 3], up: [f32; 3]| RenderView {
         id: id.into(),
         label: Some(label.into()),
-        phi_deg,
-        theta_deg,
+        camera: fit_camera(direction, up),
         width: None,
         height: None,
         format: None,
     };
     let views = [
-        view("front", "Front", 90.0, 270.0),
-        view("back", "Back", 90.0, 90.0),
-        view("right", "Right", 90.0, 0.0),
-        view("left", "Left", 90.0, 180.0),
-        view("top", "Top", 0.0, 0.0),
-        view("bottom", "Bottom", 180.0, 0.0),
+        view("front", "Front", [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]),
+        view("back", "Back", [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]),
+        view("right", "Right", [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+        view("left", "Left", [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+        view("top", "Top", [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
+        view("bottom", "Bottom", [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]),
     ];
     let mut variants = Vec::new();
     for bits in 0..8 {
@@ -152,8 +188,7 @@ pub async fn bench_multi_view(
         let mut view_durations = Vec::with_capacity(views.len());
         for view in &views {
             let mut view_options = options.clone();
-            view_options.phi_deg = view.phi_deg;
-            view_options.theta_deg = view.theta_deg;
+            view_options.camera.clone_from(&view.camera);
             view_options.label.clone_from(&view.label);
             let started = now();
             let bytes =

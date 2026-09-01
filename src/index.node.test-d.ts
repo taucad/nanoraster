@@ -13,6 +13,7 @@ expectTypeOf(nodeModule.describeAdapter).toEqualTypeOf<typeof universalModule.de
 expectTypeOf(nodeModule.RenderError).toEqualTypeOf<typeof universalModule.RenderError>();
 expectTypeOf<nodeModule.RenderImageOptions>().toEqualTypeOf<universalModule.RenderImageOptions>();
 expectTypeOf<nodeModule.RenderImagesOptions>().toEqualTypeOf<universalModule.RenderImagesOptions>();
+expectTypeOf<nodeModule.RenderWorld>().toEqualTypeOf<universalModule.RenderWorld>();
 expectTypeOf<nodeModule.RenderedImageFile>().toEqualTypeOf<universalModule.RenderedImageFile>();
 expectTypeOf<nodeModule.AdapterInfo>().toEqualTypeOf<universalModule.AdapterInfo>();
 expectTypeOf<nodeModule.Renderer>().toEqualTypeOf<universalModule.Renderer>();
@@ -26,7 +27,7 @@ void nodeModule.renderImage(glb, { format: 'gif' });
 void nodeModule.renderImages(glb, {
   format: 'png',
   // @ts-expect-error unknown per-view output format
-  views: [{ id: 'front', phi: 90, theta: 0, format: 'gif' }],
+  views: [{ id: 'front', format: 'gif' }],
 });
 // @ts-expect-error missing required format
 void ({ axes: true } as const satisfies nodeModule.RenderImageOptions);

@@ -26,15 +26,52 @@ expectTypeOf<keyof RenderModule>().toEqualTypeOf<
   | 'renderImageExposureRange'
   | 'renderImageLabelMaxLength'
   | 'renderImageLabelPattern'
+  | 'renderImageLineWidthRange'
   | 'renderImageLightColorRange'
   | 'renderImageMarginRange'
   | 'renderImageMaxLights'
+  | 'renderImageMaxSections'
   | 'renderImageQualityRange'
+  | 'renderImageVerticalFieldOfViewRange'
   | 'renderImageViewIdPattern'
+  | 'renderImageZoomRange'
   | 'renderImages'
 >();
 
 const glb = new Uint8Array([1, 2, 3]);
+
+const vector: renderModule.RenderVector3 = [1, 2, 3];
+expectTypeOf(vector).toEqualTypeOf<readonly [number, number, number]>();
+const world = {
+  up: '+z',
+  forward: '-y',
+  unit: 'millimeter',
+} as const satisfies renderModule.RenderWorld;
+expectTypeOf(world.up).toEqualTypeOf<'+z'>();
+expectTypeOf<renderModule.RenderWorldAxis>().toEqualTypeOf<'+x' | '-x' | '+y' | '-y' | '+z' | '-z'>();
+void renderImage(glb, { format: 'png', world });
+// @ts-expect-error the unreleased camera-specific tuple name was consolidated
+expectTypeOf<renderModule.CameraVector>();
+
+const primitive: renderModule.RenderPrimitiveReference = {
+  nodeIndex: 2,
+  meshIndex: 1,
+  primitiveIndex: 0,
+};
+const sections = {
+  planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }],
+  clipSurfaces: true,
+} as const satisfies renderModule.RenderSections;
+const adapterSections: renderModule.RenderSections = sections;
+void renderImage(glb, {
+  format: 'png',
+  surfaces: true,
+  lines: false,
+  visiblePrimitives: [primitive],
+  sections,
+});
+void renderImage(glb, { format: 'png', sections: adapterSections });
+expectTypeOf(renderModule.renderImageMaxSections).toEqualTypeOf<number>();
 
 const singular = {
   format: 'webp',
@@ -62,8 +99,8 @@ const options = {
   axes: true,
   scaleBar: true,
   views: [
-    { id: 'front', label: 'Front', phi: 90, theta: 0 },
-    { id: 'top', label: 'Top', phi: 0, theta: 0 },
+    { id: 'front', label: 'Front' },
+    { id: 'top', label: 'Top' },
   ],
 } as const satisfies ImagesOptions;
 const rendered = renderImages(glb, options);
@@ -71,7 +108,7 @@ expectTypeOf(rendered).toEqualTypeOf<
   Promise<readonly [renderModule.RenderedImage<'front', 'png'>, renderModule.RenderedImage<'top', 'png'>]>
 >();
 
-const dynamicViews: renderModule.RenderImageView[] = [{ id: 'front', phi: 90, theta: 0 }];
+const dynamicViews: renderModule.RenderImageView[] = [{ id: 'front' }];
 const dynamic = renderImages(glb, { format: 'png', views: dynamicViews });
 expectTypeOf(dynamic).toEqualTypeOf<Promise<readonly renderModule.RenderedImage<string, 'png'>[]>>();
 
@@ -79,10 +116,7 @@ expectTypeOf(dynamic).toEqualTypeOf<Promise<readonly renderModule.RenderedImage<
 // timings: true adds typed timings to the result.
 const ladder = renderImages(glb, {
   format: 'webp',
-  views: [
-    { id: 'card', phi: 60, theta: -45 },
-    { id: 'hero', phi: 60, theta: -45, width: 1536, height: 804, format: 'png' },
-  ],
+  views: [{ id: 'card' }, { id: 'hero', width: 1536, height: 804, format: 'png' }],
 });
 expectTypeOf(ladder).toEqualTypeOf<
   Promise<readonly [renderModule.RenderedImage<'card', 'webp'>, renderModule.RenderedImage<'hero', 'png'>]>
@@ -97,10 +131,7 @@ expectTypeOf(heroFile.mimeType).toEqualTypeOf<'image/png'>();
 void renderImage(glb, { format: 'raw', width: 640, height: 480 });
 const mixed = renderImages(glb, {
   format: 'webp',
-  views: [
-    { id: 'thumb', phi: 60, theta: -45 },
-    { id: 'frame', phi: 60, theta: -45, format: 'raw' },
-  ],
+  views: [{ id: 'thumb' }, { id: 'frame', format: 'raw' }],
 });
 expectTypeOf(mixed).toEqualTypeOf<
   Promise<readonly [renderModule.RenderedImage<'thumb', 'webp'>, renderModule.RenderedImage<'frame', 'raw'>]>
@@ -113,7 +144,7 @@ expectTypeOf(frameFile.width).toEqualTypeOf<number>();
 expectTypeOf(frameFile.height).toEqualTypeOf<number>();
 const allRaw = renderImages(glb, {
   format: 'raw',
-  views: [{ id: 'frame', phi: 60, theta: -45 }],
+  views: [{ id: 'frame' }],
 });
 expectTypeOf(allRaw).toEqualTypeOf<Promise<readonly [renderModule.RenderedImage<'frame', 'raw'>]>>();
 declare const sharedRawFile: Awaited<typeof allRaw>[0]['file'];
@@ -122,12 +153,12 @@ expectTypeOf(sharedRawFile.mimeType).toEqualTypeOf<'application/octet-stream'>()
 const timed = renderImages(glb, {
   format: 'png',
   timings: true,
-  views: [{ id: 'front', phi: 90, theta: 0 }],
+  views: [{ id: 'front' }],
 });
 expectTypeOf((await timed).timings).toEqualTypeOf<renderModule.RenderTimings>();
 const untimed = await renderImages(glb, {
   format: 'png',
-  views: [{ id: 'front', phi: 90, theta: 0 }],
+  views: [{ id: 'front' }],
 });
 // @ts-expect-error no timings without timings: true
 void untimed.timings;
@@ -156,21 +187,53 @@ void renderImages(glb, {
   views: [
     {
       id: 'front',
-      phi: 90,
-      theta: 0,
       // @ts-expect-error axes is shared, not per view
       axes: true,
+    },
+  ],
+});
+void renderImages(glb, {
+  format: 'png',
+  world,
+  views: [{ id: 'front' }],
+});
+void renderImages(glb, {
+  format: 'png',
+  views: [
+    {
+      id: 'front',
+      // @ts-expect-error world is shared, not per view
+      world,
     },
   ],
 });
 // A label's presence is its own switch: it stands alone, and a batch labels
 // whichever views it chooses to.
 void ({ format: 'png', label: 'Isometric' } as const satisfies ImageOptions);
+const fixedCamera = {
+  framing: 'fixed',
+  position: [4, 3, 2],
+  target: [0, 0, 0],
+  up: [0, 1, 0],
+  projection: { kind: 'perspective', verticalFieldOfView: 35, zoom: 1.5 },
+  clipping: { near: 0.1, far: 100 },
+} as const satisfies renderModule.RenderCamera;
+expectTypeOf(fixedCamera.position).toEqualTypeOf<readonly [4, 3, 2]>();
+void renderImage(glb, { format: 'png', camera: fixedCamera, lineWidth: 1 });
 void ({
   format: 'png',
   views: [
-    { id: 'front', label: 'Front', phi: 90, theta: 0 },
-    { id: 'top', phi: 0, theta: 0 },
+    {
+      id: 'front',
+      label: 'Front',
+      camera: {
+        framing: 'fit',
+        direction: [0, 0, 1],
+        up: [0, 1, 0],
+        projection: { kind: 'orthographic' },
+      },
+    },
+    { id: 'top' },
   ],
 } as const satisfies ImagesOptions);
 void renderImages(glb, {
@@ -178,10 +241,18 @@ void renderImages(glb, {
   views: [
     {
       id: 'front',
-      phi: 90,
-      theta: 0,
       // @ts-expect-error scaleBar is shared, not per view
       scaleBar: true,
+    },
+  ],
+});
+void renderImages(glb, {
+  format: 'png',
+  views: [
+    {
+      id: 'front',
+      // @ts-expect-error presentation state is shared across a batch
+      surfaces: false,
     },
   ],
 });
@@ -189,40 +260,88 @@ void ({
   format: 'png',
   // @ts-expect-error singular label is not a batch-level property
   label: 'Front',
-  views: [{ id: 'front', phi: 90, theta: 0 }],
+  views: [{ id: 'front' }],
 } as const satisfies ImagesOptions);
 // Per-view output overrides are part of the plan-entry schema (R15).
 void ({
   format: 'png',
-  views: [{ id: 'front', phi: 90, theta: 0, format: 'webp' }],
+  views: [{ id: 'front', format: 'webp' }],
 } as const satisfies ImagesOptions);
 void ({
   format: 'png',
   // @ts-expect-error unknown per-view format
-  views: [{ id: 'front', phi: 90, theta: 0, format: 'gif' }],
+  views: [{ id: 'front', format: 'gif' }],
 } as const satisfies ImagesOptions);
 void ({
   format: 'png',
-  // @ts-expect-error plural angles belong on each view
+  // @ts-expect-error removed angle fields are not part of the camera contract
   phi: 90,
-  views: [{ id: 'front', phi: 90, theta: 0 }],
+  views: [{ id: 'front' }],
 } as const satisfies ImagesOptions);
-// @ts-expect-error missing theta
-void ({ format: 'png', views: [{ id: 'front', phi: 90 }] } as const satisfies ImagesOptions);
+void ({
+  format: 'png',
+  views: [
+    {
+      id: 'front',
+      camera: {
+        framing: 'fixed',
+        position: [0, 0, 1],
+        target: [0, 0, 0],
+        up: [0, 1, 0],
+        // @ts-expect-error fixed orthographic cameras require verticalSpan
+        projection: {
+          kind: 'orthographic',
+        },
+      },
+    },
+  ],
+} as const satisfies ImagesOptions);
+void ({
+  format: 'png',
+  views: [
+    {
+      id: 'front',
+      camera: {
+        framing: 'fit',
+        // @ts-expect-error fitted cameras do not accept position
+        position: [0, 0, 1],
+      },
+    },
+  ],
+} as const satisfies ImagesOptions);
+void renderImages(glb, {
+  format: 'png',
+  views: [
+    {
+      id: 'front',
+      camera: {
+        framing: 'fixed',
+        position: [0, 0, 1],
+        target: [0, 0, 0],
+        up: [0, 1, 0],
+        projection: {
+          kind: 'perspective',
+          // @ts-expect-error deep unknown projection keys are rejected by generic calls
+          fov: 45,
+        },
+      },
+    },
+  ],
+});
 // @ts-expect-error misspelled singular option
 void ({ format: 'png', axis: true } as const satisfies ImageOptions);
 void ({
   format: 'png',
   // @ts-expect-error misspelled plural option
   axis: true,
-  views: [{ id: 'front', phi: 90, theta: 0 }],
+  views: [{ id: 'front' }],
 } as const satisfies ImagesOptions);
 // @ts-expect-error missing singular format
 void ({ axes: true } as const satisfies ImageOptions);
 void renderImages(glb, {
   format: 'png',
   lighting: 'studio',
-  views: [{ id: 'front', phi: 90, theta: 0 }],
+  views: [{ id: 'front' }],
 });
 const lit = {
   format: 'png',
@@ -260,8 +379,8 @@ void ({
     // @ts-expect-error unknown environment name
     environment: 'sunset',
   },
-  views: [{ id: 'front', phi: 90, theta: 0 }],
+  views: [{ id: 'front' }],
 } as const satisfies ImagesOptions);
-void renderImages(glb, { format: 'png', views: [{ id: 'front', phi: 90, theta: 0, width: 320 }] });
+void renderImages(glb, { format: 'png', views: [{ id: 'front', width: 320 }] });
 // @ts-expect-error missing view id
-void ({ format: 'png', views: [{ phi: 90, theta: 0 }] } as const satisfies ImagesOptions);
+void ({ format: 'png', views: [{}] } as const satisfies ImagesOptions);
