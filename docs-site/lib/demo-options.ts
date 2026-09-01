@@ -385,9 +385,13 @@ const orbitCall = (
   value: readonly number[],
   declaredWorld: unknown,
   worldArgument: string | undefined,
+  azimuthEnd?: number,
 ): string | undefined => {
   const orbit = demoOrbitFromDirection(value, declaredWorld);
-  const azimuth = Math.round(orbit.azimuth);
+  const canonical = Math.round(orbit.azimuth);
+  // -180 and 180 name one direction, and the recovered angle is always the
+  // canonical 180. The example prints the end the reader is holding.
+  const azimuth = canonical === 180 && azimuthEnd === -180 ? -180 : canonical;
   const elevation = Math.round(orbit.elevation);
   const exact = demoDirectionFromOrbit({ azimuth, elevation }, declaredWorld);
   if (exact.some((part, index) => Math.abs(part - (value[index] ?? 0)) > 1e-9)) return undefined;
@@ -415,6 +419,7 @@ export const demoQuantize = (template: DemoControlTemplate | undefined, value: D
 export const substituteDemoValues = (
   descriptor: DemoDescriptor,
   values: Record<string, DemoValue>,
+  azimuthEnds?: Readonly<Record<string, number>>,
 ): string => {
   const edits = descriptor.bindings.flatMap((binding) => {
     const value = values[binding.key];
@@ -426,7 +431,7 @@ export const substituteDemoValues = (
     const call =
       binding.orbit === undefined || !isVector(value)
         ? undefined
-        : orbitCall(value, descriptor.request['world'], binding.orbit.world);
+        : orbitCall(value, descriptor.request['world'], binding.orbit.world, azimuthEnds?.[binding.key]);
     return [{ ...binding.valueSpan, replacement: call ?? formatValue(value, authored) }];
   });
   return edits

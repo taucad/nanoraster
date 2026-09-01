@@ -134,6 +134,12 @@ export const RenderDemo = ({
   // component goes away. Its URLs would outlive the document that could revoke
   // them, and its trailing value would render for nobody.
   const mountedRef = useRef(true);
+  // The azimuth track's two ends name one direction, and recovering the angle
+  // from the stored vector always yields the canonical +180. Which end the
+  // reader dragged to is remembered here, so a handle at -180 stays put
+  // instead of teleporting to the far end — and the rewritten example prints
+  // the same end the slider shows.
+  const azimuthEndsRef = useRef<Record<string, number>>({});
 
   const draw = useCallback(
     async (current: Record<string, DemoValue>): Promise<void> => {
@@ -327,7 +333,8 @@ export const RenderDemo = ({
    */
   const orbitRows = (control: DemoControl): React.JSX.Element => {
     const orbit = demoOrbitFromDirection(vectorOf(control.key), declaredWorld);
-    const azimuth = Math.round(orbit.azimuth);
+    const canonical = Math.round(orbit.azimuth);
+    const azimuth = canonical === 180 && azimuthEndsRef.current[control.key] === -180 ? -180 : canonical;
     const elevation = Math.round(orbit.elevation);
     // Every bearing renders: a direction that lands on the camera's `up` names
     // no roll, and the renderer takes screen-up from the declared world. So the
@@ -346,7 +353,10 @@ export const RenderDemo = ({
             max={180}
             min={-180}
             onChange={(event) => {
-              move({ azimuth: Number(event.currentTarget.value), elevation });
+              const next = Number(event.currentTarget.value);
+              if (next === -180) azimuthEndsRef.current[control.key] = -180;
+              else delete azimuthEndsRef.current[control.key];
+              move({ azimuth: next, elevation });
             }}
             step={1}
             type="range"
@@ -395,7 +405,10 @@ export const RenderDemo = ({
   };
 
   const shown = useMemo(
-    () => (parsedDescriptor.code === code ? substituteDemoValues(parsedDescriptor, values) : code),
+    () =>
+      parsedDescriptor.code === code
+        ? substituteDemoValues(parsedDescriptor, values, azimuthEndsRef.current)
+        : code,
     [code, parsedDescriptor, values],
   );
 
@@ -712,6 +725,7 @@ export const RenderDemo = ({
             className={styles.reset}
             onClick={() => {
               setSelectedViewId(defaultViewId);
+              azimuthEndsRef.current = {};
               apply(readDemoOptions(parsedDescriptor));
             }}
             type="button"
