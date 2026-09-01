@@ -15,7 +15,6 @@ import {
   demoPlaneOffset,
   demoPlanePoint,
   demoQuantize,
-  demoUpClear,
   describeDemoView,
   isVector,
   isRawDemo,
@@ -330,25 +329,11 @@ export const RenderDemo = ({
     const orbit = demoOrbitFromDirection(vectorOf(control.key), declaredWorld);
     const azimuth = Math.round(orbit.azimuth);
     const elevation = Math.round(orbit.elevation);
-    // The renderer rejects a camera direction collinear with the camera's own
-    // `up`, and the sliders can reach that pair from anywhere. A light
-    // direction and a section normal have no such partner, so neither is
-    // constrained here.
-    const usable = (direction: readonly number[]): boolean =>
-      !control.key.endsWith('camera.direction') ||
-      demoUpClear(direction, values[control.key.replace(/direction$/u, 'up')], declaredWorld);
-    // A defaulted `up` sits on the world pole, so both ends of the elevation
-    // track are the rejected direction: end the track a step short instead,
-    // which is a boundary the slider cannot be dragged past.
-    const limit = usable(demoDirectionFromOrbit({ azimuth: 0, elevation: 90 }, declaredWorld)) ? 90 : 89;
+    // Every bearing renders: a direction that lands on the camera's `up` names
+    // no roll, and the renderer takes screen-up from the declared world. So the
+    // elevation track runs pole to pole with nothing excluded.
     const move = (next: { azimuth: number; elevation: number }): void => {
-      const direction = demoDirectionFromOrbit(next, declaredWorld);
-      // A declared `up` instead puts the rejected pair at one bearing in the
-      // middle of the track, which no min/max can exclude. Refuse that degree
-      // and re-seat the slider on the render that is up, rather than author a
-      // request only "reset to the example" recovers from.
-      if (usable(direction)) update(control.key, direction);
-      else setValues({ ...values });
+      update(control.key, demoDirectionFromOrbit(next, declaredWorld));
     };
     return (
       <div className={styles.group} key={control.key}>
@@ -374,8 +359,8 @@ export const RenderDemo = ({
           </span>
           <input
             aria-label={`${control.label} elevation`}
-            max={limit}
-            min={-limit}
+            max={90}
+            min={-90}
             onChange={(event) => {
               move({ azimuth, elevation: Number(event.currentTarget.value) });
             }}
@@ -478,14 +463,14 @@ export const RenderDemo = ({
             <p className={styles.notice}>{readerFacing(message)}</p>
           ) : raw ? (
             frame === undefined ? (
-              <p className={styles.notice}>Rendering…</p>
+              <p className={`${styles.notice} ${styles.pending}`}>Rendering…</p>
             ) : (
               painted
             )
           ) : srcs.length > 0 ? (
             sheet
           ) : (
-            <p className={styles.notice}>Rendering…</p>
+            <p className={`${styles.notice} ${styles.pending}`}>Rendering…</p>
           )}
         </div>
 

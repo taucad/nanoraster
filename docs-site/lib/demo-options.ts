@@ -121,27 +121,6 @@ export const demoPlanePoint = (offset: number, normal: readonly number[]): DemoV
   ];
 };
 
-/**
- * Whether the renderer will accept this camera direction.
- *
- * A direction collinear with the camera's `up` names no view, so the request
- * throws rather than rendering. An undeclared `up` defaults to the world pole,
- * which is exactly where an elevation of ±90 puts a fitted direction; a
- * declared `up` moves the rejected pair off the poles and onto its own
- * bearing. Both are one drag from any starting position.
- */
-export const demoUpClear = (
-  direction: readonly number[],
-  up: DemoValue | undefined,
-  declaredWorld?: unknown,
-): boolean => {
-  const axis = isVector(up) ? up : demoDirectionFromOrbit({ azimuth: 0, elevation: 90 }, declaredWorld);
-  const scale =
-    Math.hypot(direction[0] ?? 0, direction[1] ?? 0, direction[2] ?? 0) *
-    Math.hypot(axis[0] ?? 0, axis[1] ?? 0, axis[2] ?? 0);
-  return scale > 0 && Math.abs(dot(direction, axis)) < scale - 1e-9;
-};
-
 type DemoCamera = {
   readonly framing: 'fit' | 'fixed';
   readonly direction?: DemoVector3;

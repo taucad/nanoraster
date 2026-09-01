@@ -305,10 +305,13 @@ world that direction is `[0.6123724357, 0.5, 0.6123724357]` and that up is
 `[0, 1, 0]`. Minimum margin defaults to `0.1`, perspective field of view to
 `45`, and zoom to `1`. `direction` fixes orientation from the subject toward the
 camera; fitting may translate the optical axis to balance the projected
-geometry. A fixed camera requires non-coincident position/target and a
-non-collinear up vector. Omitted clipping derives safe planes from referenced
-geometry. Explicit range outside the referenced subject is tightened without
-changing visible geometry.
+geometry.
+
+A fixed camera requires non-coincident position/target. A view collinear with
+`up` names no roll, so screen-up becomes `world.forward`, or `world.up` along
+forward. Omitted clipping derives safe planes from referenced geometry. Explicit
+range outside the referenced subject is tightened without changing visible
+geometry.
 
 ### `RenderOrbit`
 

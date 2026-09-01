@@ -14,7 +14,6 @@ import {
   demoPlaneOffset,
   demoPlanePoint,
   demoQuantize,
-  demoUpClear,
   isVector,
   readDemoOptions,
   substituteDemoValues,
@@ -216,30 +215,39 @@ const image = await renderImage(glb, {
     }
   });
 
-  it('refuses the camera directions the renderer rejects as collinear', () => {
-    // The measured defect: elevation ±90 puts a fitted direction on the world
-    // pole, where an undeclared `up` already sits, and the panel recovered
-    // only through "reset to the example".
+  it('carries a pole elevation through the panel like any other bearing', () => {
+    // A direction landing on the camera's `up` names no roll, so the renderer
+    // takes screen-up from the declared world and renders it. The elevation
+    // track therefore runs the full ±90 and nothing on it needs excluding.
     const at = (elevation: number, world?: unknown): DemoVector3 =>
       demoDirectionFromOrbit({ azimuth: 0, elevation }, world);
-    for (const elevation of [90, -90]) {
-      expect(demoUpClear(at(elevation), undefined)).toBe(false);
-      expect(demoUpClear(at(elevation), [0, 1, 0])).toBe(false);
-      // The tutorial's top view declares its way out of the collision.
-      expect(demoUpClear(at(elevation), [0, 0, 1])).toBe(true);
-    }
-    // Which is why that view has the pair one bearing into the track instead,
-    // where no slider min or max can exclude it.
-    expect(demoUpClear(at(0), [0, 0, 1])).toBe(false);
-    expect(demoUpClear(at(1), [0, 0, 1])).toBe(true);
-    expect(demoUpClear(at(-1), [0, 0, 1])).toBe(true);
-    // A Z-up caller world swaps which axis the poles sit on.
     const zUp = { up: '+z', forward: '-y' };
-    expect(demoUpClear(at(90, zUp), [0, 0, 1], zUp)).toBe(false);
-    expect(demoUpClear(at(90, zUp), [0, 1, 0], zUp)).toBe(true);
-    // Magnitude is not a degree of freedom, and neither vector may be zero.
-    expect(demoUpClear(at(90), [0, 7, 0])).toBe(false);
-    expect(demoUpClear([0, 0, 0], [0, 0, 1])).toBe(false);
+    for (const [direction, world] of [
+      [at(90), undefined],
+      [at(-90), undefined],
+      [at(90, zUp), zUp],
+      [at(-90, zUp), zUp],
+    ] as const) {
+      expect(demoBoundsViolation({ kind: 'orbit' }, direction)).toBeUndefined();
+      const recovered = demoOrbitFromDirection(direction, world);
+      expect(Math.abs(recovered.elevation)).toBeCloseTo(90);
+    }
+
+    // And a plan view is authorable with no `up` at all: the panel writes the
+    // pole back as the orbit call a reader would type, and it reparses.
+    const descriptor = createDemoDescriptor(
+      `const image = await renderImage(glb, {
+  format: 'png',
+  camera: { framing: 'fit', direction: directionFromOrbit({ azimuth: 0, elevation: 30 }) },
+});`,
+      gear,
+    );
+    const rewritten = substituteDemoValues(descriptor, {
+      ...readDemoOptions(descriptor),
+      'camera.direction': at(90),
+    });
+    expect(rewritten).toContain('directionFromOrbit({ azimuth: 0, elevation: 90 })');
+    expect(readDemoOptions(createDemoDescriptor(rewritten, gear))['camera.direction']).toEqual(at(90));
   });
 
   it('scales every length control to the model on screen', () => {

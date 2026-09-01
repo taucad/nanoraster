@@ -30,15 +30,21 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // rather than as a float triple, so the six raised rows below pay for the call
 // and the `world` constant it takes, in fences that already existed. No prose
 // was added for it.
+//
+// World-derived screen-up is a public rule with two documented sites: a view
+// collinear with `up` names no roll, so screen-up becomes `world.forward`, or
+// `world.up` along forward. `api.mdx` and `place-the-camera.mdx` each state it
+// in one sentence, in place of the shorter clause that named only the
+// constraint. `frame-the-model.mdx` states it and stays well inside its row.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 3_190,
+  'api.mdx': 3_193,
   'guides/choose-visible-geometry.mdx': 340,
   'guides/render-section-views.mdx': 360,
   'guides/format-and-annotate.mdx': 830,
   'guides/frame-the-model.mdx': 620,
   'guides/handle-render-failures.mdx': 560,
   'guides/light-the-subject.mdx': 662,
-  'guides/place-the-camera.mdx': 733,
+  'guides/place-the-camera.mdx': 739,
   'guides/render-for-llms.mdx': 500,
   'guides/render-in-the-browser.mdx': 740,
   'guides/render-multiple-views.mdx': 660,
@@ -49,7 +55,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'install.mdx': 740,
   'tutorial.mdx': 696,
 };
-const siteCeiling = 13_260;
+const siteCeiling = 13_264;
 
 const pages = globSync('**/*.mdx', { cwd: docsDir })
   .toSorted()

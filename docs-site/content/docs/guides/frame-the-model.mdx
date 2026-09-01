@@ -12,12 +12,12 @@ subject in frame.
 
 `direction` points from the subject toward the camera. `up` establishes screen
 vertical and preserves roll. Both are Cartesian vectors in the declared caller
-world; their magnitudes are ignored, and they must not be collinear. Fitting may
-translate the camera and optical target together without changing orientation.
+world; their magnitudes are ignored. Fitting may translate the camera and
+optical target together without changing orientation.
 
 Omit `up` on a fit camera and it becomes the declared `world.up`. Supply it to
-roll the camera, or to break collinearity when `direction` runs along that same
-axis, as a plan view does.
+roll the camera. A plan view, whose `direction` runs along that same axis, names
+no roll: screen-up comes from `world.forward` instead, so it needs no `up`.
 
 <RenderDemo>
 
@@ -78,7 +78,6 @@ const perspective = {
 const plan = {
   framing: 'fit',
   direction: [0, 1, 0],
-  up: [0, 0, 1],
   projection: { kind: 'orthographic' },
 } as const;
 ```

@@ -12,8 +12,9 @@ whole model in frame.
 `position`, `target`, and `up` are three-number tuples in the caller world
 declared by the request's shared `world`. `position` and `target` establish the
 view direction. `up` establishes screen vertical, so changing it rolls the
-camera without moving the eye. Position and target must differ; up must not be
-collinear with the view. Omit `world` for canonical glTF +Y-up metres.
+camera without moving the eye. Position and target must differ. A view collinear
+with `up` names no roll, so screen-up becomes `world.forward`, or `world.up`
+along forward. Omit `world` for canonical glTF +Y-up metres.
 
 ```typescript
 import type { RenderCamera, RenderWorld } from 'nanoraster';

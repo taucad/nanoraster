@@ -34,9 +34,12 @@
 .stage {
   display: grid;
 
-  /* Sized by its own content, not stretched to the panel row: the image
-     reserves its height through its aspect ratio, so the stage is already
-     the right size on first layout and the badge below it is never clipped. */
+  /* Sized by its own content, so the evidence badge below the image always
+     has its row: an aspect-locked stage under `overflow: hidden` clips the
+     badge away as soon as the image is wide enough to fill the box. The
+     render's aspect is reserved by whatever occupies the stage instead — the
+     image once there is one, the pending placeholder until then — so the
+     panel is the same height before and after the first frame. */
   align-self: start;
   min-height: 240px;
   place-items: center;
@@ -133,6 +136,16 @@
   color: var(--color-fd-muted-foreground);
   font-size: 0.82rem;
   text-align: center;
+}
+
+/* The placeholder standing in for a frame that has not arrived holds the
+   frame's own shape, so the panel does not resize under the reader when the
+   first render lands. */
+.pending {
+  display: grid;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  place-items: center;
 }
 
 /* One grid for the whole panel: every label shares a track, so the rows line
