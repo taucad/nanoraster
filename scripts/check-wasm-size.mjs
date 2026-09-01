@@ -114,6 +114,23 @@ const sizes = {
 // bound) with behaviour pinned verbatim by the new tests.
 const ceilings = { raw: 1_515_486, gzip9: 569_364, brotli11: 431_345 };
 
+// `raw` is the artifact and is byte-reproducible, so it is enforced exactly.
+// The compressed figures are not properties of the artifact alone: they are
+// what *this host's* zlib and brotli make of it. A byte-identical wasm
+// measures 569,364 gzip-9 under Node 24 and 26 and 569,404 under CI's Node,
+// and 431,345 brotli-11 under Node 24/26 against 431,623 under Node 22 — so
+// an exact compressed ceiling fails on a build that changed nothing. That is
+// not hypothetical: it red-lined CI on the parent commit over a single byte.
+// Allow the compressors 0.5% of headroom, which absorbs every version spread
+// measured here and still catches the kilobyte-scale growth this ratchet
+// exists to police; `raw` keeps that growth honest to the byte regardless.
+const compressorTolerance = 0.005;
+const allowances = {
+  raw: 0,
+  gzip9: Math.ceil(ceilings.gzip9 * compressorTolerance),
+  brotli11: Math.ceil(ceilings.brotli11 * compressorTolerance),
+};
+
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {
     throw new Error(`render WASM unexpectedly embeds runtime font marker ${JSON.stringify(marker)}`);
@@ -126,9 +143,13 @@ if (wasm.includes(font.subarray(4096, 4224))) {
   throw new Error('render WASM unexpectedly embeds the full Geist TTF');
 }
 
-console.log(JSON.stringify({ sizes, ceilings }, null, 2));
+console.log(JSON.stringify({ sizes, ceilings, allowances }, null, 2));
 for (const [kind, ceiling] of Object.entries(ceilings)) {
-  if (sizes[kind] > ceiling) {
-    throw new Error(`render WASM ${kind} size ${sizes[kind]} exceeds ${ceiling}`);
+  const limit = ceiling + allowances[kind];
+  if (sizes[kind] > limit) {
+    throw new Error(
+      `render WASM ${kind} size ${sizes[kind]} exceeds ${ceiling}` +
+        (allowances[kind] === 0 ? '' : ` (+${allowances[kind]} compressor allowance)`),
+    );
   }
 }

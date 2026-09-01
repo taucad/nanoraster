@@ -33,11 +33,12 @@
 
 .stage {
   display: grid;
-  min-height: 240px;
 
-  /* The render's own aspect, so the first paint lands in the space already
-     reserved for it instead of reflowing the panel. */
-  aspect-ratio: 4 / 3;
+  /* Sized by its own content, not stretched to the panel row: the image
+     reserves its height through its aspect ratio, so the stage is already
+     the right size on first layout and the badge below it is never clipped. */
+  align-self: start;
+  min-height: 240px;
   place-items: center;
   overflow: hidden;
 
@@ -115,6 +116,13 @@
 .image {
   display: block;
   width: 100%;
+
+  /* The render's own aspect, so the first paint lands in the space already
+     reserved for it instead of reflowing the panel. It sits on the image
+     rather than on `.stage`, because the stage also holds the evidence badge:
+     an aspect-locked stage plus `overflow: hidden` clips the badge out of
+     view exactly when the image is wide enough to fill the box. */
+  aspect-ratio: 4 / 3;
   height: auto;
 }
 

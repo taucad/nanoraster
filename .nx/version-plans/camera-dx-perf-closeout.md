@@ -6,8 +6,8 @@ BREAKING: The default fitted camera is now measured in the declared caller
 world — 45° azimuth from `world.forward` toward the caller's right and 30°
 elevation above the horizontal plane, with `up` defaulting to `world.up`.
 Renders that declared a non-default `world` and omitted `camera.direction`
-change framing (a +Z-up caller was previously framed at ~37.8° elevation);
-the default world is byte-identical. To keep the old framing, pass
+change framing (0.4.x framed a +Z-up caller at ~37.8° elevation); renders in
+the default world stay byte-identical. To keep the 0.4.x framing, pass
 `direction: [0.6123724357, 0.5, 0.6123724357]` explicitly.
 
 Add `renderDirectionFromOrbit` and `renderOrbitFromDirection` with the
