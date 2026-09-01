@@ -4,6 +4,16 @@
 
 The package has no compatibility commitments before its first stable release.
 
+- Top-level `phi`, `theta`, `up`, `projection`, and `margin` are replaced by a
+  tagged `camera`. Fitted cameras use Cartesian `direction` and `up`; fixed
+  cameras use `position`, `target`, and `up` with field of view or orthographic
+  span, zoom, and optional clipping. Each batch view owns an optional complete
+  camera. `lineWidth` is now public and measured in output pixels instead of
+  scaling with image height; its default is `3`. Removed wire keys fail with
+  the replacement path. Fit is geometry-tight over referenced draw positions,
+  preserves the requested rectilinear field of view, and may translate its
+  optical axis while preserving `direction`; `margin` is a minimum contained
+  border rather than an exact fill promise.
 - WebP `quality` values below `1` encode lossy instead of being ignored. A
   request that passed an explicit `quality` under a lossless-only release now
   produces a lossy file; drop the option or pass `1` to keep lossless output.

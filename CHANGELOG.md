@@ -98,3 +98,5 @@ All notable changes to nanoraster are recorded here.
 ## Unreleased
 
 - Extract the renderer into its standalone package.
+- Add a shared caller-world declaration for camera, section, world-light, axes,
+  and scale-bar values while preserving glTF-space defaults.

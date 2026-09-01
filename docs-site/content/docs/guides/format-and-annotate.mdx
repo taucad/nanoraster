@@ -102,11 +102,23 @@ draws it; in a [batch call](render-multiple-views), a view is labelled when its
 own entry sets `label`.
 
 The scale bar is drawn bottom-left in the model's own units. Under perspective
-it is only accurate at one depth, so its label names that plane with
-`@ center`; under [orthographic](frame-the-model) projection scale is
-depth-invariant and the qualifier is dropped.
+it is only accurate at one depth: a fitted camera labels `@ center`, while a
+fixed camera labels its caller-owned `@ target`. Under
+[orthographic](frame-the-model) projection scale is depth-invariant and the
+qualifier is dropped. Annotations may loosen a fitted camera but never change
+a fixed camera.
 
-### 5. Meet the minimum dimensions
+### 5. Set authored-edge thickness
+
+`lineWidth` controls glTF `LINES` primitives in output pixels, from `0.25` to
+`16`; the default is `3`. It does not grow with image height, so a 1 px line is
+1 px at both 512×512 and 2048×2048. Meshes and lines already use 4× MSAA.
+
+```typescript
+const image = await renderImage(glb, { format: 'png', lineWidth: 1 });
+```
+
+### 6. Meet the minimum dimensions
 
 Annotations need room to stay legible, so enabling any of them raises the
 minimum output size to **192 pixels** on both axes. A smaller request fails

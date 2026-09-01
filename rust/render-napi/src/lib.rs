@@ -267,7 +267,7 @@ impl Renderer {
 /// `"raw"`. `options_json` is the shared
 /// render-request contract (`render_core::RenderRequest`): a required
 /// format `"png" | "webp" | "jpeg" | "jpg" | "raw"`, width/height, quality 0..=1,
-/// phi/theta degrees, margin 0..=0.5, up `"x" | "y" | "z"`, background
+/// a fitted or fixed Cartesian camera, output-pixel line width, and background
 /// `[r, g, b, a]` in 0..=1.
 /// Addon-level one-shot sugar: this entry point creates and destroys a device
 /// per call — hold a [`Renderer`] to amortize that across calls. The

@@ -40,7 +40,12 @@ const report = {
   // vendored update had dropped, taking native and wasm lossless output apart
   // — changed the lossless webp fingerprints on purpose. PNG, JPEG and every
   // rendered pixel are untouched.
-  name: 'gear-parse-raster-encode-512x384-v4',
+  // v5: fitted/fixed Cartesian cameras replace orbit angles, and line width
+  // is now measured directly in output pixels instead of scaling from a
+  // hidden 432px reference. High-resolution edge pixels change on purpose.
+  // v6: fitted cameras use geometry-tight centred framing, intentionally
+  // changing the rendered subject scale and pixels.
+  name: 'gear-parse-raster-encode-512x384-v6',
   adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,
