@@ -8,11 +8,14 @@ import {
   demoAxes,
   demoAxisOf,
   demoAxisVector,
+  demoControlTemplates,
   demoControls,
   demoDirectionFromOrbit,
   demoOrbitFromDirection,
   demoPlaneOffset,
   demoPlanePoint,
+  demoQuantize,
+  demoUpClear,
   describeDemoView,
   isVector,
   isRawDemo,
@@ -264,15 +267,29 @@ export const RenderDemo = ({
     values[key] === true &&
     visibility.filter(({ key: other }) => values[other] === true).length === 1;
 
+  // A control writes no more decimals than its own step can express, so a drag
+  // cannot change the width of the line it rewrites in the example. Rounding
+  // the value rather than its printed form keeps the request that runs
+  // identical to the request on screen.
+  const templates = demoControlTemplates(parsedDescriptor.diagonal);
+  const quantize = (key: string, value: DemoValue): DemoValue =>
+    demoQuantize(
+      templates[parsedDescriptor.bindings.find((binding) => binding.key === key)?.control ?? ''],
+      value,
+    );
+
   const update = (key: string, value: DemoValue): void => {
-    const next = { ...values, [key]: value };
+    const next = { ...values, [key]: quantize(key, value) };
     // A section plane's point is driven as a distance along its own normal, so
     // turning the normal has to carry the point with it — otherwise the plane
     // teleports to wherever the old point projects onto the new normal.
     if (key.endsWith('.normal') && Array.isArray(value)) {
       const pointKey = `${key.slice(0, -'.normal'.length)}.point`;
       if (pointKey in values) {
-        next[pointKey] = demoPlanePoint(demoPlaneOffset(vectorOf(pointKey), vectorOf(key)), value);
+        next[pointKey] = quantize(
+          pointKey,
+          demoPlanePoint(demoPlaneOffset(vectorOf(pointKey), vectorOf(key)), value),
+        );
       }
     }
     apply(next);
@@ -313,8 +330,25 @@ export const RenderDemo = ({
     const orbit = demoOrbitFromDirection(vectorOf(control.key), declaredWorld);
     const azimuth = Math.round(orbit.azimuth);
     const elevation = Math.round(orbit.elevation);
+    // The renderer rejects a camera direction collinear with the camera's own
+    // `up`, and the sliders can reach that pair from anywhere. A light
+    // direction and a section normal have no such partner, so neither is
+    // constrained here.
+    const usable = (direction: readonly number[]): boolean =>
+      !control.key.endsWith('camera.direction') ||
+      demoUpClear(direction, values[control.key.replace(/direction$/u, 'up')], declaredWorld);
+    // A defaulted `up` sits on the world pole, so both ends of the elevation
+    // track are the rejected direction: end the track a step short instead,
+    // which is a boundary the slider cannot be dragged past.
+    const limit = usable(demoDirectionFromOrbit({ azimuth: 0, elevation: 90 }, declaredWorld)) ? 90 : 89;
     const move = (next: { azimuth: number; elevation: number }): void => {
-      update(control.key, demoDirectionFromOrbit(next, declaredWorld));
+      const direction = demoDirectionFromOrbit(next, declaredWorld);
+      // A declared `up` instead puts the rejected pair at one bearing in the
+      // middle of the track, which no min/max can exclude. Refuse that degree
+      // and re-seat the slider on the render that is up, rather than author a
+      // request only "reset to the example" recovers from.
+      if (usable(direction)) update(control.key, direction);
+      else setValues({ ...values });
     };
     return (
       <div className={styles.group} key={control.key}>
@@ -338,8 +372,8 @@ export const RenderDemo = ({
           <span>elevation {elevation}°</span>
           <input
             aria-label={`${control.label} elevation`}
-            max={90}
-            min={-90}
+            max={limit}
+            min={-limit}
             onChange={(event) => {
               move({ azimuth, elevation: Number(event.currentTarget.value) });
             }}

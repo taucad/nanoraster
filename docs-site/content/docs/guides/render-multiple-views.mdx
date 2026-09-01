@@ -17,7 +17,7 @@ the fitted three-quarter view. `axes` marks each orientation.
 <RenderDemo>
 
 ```typescript
-import { renderImages } from 'nanoraster';
+import { renderDirectionFromOrbit, renderImages } from 'nanoraster';
 
 import { readFile } from 'node:fs/promises';
 
@@ -28,7 +28,16 @@ const images = await renderImages(glb, {
   width: 640,
   height: 480,
   axes: true,
-  views: [{ id: 'iso' }, { id: 'front', camera: { framing: 'fit', direction: [1, 0, 0] } }],
+  views: [
+    { id: 'iso' },
+    {
+      id: 'front',
+      camera: {
+        framing: 'fit',
+        direction: renderDirectionFromOrbit({ azimuth: 90, elevation: 0 }),
+      },
+    },
+  ],
 });
 ```
 

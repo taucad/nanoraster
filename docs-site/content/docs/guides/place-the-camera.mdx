@@ -96,7 +96,7 @@ request change together.
 <RenderDemo>
 
 ```typescript
-import { renderImages } from 'nanoraster';
+import { renderDirectionFromOrbit, renderImages } from 'nanoraster';
 
 const images = await renderImages(glb, {
   format: 'png',
@@ -106,7 +106,7 @@ const images = await renderImages(glb, {
       label: 'Three-quarter fit',
       camera: {
         framing: 'fit',
-        direction: [0.6123724357, 0.5, 0.6123724357],
+        direction: renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }),
       },
     },
     {

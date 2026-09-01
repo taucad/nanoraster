@@ -5,6 +5,7 @@ import {
   demoControlNames,
   demoControlTemplates,
   demoControls,
+  demoDirectionFromOrbit,
   type DemoBinding,
   type DemoDescriptor,
   type DemoLight,
@@ -29,12 +30,80 @@ const unwrap = (node: ts.Expression): ts.Expression => {
   return node;
 };
 
+type Scope = ReadonlyMap<string, ts.Expression>;
+
+/**
+ * The example's own top-level constants, so it can name its world once and
+ * hand the same value to the request and to the orbit helper — which is what
+ * a reader copying the block has to do.
+ *
+ * One parse runs at a time during the docs build, so this is set per parse
+ * rather than threaded through every binding site.
+ */
+let scope: Scope = new Map();
+
+const declaredConstants = (source: ts.SourceFile): Scope =>
+  new Map(
+    source.statements.flatMap((statement) =>
+      ts.isVariableStatement(statement)
+        ? statement.declarationList.declarations.flatMap((declaration) =>
+            ts.isIdentifier(declaration.name) && declaration.initializer !== undefined
+              ? [[declaration.name.text, declaration.initializer] as const]
+              : [],
+          )
+        : [],
+    ),
+  );
+
+/** The exported orbit pair, as the examples name it. */
+const orbitHelper = 'renderDirectionFromOrbit';
+
+const isOrbitCall = (expression: ts.Expression): ts.CallExpression | undefined => {
+  const node = unwrap(expression);
+  return ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === orbitHelper
+    ? node
+    : undefined;
+};
+
+/** The world argument an orbit call passes on, as the example spells it. */
+const orbitWorld = (call: ts.CallExpression): { readonly world?: string } => {
+  const world = call.arguments.at(1);
+  return world === undefined ? {} : { world: world.getText().trim() };
+};
+
+/**
+ * Evaluate `renderDirectionFromOrbit(orbit, world?)` where the example writes
+ * it.
+ *
+ * The helper is the authoring form only: the vector it names is what the
+ * descriptor, the executed request, and the build-time bounds check all see,
+ * so nothing spherical reaches the renderer.
+ */
+const orbitLiteral = (node: ts.CallExpression): Literal | undefined => {
+  const authored = node.arguments.at(0);
+  const world = node.arguments.at(1);
+  const orbit = authored === undefined ? undefined : literal(authored);
+  const declared = world === undefined ? undefined : literal(world);
+  if (orbit === undefined || Array.isArray(orbit) || typeof orbit !== 'object') return undefined;
+  const { azimuth, elevation } = orbit as Record<string, unknown>;
+  if (typeof azimuth !== 'number' || typeof elevation !== 'number') return undefined;
+  return [...demoDirectionFromOrbit({ azimuth, elevation }, declared)];
+};
+
 const literal = (expression: ts.Expression): Literal | undefined => {
   const node = unwrap(expression);
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
   if (ts.isNumericLiteral(node)) return Number(node.text);
   if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
   if (node.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (ts.isIdentifier(node)) {
+    const declared = scope.get(node.text);
+    return declared === undefined ? undefined : literal(declared);
+  }
+  if (ts.isCallExpression(node)) {
+    const call = isOrbitCall(node);
+    return call === undefined ? undefined : orbitLiteral(call);
+  }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
     const value = literal(node.operand);
     return typeof value === 'number' ? -value : undefined;
@@ -45,6 +114,10 @@ const literal = (expression: ts.Expression): Literal | undefined => {
   }
   if (ts.isObjectLiteralExpression(node)) {
     const entries = node.properties.flatMap((property) => {
+      if (ts.isShorthandPropertyAssignment(property)) {
+        const value = literal(property.name);
+        return value === undefined ? [] : [[property.name.text, value] as const];
+      }
       if (!ts.isPropertyAssignment(property)) return [];
       const name = propertyName(property.name);
       const value = literal(property.initializer);
@@ -111,6 +184,7 @@ const pushBinding = (
   const found = property(object, name);
   if (found === undefined) return;
   const value = literal(found.initializer);
+  const call = isOrbitCall(found.initializer);
   if (
     typeof value !== 'number' &&
     typeof value !== 'string' &&
@@ -128,6 +202,7 @@ const pushBinding = (
     value,
     valueSpan: span(found.initializer, options.offset),
     ...(name === 'label' ? { deleteSpan: deleteSpan(object, found, options.offset) } : {}),
+    ...(call === undefined ? {} : { orbit: orbitWorld(call) }),
     ...(options.title === undefined ? {} : { title: options.title }),
     ...(options.view === undefined ? {} : { view: options.view }),
   });
@@ -241,7 +316,13 @@ const boundsFailures = (descriptor: DemoDescriptor): readonly string[] => {
       const violation =
         binding === undefined
           ? undefined
-          : demoBoundsViolation(templates[binding.control], values[control.key]);
+          : demoBoundsViolation(
+              templates[binding.control],
+              values[control.key],
+              // A plane offset is bounded along the plane's own normal, so the
+              // sibling binding is what makes that check mean anything.
+              values[control.key.replace(/\.point$/u, '.normal')],
+            );
       return violation === undefined ? [] : [`${control.key}: ${violation}`];
     }),
   );
@@ -256,6 +337,7 @@ const boundsFailures = (descriptor: DemoDescriptor): readonly string[] => {
  */
 export const createDemoDescriptor = (code: string, diagonal: number): DemoDescriptor => {
   const source = ts.createSourceFile('demo.ts', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  scope = declaredConstants(source);
   const options = renderCallOptions(source);
   const bindings: DemoBinding[] = [];
   const request = options === undefined ? {} : asObject(literal(options));

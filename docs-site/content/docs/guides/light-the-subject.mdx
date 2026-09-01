@@ -12,14 +12,14 @@ lights and inherits every value it leaves out.
 <RenderDemo>
 
 ```typescript
-import { renderImage } from 'nanoraster';
+import { renderDirectionFromOrbit, renderImage } from 'nanoraster';
 
 const image = await renderImage(glb, {
   format: 'webp',
   lighting: {
     lights: [
-      { direction: [-0.5, 0.6, 0.6], color: [3, 2.9, 2.7] },
-      { direction: [0.6, -0.2, 0.4], color: [0.7, 0.8, 1] },
+      { direction: renderDirectionFromOrbit({ azimuth: -40, elevation: 38 }), color: [3, 2.9, 2.7] },
+      { direction: renderDirectionFromOrbit({ azimuth: 56, elevation: -16 }), color: [0.7, 0.8, 1] },
     ],
     ambient: 0.02,
     exposure: 1,
@@ -74,16 +74,26 @@ subject is black.
 <RenderDemo>
 
 ```typescript
+const world = { up: '+z', forward: '-y', unit: 'meter' } as const;
+
 const images = await renderImages(glb, {
   format: 'webp',
-  world: { up: '+z', forward: '-y', unit: 'meter' },
+  world,
   lighting: {
-    lights: [{ direction: [1, 0.4, 0], color: [3, 2.9, 2.7] }],
+    lights: [
+      { direction: renderDirectionFromOrbit({ azimuth: 112, elevation: 0 }, world), color: [3, 2.9, 2.7] },
+    ],
     space: 'world',
   },
   views: [
-    { id: 'front', camera: { framing: 'fit', direction: [1, 0, 0] } },
-    { id: 'back', camera: { framing: 'fit', direction: [-1, 0, 0] } },
+    {
+      id: 'front',
+      camera: { framing: 'fit', direction: renderDirectionFromOrbit({ azimuth: 90, elevation: 0 }, world) },
+    },
+    {
+      id: 'back',
+      camera: { framing: 'fit', direction: renderDirectionFromOrbit({ azimuth: -90, elevation: 0 }, world) },
+    },
   ],
 });
 ```
@@ -91,7 +101,7 @@ const images = await renderImages(glb, {
 </RenderDemo>
 
 `space: 'world'` reads directions in the declared caller world, so this light
-stays fixed to the Z-up subject while the camera orbits. Nanoraster converts it
+stays fixed to the Z-up subject while the camera orbits. nanoraster converts it
 once; do not supply GLB-space values. Under default `'view'`, the rig instead
 travels with each camera, which is usually better for contact sheets.
 

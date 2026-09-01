@@ -13,11 +13,14 @@ import {
   demoOrbitFromDirection,
   demoPlaneOffset,
   demoPlanePoint,
+  demoQuantize,
+  demoUpClear,
   isVector,
   readDemoOptions,
   substituteDemoValues,
   type DemoControl,
   type DemoValue,
+  type DemoVector3,
 } from './lib/demo-options';
 import { demoModelDiagonal } from './lib/demo-model';
 import { buildDemoRequest } from './lib/demo-request';
@@ -46,7 +49,7 @@ const demos = globSync('**/*.mdx', { cwd: docsDir }).flatMap((path) => {
 /** The gear every demo but the section guide renders. */
 const gear = demoModelDiagonal();
 
-const perturb = (control: DemoControl, current: DemoValue): DemoValue => {
+const perturb = (control: DemoControl, current: DemoValue, world?: unknown): DemoValue => {
   const vector = isVector(current) ? [...current] : [0, 0, 0];
   if (control.kind === 'range')
     return Number(current) === control.max ? control.min : Number(current) + control.step;
@@ -54,8 +57,11 @@ const perturb = (control: DemoControl, current: DemoValue): DemoValue => {
   if (control.kind === 'choice') return control.choices.find((choice) => choice !== current) ?? current;
   if (control.kind === 'colour') return [0.1, 0.2, 0.3, 1];
   if (control.kind === 'orbit') {
-    const orbit = demoOrbitFromDirection(vector);
-    return demoDirectionFromOrbit({ ...orbit, azimuth: orbit.azimuth === 90 ? -90 : 90 });
+    // The angles the sliders hand over: whole degrees, read in the demo's own
+    // world, which is the pair the substituted helper call has to reproduce.
+    const orbit = demoOrbitFromDirection(vector, world);
+    const azimuth = Math.round(orbit.azimuth) === 90 ? -90 : 90;
+    return demoDirectionFromOrbit({ azimuth, elevation: Math.round(orbit.elevation) }, world);
   }
   if (control.kind === 'axis') return demoAxisVector(vector[2] === 1 ? '+x' : '+z');
   if (control.kind === 'offset') return demoPlanePoint(control.max / 2, [1, 0, 0]);
@@ -78,6 +84,95 @@ describe('interactive demo projections', () => {
     expect(orbit.elevation).toBeCloseTo(30);
   });
 
+  it('authors every angle-driven demo vector through the exported orbit helper', () => {
+    // A float triple on an angle-driven line teaches nothing and changes width
+    // on every drag, which is what makes the block's scrollbar flicker.
+    for (const { descriptor, path } of demos) {
+      const templates = demoControlTemplates(descriptor.diagonal);
+      for (const binding of descriptor.bindings) {
+        if (templates[binding.control].kind !== 'orbit') continue;
+        expect(binding.orbit, `${path} ${binding.key} is a raw vector`).toBeDefined();
+        expect(descriptor.code.slice(binding.valueSpan.start, binding.valueSpan.end)).toMatch(
+          /^renderDirectionFromOrbit\(\{ azimuth: -?\d+, elevation: -?\d+ \}(, \w+)?\)$/u,
+        );
+      }
+      // Copy-pasteable: a fence that imports from the package and calls the
+      // helper names the helper in that import.
+      if (/^import \{/mu.test(descriptor.code) && descriptor.code.includes('renderDirectionFromOrbit(')) {
+        expect(descriptor.code, path).toMatch(
+          /import \{[^}]*renderDirectionFromOrbit[^}]*\} from 'nanoraster'/u,
+        );
+      }
+    }
+  });
+
+  it('rewrites an orbit edit as whole degrees in the world the example declares', () => {
+    const world = { up: '+z', forward: '-y', unit: 'meter' } as const;
+    const descriptor = createDemoDescriptor(
+      `const world = { up: '+z', forward: '-y', unit: 'meter' } as const;
+
+const image = await renderImage(glb, {
+  format: 'png',
+  world,
+  camera: {
+    framing: 'fit',
+    direction: renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }, world),
+  },
+});`,
+      gear,
+    );
+    // The world reaches the request through the shared constant, and the
+    // helper is evaluated here: what travels to the renderer is Cartesian.
+    expect(descriptor.request['world']).toEqual(world);
+    expect(descriptor.bindings.find(({ key }) => key === 'camera.direction')?.value).toEqual(
+      demoDirectionFromOrbit({ azimuth: 45, elevation: 30 }, world),
+    );
+
+    const seeded = readDemoOptions(descriptor);
+    const moved = demoDirectionFromOrbit({ azimuth: -98, elevation: 28 }, world);
+    const rewritten = substituteDemoValues(descriptor, { ...seeded, 'camera.direction': moved });
+    expect(rewritten).toContain(
+      'direction: renderDirectionFromOrbit({ azimuth: -98, elevation: 28 }, world),',
+    );
+    const recovered = demoOrbitFromDirection(moved, world);
+    expect(recovered.azimuth).toBeCloseTo(-98);
+    expect(recovered.elevation).toBeCloseTo(28);
+    // Reparsing the rewritten example lands on the same Cartesian vector.
+    expect(readDemoOptions(createDemoDescriptor(rewritten, gear))['camera.direction']).toEqual(moved);
+  });
+
+  it('keeps a direction no whole-degree orbit names as a Cartesian literal', () => {
+    // The XYZ escape hatch can reach directions the two sliders cannot, and a
+    // rounded helper call would then show a request the renderer never ran.
+    const descriptor = createDemoDescriptor(
+      `const image = await renderImage(glb, {
+  format: 'png',
+  camera: { framing: 'fit', direction: renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }) },
+});`,
+      gear,
+    );
+    const typed = [0.1234, 0.5678, 0.9];
+    const rewritten = substituteDemoValues(descriptor, {
+      ...readDemoOptions(descriptor),
+      'camera.direction': typed,
+    });
+    expect(rewritten).toContain('direction: [0.1234, 0.5678, 0.9]');
+    expect(readDemoOptions(createDemoDescriptor(rewritten, gear))['camera.direction']).toEqual(typed);
+  });
+
+  it('writes no more decimals than a control step can express', () => {
+    // A vector printed to ten places changes the width of its line on every
+    // drag; the control's own step is what bounds it.
+    expect(demoQuantize({ kind: 'offset', min: -1, max: 1, step: 0.001 }, [0.0070710678, 0.5, 0])).toEqual([
+      0.0071, 0.5, 0,
+    ]);
+    expect(demoQuantize({ kind: 'range', min: 0, max: 0.5, step: 0.01 }, 0.123456789)).toBe(0.123);
+    // Orbit vectors carry no step: their two angles are what the reader moves.
+    expect(demoQuantize({ kind: 'orbit' }, [0.6123724357, 0.5, 0.6123724357])).toEqual([
+      0.6123724357, 0.5, 0.6123724357,
+    ]);
+  });
+
   it('maps a plane point to one signed distance along its own normal', () => {
     expect(demoPlaneOffset([0, 0, 0], [-1, 0, 0])).toBe(0);
     expect(demoPlanePoint(0.01, [-2, 0, 0])).toEqual([-0.01, 0, 0]);
@@ -95,6 +190,60 @@ describe('interactive demo projections', () => {
     expect(() => createDemoDescriptor(authored(1), gear)).not.toThrow();
     expect(() => createDemoDescriptor(authored(10_000), gear)).toThrow(/camera\.clipping\.far/u);
     expect(demoBoundsViolation({ kind: 'range', min: 2, max: 1000, step: 1 }, 1)).toContain('outside');
+  });
+
+  it('bounds a plane point by its signed offset, not its distance from the origin', () => {
+    const offset = { kind: 'offset', min: -1, max: 1, step: 0.01 } as const;
+    const normal = [1, 0, 0];
+    // A legal plane: 100 units of tangential slide names the same plane as the
+    // origin does, so the offset control seeds it at 0 and nothing is lost.
+    expect(demoBoundsViolation(offset, [0, 100, 0], normal)).toBeUndefined();
+    expect(demoPlaneOffset([0, 100, 0], normal)).toBe(0);
+    // A genuinely unreachable offset still fails the build.
+    expect(demoBoundsViolation(offset, [2, 100, 0], normal)).toContain('outside');
+    expect(demoBoundsViolation(offset, [-2, 0, 0], normal)).toContain('outside');
+  });
+
+  it('re-quotes a label that carries the quote it is wrapped in', () => {
+    // A reader typing an apostrophe into the label control produced `'O'Brien'`,
+    // which is not a TypeScript literal and no longer parses back.
+    const descriptor = createDemoDescriptor(
+      `const image = await renderImage(glb, {
+  format: 'png',
+  label: 'part',
+});`,
+      gear,
+    );
+    for (const label of ["O'Brien", 'back\\slash', "both\\'"]) {
+      const rewritten = substituteDemoValues(descriptor, { ...readDemoOptions(descriptor), label });
+      expect(readDemoOptions(createDemoDescriptor(rewritten, gear))['label']).toBe(label);
+    }
+  });
+
+  it('refuses the camera directions the renderer rejects as collinear', () => {
+    // The measured defect: elevation ±90 puts a fitted direction on the world
+    // pole, where an undeclared `up` already sits, and the panel recovered
+    // only through "reset to the example".
+    const at = (elevation: number, world?: unknown): DemoVector3 =>
+      demoDirectionFromOrbit({ azimuth: 0, elevation }, world);
+    for (const elevation of [90, -90]) {
+      expect(demoUpClear(at(elevation), undefined)).toBe(false);
+      expect(demoUpClear(at(elevation), [0, 1, 0])).toBe(false);
+      // The tutorial's top view declares its way out of the collision.
+      expect(demoUpClear(at(elevation), [0, 0, 1])).toBe(true);
+    }
+    // Which is why that view has the pair one bearing into the track instead,
+    // where no slider min or max can exclude it.
+    expect(demoUpClear(at(0), [0, 0, 1])).toBe(false);
+    expect(demoUpClear(at(1), [0, 0, 1])).toBe(true);
+    expect(demoUpClear(at(-1), [0, 0, 1])).toBe(true);
+    // A Z-up caller world swaps which axis the poles sit on.
+    const zUp = { up: '+z', forward: '-y' };
+    expect(demoUpClear(at(90, zUp), [0, 0, 1], zUp)).toBe(false);
+    expect(demoUpClear(at(90, zUp), [0, 1, 0], zUp)).toBe(true);
+    // Magnitude is not a degree of freedom, and neither vector may be zero.
+    expect(demoUpClear(at(90), [0, 7, 0])).toBe(false);
+    expect(demoUpClear([0, 0, 0], [0, 0, 1])).toBe(false);
   });
 
   it('scales every length control to the model on screen', () => {
@@ -147,7 +296,7 @@ describe('interactive demo projections', () => {
       for (const viewId of [undefined, ...descriptor.views.map(({ id }) => id)]) {
         for (const control of demoControls(descriptor, viewId)) {
           expect(seeded[control.key], `${path} ${control.key}`).toBeDefined();
-          const edited = perturb(control, seeded[control.key]);
+          const edited = perturb(control, seeded[control.key], descriptor.request['world']);
           const rewritten = substituteDemoValues(descriptor, { ...seeded, [control.key]: edited });
           const reparsed = createDemoDescriptor(rewritten, diagonal);
           expect(readDemoOptions(reparsed)[control.key], `${path} ${control.key}`).toEqual(edited);

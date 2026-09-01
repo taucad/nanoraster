@@ -22,34 +22,6 @@ axis, as a plan view does.
 <RenderDemo>
 
 ```typescript
-import { renderImage } from 'nanoraster';
-
-const image = await renderImage(glb, {
-  format: 'webp',
-  world: { up: '+z', forward: '-y', unit: 'meter' },
-  camera: {
-    framing: 'fit',
-    direction: [0.6123724357, -0.6123724357, 0.5],
-  },
-});
-```
-
-</RenderDemo>
-
-This worked request authors a three-quarter view in Z-up metres; nanoraster
-converts it once to the GLB frame. The live azimuth and elevation controls
-derive the Cartesian `direction` shown in the copyable code. Expand
-**advanced · direction XYZ** for raw vector entry.
-
-## Turn angles into directions
-
-[`renderDirectionFromOrbit`](../api#renderdirectionfromorbit) converts orbit
-angles to the Cartesian `direction` a fitted camera takes, and
-[`renderOrbitFromDirection`](../api#renderorbitfromdirection) inverts it. Both
-resolve their axes from the world you pass, so pass the same `world` the request
-declares:
-
-```typescript
 import { renderDirectionFromOrbit, renderImage } from 'nanoraster';
 
 const world = { up: '+z', forward: '-y', unit: 'meter' } as const;
@@ -62,6 +34,27 @@ const image = await renderImage(glb, {
     direction: renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }, world),
   },
 });
+```
+
+</RenderDemo>
+
+This worked request authors a three-quarter view in Z-up metres; nanoraster
+converts it once to the GLB frame. The live azimuth and elevation controls move
+the two angles in the copyable code. Expand **advanced · direction XYZ** for raw
+vector entry.
+
+## Turn angles into directions
+
+[`renderDirectionFromOrbit`](../api#renderdirectionfromorbit) converts orbit
+angles to the Cartesian `direction` a fitted camera takes, and
+[`renderOrbitFromDirection`](../api#renderorbitfromdirection) inverts it. Both
+resolve their axes from the world you pass, so pass the same `world` the request
+declares — as the example above does. Read a direction back the same way:
+
+```typescript
+import { renderOrbitFromDirection } from 'nanoraster';
+
+const { azimuth, elevation } = renderOrbitFromDirection([0.61, -0.61, 0.5], world);
 ```
 
 Azimuth is the angle in the world horizontal plane, zero on `world.forward` and

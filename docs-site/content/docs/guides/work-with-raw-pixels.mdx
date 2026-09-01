@@ -95,11 +95,15 @@ as [Reuse the renderer](reuse-the-renderer) shows.
 <RenderDemo>
 
 ```typescript
-import { renderImage } from 'nanoraster';
+import { renderDirectionFromOrbit, renderImage } from 'nanoraster';
 
 const { bytes, width, height } = await renderImage(glb, {
   format: 'raw',
-  camera: { framing: 'fit', direction: [0.65, 0.47, 0.6], margin: 0.08 },
+  camera: {
+    framing: 'fit',
+    direction: renderDirectionFromOrbit({ azimuth: 47, elevation: 28 }),
+    margin: 0.08,
+  },
 });
 
 // No copy and no decode: ImageData wraps the memory the renderer wrote.

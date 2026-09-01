@@ -121,6 +121,27 @@ export const demoPlanePoint = (offset: number, normal: readonly number[]): DemoV
   ];
 };
 
+/**
+ * Whether the renderer will accept this camera direction.
+ *
+ * A direction collinear with the camera's `up` names no view, so the request
+ * throws rather than rendering. An undeclared `up` defaults to the world pole,
+ * which is exactly where an elevation of ±90 puts a fitted direction; a
+ * declared `up` moves the rejected pair off the poles and onto its own
+ * bearing. Both are one drag from any starting position.
+ */
+export const demoUpClear = (
+  direction: readonly number[],
+  up: DemoValue | undefined,
+  declaredWorld?: unknown,
+): boolean => {
+  const axis = isVector(up) ? up : demoDirectionFromOrbit({ azimuth: 0, elevation: 90 }, declaredWorld);
+  const scale =
+    Math.hypot(direction[0] ?? 0, direction[1] ?? 0, direction[2] ?? 0) *
+    Math.hypot(axis[0] ?? 0, axis[1] ?? 0, axis[2] ?? 0);
+  return scale > 0 && Math.abs(dot(direction, axis)) < scale - 1e-9;
+};
+
 type DemoCamera = {
   readonly framing: 'fit' | 'fixed';
   readonly direction?: DemoVector3;
@@ -157,6 +178,12 @@ export type DemoBinding = {
   readonly value: DemoValue;
   readonly valueSpan: DemoSpan;
   readonly deleteSpan?: DemoSpan;
+  /**
+   * Present when the example authors this vector as a
+   * `renderDirectionFromOrbit` call, carrying the source text of the world
+   * argument it passes. Edits are written back in the same form.
+   */
+  readonly orbit?: { readonly world?: string };
   readonly title?: string;
   readonly view?: string;
 };
@@ -186,14 +213,30 @@ export type DemoDescriptor = {
  * half a percent of it, and the clipping sliders span the decades either side
  * rather than a linear track whose authored value sits at 0.4 % of it.
  */
+/**
+ * A symmetric length track whose ends are a whole number of steps from zero.
+ *
+ * A raw multiple of the diagonal gives `min` and `step` eighteen significant
+ * digits, and the browser snaps a range input to `min + n * step`: at the far
+ * end of such a track the snap lands a few times 10^-18 outside `min`, and the
+ * control reports `rangeUnderflow` while holding a value the renderer accepts.
+ * Rounding the step to three significant digits and placing the ends on it
+ * keeps the arithmetic exact enough to snap cleanly.
+ */
+const lengthTrack = (extent: number, steps: number): { min: number; max: number; step: number } => {
+  const step = Number((extent / steps).toPrecision(3));
+  const end = step * steps;
+  return { min: -end, max: end, step };
+};
+
 export const demoControlTemplates = (d: number): Readonly<Record<string, DemoControlTemplate>> => ({
   margin: { kind: 'range', min: 0, max: 0.5, step: 0.01 },
   direction: { kind: 'orbit' },
   normal: { kind: 'orbit' },
   up: { kind: 'axis' },
-  position: { kind: 'triple', min: -3 * d, max: 3 * d, step: d / 200 },
-  target: { kind: 'triple', min: -d, max: d, step: d / 200 },
-  point: { kind: 'offset', min: -d / 2, max: d / 2, step: d / 400 },
+  position: { kind: 'triple', ...lengthTrack(3 * d, 600) },
+  target: { kind: 'triple', ...lengthTrack(d, 200) },
+  point: { kind: 'offset', ...lengthTrack(d / 2, 200) },
   verticalFieldOfView: { kind: 'range', min: 1, max: 179, step: 1 },
   verticalSpan: { kind: 'range', min: d / 20, max: 4 * d, step: d / 400 },
   zoom: { kind: 'range', min: 0.01, max: 4, step: 0.01 },
@@ -236,7 +279,11 @@ export const demoControlNames: readonly string[] = Object.keys(demoControlTempla
  * whose floor was 2 read `2` beside `far: 1`. This is the check that turns
  * that class of drift into a failed docs build.
  */
-export const demoBoundsViolation = (template: DemoControlTemplate, value: DemoValue): string | undefined => {
+export const demoBoundsViolation = (
+  template: DemoControlTemplate,
+  value: DemoValue,
+  normal?: DemoValue,
+): string | undefined => {
   const parts = isVector(value) ? value : undefined;
   const outside = (min: number, max: number, each: readonly number[]): string | undefined =>
     each.every((part) => part >= min && part <= max)
@@ -256,11 +303,15 @@ export const demoBoundsViolation = (template: DemoControlTemplate, value: DemoVa
         : outside(template.min, template.max, parts);
     }
     case 'offset': {
-      // The point travels along its plane's normal, so its distance from the
-      // origin is what the one slider has to be able to reach.
+      // The slider drives a signed distance along the plane's own normal, so
+      // that is what has to be reachable. The point's distance from the origin
+      // is not: `[0, 100, 0]` under a `[1, 0, 0]` normal names the same plane
+      // as `[0, 0, 0]`, and the tangential component moves nothing.
       return parts === undefined
         ? `${JSON.stringify(value)} is not a vector`
-        : outside(template.min, template.max, [Math.hypot(...parts)]);
+        : outside(template.min, template.max, [
+            isVector(normal) ? demoPlaneOffset(parts, normal) : Math.hypot(...parts),
+          ]);
     }
     case 'orbit': {
       return parts !== undefined && parts.length === 3 && parts.some((part) => part !== 0)
@@ -334,8 +385,51 @@ export const isRawDemo = (descriptor: DemoDescriptor): boolean => descriptor.raw
  */
 const formatValue = (value: DemoValue, authored: string): string => {
   if (Array.isArray(value)) return `[${value.join(authored.includes(', ') ? ', ' : ',')}]`;
-  if (typeof value === 'string') return authored.startsWith("'") ? `'${value}'` : JSON.stringify(value);
+  // A label the reader typed can carry the quote it is being wrapped in, or a
+  // backslash that would escape the closing one. Both have to survive as text.
+  if (typeof value === 'string')
+    return authored.startsWith("'") ? `'${value.replace(/['\\]/gu, '\\$&')}'` : JSON.stringify(value);
   return JSON.stringify(value);
+};
+
+/**
+ * The helper call that names a direction, or `undefined` when no whole-degree
+ * pair does.
+ *
+ * An angle-driven vector is written back as the call a reader would author, so
+ * a drag moves two integers instead of thirty digits of float — the example
+ * stays short, near enough fixed width, and says what the two sliders mean.
+ * The round-trip keeps that honest: a direction typed into the XYZ boxes that
+ * no whole-degree orbit names stays a Cartesian literal.
+ */
+const orbitCall = (
+  value: readonly number[],
+  declaredWorld: unknown,
+  worldArgument: string | undefined,
+): string | undefined => {
+  const orbit = demoOrbitFromDirection(value, declaredWorld);
+  const azimuth = Math.round(orbit.azimuth);
+  const elevation = Math.round(orbit.elevation);
+  const exact = demoDirectionFromOrbit({ azimuth, elevation }, declaredWorld);
+  if (exact.some((part, index) => Math.abs(part - (value[index] ?? 0)) > 1e-9)) return undefined;
+  const world = worldArgument === undefined ? '' : `, ${worldArgument}`;
+  return `renderDirectionFromOrbit({ azimuth: ${azimuth}, elevation: ${elevation} }${world})`;
+};
+
+/**
+ * Round a control's value to the precision its own step warrants.
+ *
+ * A slider that writes ten decimals into the example changes the length of its
+ * line on every drag, which is what makes the block's scrollbar appear and
+ * disappear mid-gesture. Rounding the value rather than its printed form keeps
+ * the request that runs identical to the request on screen.
+ */
+export const demoQuantize = (template: DemoControlTemplate | undefined, value: DemoValue): DemoValue => {
+  if (template === undefined || !('step' in template)) return value;
+  const places = Math.min(6, Math.max(0, Math.ceil(-Math.log10(template.step)) + 1));
+  const round = (part: number): number => Number(part.toFixed(places));
+  if (typeof value === 'number') return round(value);
+  return isVector(value) ? value.map(round) : value;
 };
 
 /** Rewrite only build-time-proven literal spans; no client-side source discovery. */
@@ -350,7 +444,11 @@ export const substituteDemoValues = (
       return [{ ...binding.deleteSpan, replacement: '' }];
     }
     const authored = descriptor.code.slice(binding.valueSpan.start, binding.valueSpan.end);
-    return [{ ...binding.valueSpan, replacement: formatValue(value, authored) }];
+    const call =
+      binding.orbit === undefined || !isVector(value)
+        ? undefined
+        : orbitCall(value, descriptor.request['world'], binding.orbit.world);
+    return [{ ...binding.valueSpan, replacement: call ?? formatValue(value, authored) }];
   });
   return edits
     .sort((left, right) => right.start - left.start)

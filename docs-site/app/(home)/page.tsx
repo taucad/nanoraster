@@ -8,7 +8,7 @@ import { createDemoDescriptor } from '@/lib/demo-source';
 
 import styles from './page.module.css';
 
-const heroExample = `import { renderImage } from 'nanoraster';
+const heroExample = `import { renderDirectionFromOrbit, renderImage } from 'nanoraster';
 
 const image = await renderImage(glb, {
   format: 'webp',
@@ -16,7 +16,7 @@ const image = await renderImage(glb, {
   lineWidth: 3,
   camera: {
     framing: 'fit',
-    direction: [0.6123724357, 0.5, 0.6123724357],
+    direction: renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }),
     projection: { kind: 'perspective', verticalFieldOfView: 45 },
   },
   background: '#101418',
