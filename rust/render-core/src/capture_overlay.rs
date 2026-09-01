@@ -1,7 +1,9 @@
 //! Deterministic screen-space capture annotations stamped into readback RGBA.
 
 use crate::glb::Scene;
-use crate::render::{CameraState, Rendered, camera_state};
+#[cfg(test)]
+use crate::render::camera_state;
+use crate::render::{CameraState, Rendered, camera_state_with_bounds};
 use crate::{Projection, RenderError, RenderOptions};
 use glam::{Vec2, Vec3, Vec4};
 
@@ -90,7 +92,13 @@ pub(crate) fn prepare_view(
     debug_assert_ne!(FONT_GENERATOR_FNV, 0);
     debug_assert_ne!(FONT_SOURCE_FNV, 0);
     debug_assert_ne!(FONT_ATLAS_FNV, 0);
-    let mut camera = camera_state(scene, options);
+    let bounds = scene.presented_bounds(options);
+    if options.camera.is_fit() && bounds.is_none() {
+        return Err(RenderError::Parse(
+            "fitted camera has no eligible geometry to frame".into(),
+        ));
+    }
+    let mut camera = camera_state_with_bounds(scene, options, bounds);
     let axes = options.world_axes.map(Vec3::from);
     let alignment = classify_alignment(camera.forward, axes);
     let projection = options.camera.projection_kind();
@@ -993,6 +1001,7 @@ mod tests {
         Scene {
             meshes: vec![crate::glb::MeshAsset {
                 source_index: 0,
+                manifold: None,
                 primitives: vec![crate::glb::Primitive {
                     source_index: 0,
                     mode: crate::glb::MODE_LINES,
@@ -1012,6 +1021,7 @@ mod tests {
                 model: Mat4::IDENTITY,
                 normal_matrix: Mat4::IDENTITY,
             }],
+            topology_diagnostics: Vec::new(),
             bounds: Some((min, max)),
         }
     }
@@ -1749,6 +1759,7 @@ mod tests {
         let empty_scene = Scene {
             meshes: Vec::new(),
             instances: Vec::new(),
+            topology_diagnostics: Vec::new(),
             bounds: None,
         };
         let options = RenderOptions::default();

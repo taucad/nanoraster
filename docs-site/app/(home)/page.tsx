@@ -3,11 +3,12 @@ import Link from 'next/link';
 
 import { RenderDemo } from '@/components/render-demo';
 import { SizeStrip } from '@/components/size-strip';
+import { demoModelDiagonal } from '@/lib/demo-model';
 import { createDemoDescriptor } from '@/lib/demo-source';
 
 import styles from './page.module.css';
 
-const heroExample = `import { renderImage } from 'nanoraster';
+const heroExample = `import { directionFromOrbit, renderImage } from 'nanoraster';
 
 const image = await renderImage(glb, {
   format: 'webp',
@@ -15,13 +16,13 @@ const image = await renderImage(glb, {
   lineWidth: 3,
   camera: {
     framing: 'fit',
-    direction: [0.6123724357, 0.5, 0.6123724357],
+    direction: directionFromOrbit({ azimuth: 45, elevation: 30 }),
     projection: { kind: 'perspective', verticalFieldOfView: 45 },
   },
   background: '#101418',
 });`;
 
-const heroDescriptor = createDemoDescriptor(heroExample);
+const heroDescriptor = createDemoDescriptor(heroExample, demoModelDiagonal());
 
 /** Render the nanoraster homepage and its live demo. */
 const Page = (): React.JSX.Element => (

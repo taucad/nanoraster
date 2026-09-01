@@ -24,7 +24,7 @@ try {
 ### 2. Split transient faults from input faults
 
 `isGpuFault` is true for the three codes that describe the device rather than
-the request: the only ones worth retrying.
+the request. Those are the only codes worth a retry.
 
 ```typescript
 try {
@@ -57,8 +57,8 @@ const renderWithRetry = async (glb: Uint8Array<ArrayBuffer>, attempts = 3): Prom
 };
 ```
 
-Retrying a `parse` failure loops forever, so the guard checks the class before
-the attempt count.
+A retry loop on a `parse` failure never ends, so the guard checks the class
+before the attempt count.
 
 ### 4. Keep the last good image
 
@@ -79,10 +79,10 @@ try {
 ### 5. Tell a missing GPU from a slow one
 
 `adapter-unavailable` means no adapter at all. A host can also succeed with a
-_software_ adapter — SwiftShader, lavapipe, WARP — that renders correctly but
-an order of magnitude slower. `describeAdapter` is the preflight that
-separates the two before you commit to a workload. It resolves `undefined`
-when there is no adapter, rather than rejecting:
+_software_ adapter (SwiftShader, lavapipe, WARP) that renders correctly but an
+order of magnitude slower. `describeAdapter` is the preflight that separates
+the two before you commit to a workload. It resolves `undefined` when no adapter
+exists, rather than rejecting:
 
 ```typescript
 import { describeAdapter } from 'nanoraster';
@@ -96,25 +96,25 @@ if (!adapter) {
 }
 ```
 
-`backend` and `name` round out the answer for a bug report. In browsers
-`deviceType` is `'unknown'` unless the adapter declares itself a fallback:
-WebGPU withholds the class, and a browser with only software support usually
-returns no adapter at all.
+`backend` and `name` complete the answer for a bug report. In browsers,
+`deviceType` is `'unknown'` unless the adapter declares itself a fallback,
+because WebGPU withholds the class. A browser with only software support
+usually returns no adapter at all.
 
 ## Variations
 
-**Distinguishing bad GLB from bad options.** Both surface as `parse`, since
-both violate the input contract; `message` names which.
+**Distinguishing bad GLB from bad options.** Both surface as `parse`: both violate
+the input contract. `message` names which.
 
 **A disposed renderer.** Calls on a disposed [`Renderer`](reuse-the-renderer)
 reject with code `gpu` and the message `gpu: renderer disposed`. Unlike other
-GPU-class faults this one is permanent: recreate the renderer, do not retry
+GPU-class faults, this one is permanent. Recreate the renderer; do not retry
 the call.
 
-**JPEG with a transparent background.** Fails as `encode`, not `parse`: the
-request is well-formed but the encoder cannot represent it; see
+**JPEG with a transparent background.** This fails as `encode`, not `parse`:
+the request is well-formed, but the encoder cannot represent it. See
 [Format and annotate](format-and-annotate).
 
 **Unknown failures.** `unknown` means the thrown value carried no recognised
-tag; do not retry. Every code and its retry guidance is listed under
-[`RenderError`](../api#rendererror).
+tag; do not retry. [`RenderError`](../api#rendererror) lists every code and
+its retry guidance.

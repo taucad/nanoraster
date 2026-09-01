@@ -65,6 +65,20 @@ export type RenderVector3 = readonly [x: number, y: number, z: number];
 export type RenderWorldAxis = '+x' | '-x' | '+y' | '-y' | '+z' | '-z';
 
 /**
+ * Caller-world orbit angles in degrees — the polar form of a camera
+ * {@link RenderVector3} direction, converted by
+ * {@link directionFromOrbit} and {@link orbitFromDirection}.
+ *
+ * @public
+ */
+export type RenderOrbit = {
+  /** Angle above the caller-world horizontal plane, from -90 to 90. */
+  readonly elevation: number;
+  /** Angle in that plane, from `world.forward` toward the caller's right. */
+  readonly azimuth: number;
+};
+
+/**
  * Coordinate system of request-space values and rendered presentation.
  * Submitted GLB bytes always remain glTF: right-handed, +Y up, +Z forward,
  * and metres. Omitted fields use those glTF defaults.
@@ -72,9 +86,19 @@ export type RenderWorldAxis = '+x' | '-x' | '+y' | '-y' | '+z' | '-z';
  * @public
  */
 export type RenderWorld = {
-  /** Caller-world up axis. @default '+y' */
+  /**
+   * Caller-world up axis. Supplied together with `forward` or not at all:
+   * the defaults apply only when both are omitted.
+   *
+   * @default '+y'
+   */
   readonly up?: RenderWorldAxis;
-  /** Caller-world forward axis. @default '+z' */
+  /**
+   * Caller-world forward axis. Supplied together with `up` or not at all:
+   * the defaults apply only when both are omitted.
+   *
+   * @default '+z'
+   */
   readonly forward?: RenderWorldAxis;
   /** Length unit of caller-world spatial values. @default 'meter' */
   readonly unit?: 'meter' | 'millimeter';
@@ -150,7 +174,7 @@ export type RenderCamera =
       readonly framing: 'fit';
       /** Direction from the subject toward the camera; fit may translate the optical axis. Magnitude is ignored. @default [0.6123724357, 0.5, 0.6123724357] */
       readonly direction?: RenderVector3;
-      /** Camera screen-up direction. Magnitude is ignored. @default [0, 1, 0] */
+      /** Camera screen-up direction. Magnitude is ignored. An up collinear with `direction` names no roll, so screen-up resolves to `world.forward`, or to `world.up` for a `direction` along `world.forward`. @default [0, 1, 0] */
       readonly up?: RenderVector3;
       /** Minimum empty fraction around contained fitted geometry, from 0 to 0.5. Aspect, front clearance, or annotations may add whitespace. @default 0.1 */
       readonly margin?: number;
@@ -164,7 +188,7 @@ export type RenderCamera =
       readonly position: RenderVector3;
       /** Point the camera looks at in caller-world coordinates. */
       readonly target: RenderVector3;
-      /** Camera screen-up direction. Magnitude is ignored. */
+      /** Camera screen-up direction. Magnitude is ignored. An up collinear with the view direction names no roll, so screen-up resolves to `world.forward`, or to `world.up` for a view along `world.forward`. */
       readonly up: RenderVector3;
       /** Perspective or orthographic projection. @default perspective with a 45° vertical field of view and zoom 1 */
       readonly projection?: RenderFixedProjection;
@@ -392,9 +416,19 @@ export type RenderTimings = {
 
 type NoExtraKeys<Value, Shape> = Value & Record<Exclude<keyof Value, keyof Shape>, never>;
 
+type StrictItems<Items extends readonly Shape[], Shape> = {
+  readonly [Index in keyof Items]: Items[Index] extends Shape ? NoExtraKeys<Items[Index], Shape> : never;
+};
+
 type StrictLighting<Lighting> = Lighting extends RenderLightingRig
-  ? NoExtraKeys<Lighting, RenderLightingRig>
+  ? NoExtraKeys<Lighting, RenderLightingRig> & {
+      readonly lights: StrictItems<Lighting['lights'], RenderLight>;
+    }
   : Lighting;
+
+type StrictVisiblePrimitives<Primitives> = Primitives extends readonly RenderPrimitiveReference[]
+  ? StrictItems<Primitives, RenderPrimitiveReference>
+  : Primitives;
 
 type StrictWorld<World> = World extends RenderWorld ? NoExtraKeys<World, RenderWorld> : World;
 
@@ -465,6 +499,7 @@ export type StrictRenderImagesOptions<Options extends RenderImagesOptions> = NoE
 > & {
   readonly views: StrictViews<Options['views']>;
   readonly lighting?: StrictLighting<Options['lighting']>;
+  readonly visiblePrimitives?: StrictVisiblePrimitives<Options['visiblePrimitives']>;
   readonly sections?: StrictSections<Options['sections']>;
   readonly world?: StrictWorld<Options['world']>;
 };
@@ -535,6 +570,8 @@ const sectionPlaneKeys = new Set(['point', 'normal']);
 
 const worldKeys = new Set(['up', 'forward', 'unit']);
 
+const orbitKeys = new Set(['azimuth', 'elevation']);
+
 const worldAxes: readonly RenderWorldAxis[] = ['+x', '-x', '+y', '-y', '+z', '-z'];
 
 /** Inclusive pixel bounds for image width and height. @public */
@@ -556,7 +593,7 @@ export const renderImageZoomRange = [0.01, 100] as const;
 export const renderImageLineWidthRange = [0.25, 16] as const;
 
 /** Most simultaneous section planes one request may carry. @public */
-export const renderImageMaxSections = 6;
+export const renderImageMaxSections = 8;
 
 /** Most directional lights one rig may carry. @public */
 export const renderImageMaxLights = 8;
@@ -674,6 +711,13 @@ const worldAxisVector = (axis: RenderWorldAxis): RenderVector3 => {
   return [0, 0, sign];
 };
 
+/**
+ * Mirror render-core's `resolve_world`: the pair is supplied together or not
+ * at all, both names are signed axes, and they name different axes. No
+ * handedness rule — render-core derives the caller's right as
+ * `up × forward`, which makes `(right, up, forward)` right-handed for every
+ * one of the 24 non-collinear pairs, so all 24 are legal.
+ */
 const validateWorld = (world: unknown): void => {
   if (world === undefined) {
     return;
@@ -682,30 +726,16 @@ const validateWorld = (world: unknown): void => {
     throw new TypeError('world must be an object');
   }
   assertKnownKeys(world, worldKeys, 'world');
-  const up = (world['up'] ?? '+y') as RenderWorldAxis;
-  const forward = (world['forward'] ?? '+z') as RenderWorldAxis;
+  const up = (world['up'] === undefined ? '+y' : world['up']) as RenderWorldAxis;
+  const forward = (world['forward'] === undefined ? '+z' : world['forward']) as RenderWorldAxis;
   assertOptionalEnum(up, 'world.up', worldAxes);
   assertOptionalEnum(forward, 'world.forward', worldAxes);
   assertOptionalEnum(world['unit'], 'world.unit', ['meter', 'millimeter']);
-  const upName = up.slice(1);
-  const forwardName = forward.slice(1);
-  if (upName === forwardName) {
-    throw new TypeError('world.up and world.forward must name different axes');
+  if ((world['up'] === undefined) !== (world['forward'] === undefined)) {
+    throw new TypeError('world.up and world.forward must be provided together');
   }
-  const [upX, upY, upZ] = worldAxisVector(up);
-  const [forwardX, forwardY, forwardZ] = worldAxisVector(forward);
-  const remaining: RenderVector3 =
-    upName !== 'x' && forwardName !== 'x'
-      ? [1, 0, 0]
-      : upName !== 'y' && forwardName !== 'y'
-        ? [0, 1, 0]
-        : [0, 0, 1];
-  const handedness =
-    remaining[0] * (upY * forwardZ - upZ * forwardY) +
-    remaining[1] * (upZ * forwardX - upX * forwardZ) +
-    remaining[2] * (upX * forwardY - upY * forwardX);
-  if (handedness !== 1) {
-    throw new TypeError('world.up and world.forward must define a right-handed frame');
+  if (up.slice(1) === forward.slice(1)) {
+    throw new TypeError('world.up and world.forward must name different axes');
   }
 };
 
@@ -729,17 +759,98 @@ const cameraVector = (value: unknown, name: string, allowZero = false): RenderVe
   return vector;
 };
 
-const normalizedCrossLength = (left: RenderVector3, right: RenderVector3): number => {
-  const leftLength = Math.hypot(...left);
-  const rightLength = Math.hypot(...right);
-  return (
-    Math.hypot(
-      left[1] * right[2] - left[2] * right[1],
-      left[2] * right[0] - left[0] * right[2],
-      left[0] * right[1] - left[1] * right[0],
-    ) /
-    (leftLength * rightLength)
-  );
+const degreesPerRadian = 180 / Math.PI;
+
+const orbitElevationRange = [-90, 90] as const;
+
+const dot = (left: RenderVector3, right: RenderVector3): number =>
+  left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+
+/**
+ * The declared world's forward, right, and up axes. `right = up × forward`
+ * matches render-core's caller basis, so azimuth turns the same way on both
+ * sides of the wire.
+ */
+const orbitBasis = (
+  world: RenderWorld | undefined,
+): readonly [forward: RenderVector3, right: RenderVector3, up: RenderVector3] => {
+  validateWorld(world);
+  const up = worldAxisVector(world?.up ?? '+y');
+  const forward = worldAxisVector(world?.forward ?? '+z');
+  return [
+    forward,
+    [
+      up[1] * forward[2] - up[2] * forward[1],
+      up[2] * forward[0] - up[0] * forward[2],
+      up[0] * forward[1] - up[1] * forward[0],
+    ],
+    up,
+  ];
+};
+
+/**
+ * Convert caller-world orbit angles to the unit direction they name.
+ *
+ * `azimuth` 0 sits on `world.forward` and turns positively toward the
+ * caller's right; `elevation` lifts out of that plane toward `world.up`.
+ * The result is the inverse of {@link orbitFromDirection} under the
+ * same world.
+ *
+ * @public
+ * @param orbit - Azimuth and elevation in degrees, elevation within -90 to 90
+ * @param world - Caller coordinate system the angles are read in; omit it for the glTF world
+ * @returns The unit direction in caller-world coordinates
+ */
+export const directionFromOrbit = (orbit: RenderOrbit, world?: RenderWorld): RenderVector3 => {
+  if (!isRecord(orbit)) {
+    throw new TypeError('orbit must be an object');
+  }
+  assertKnownKeys(orbit, orbitKeys, 'orbit');
+  assertFinite(orbit.azimuth, 'orbit.azimuth');
+  assertRange(orbit.elevation, 'orbit.elevation', orbitElevationRange);
+  const [forward, right, up] = orbitBasis(world);
+  const azimuth = orbit.azimuth / degreesPerRadian;
+  const elevation = orbit.elevation / degreesPerRadian;
+  const alongForward = Math.cos(elevation) * Math.cos(azimuth);
+  const alongRight = Math.cos(elevation) * Math.sin(azimuth);
+  const alongUp = Math.sin(elevation);
+  return [
+    forward[0] * alongForward + right[0] * alongRight + up[0] * alongUp,
+    forward[1] * alongForward + right[1] * alongRight + up[1] * alongUp,
+    forward[2] * alongForward + right[2] * alongRight + up[2] * alongUp,
+  ];
+};
+
+/**
+ * Convert a caller-world direction to the orbit angles that name it.
+ *
+ * Magnitude is ignored. `azimuth` comes back normalized to the half-open
+ * range -180 (exclusive) to 180 (inclusive). A direction lying exactly on
+ * `world.up` or its negative has no azimuth in the horizontal plane, so
+ * elevation is ±90 and azimuth is reported as 0.
+ *
+ * @public
+ * @param direction - Non-zero direction in caller-world coordinates
+ * @param world - Caller coordinate system the direction is read in; omit it for the glTF world
+ * @returns The azimuth and elevation in degrees
+ */
+export const orbitFromDirection = (direction: RenderVector3, world?: RenderWorld): RenderOrbit => {
+  const vector = cameraVector(direction, 'direction');
+  const [forward, right, up] = orbitBasis(world);
+  const alongForward = dot(vector, forward);
+  const alongRight = dot(vector, right);
+  // Only the up component is normalized: `asin` needs a unit-length sine,
+  // while the `atan2` below is scale-invariant and reads the raw projections.
+  const alongUp = dot(vector, up) / Math.hypot(...vector);
+  return {
+    // `+ 0` folds a negative zero to positive, so a direction opposite
+    // `world.forward` reports 180 rather than -180.
+    azimuth:
+      alongForward === 0 && alongRight === 0
+        ? 0
+        : Math.atan2(alongRight + 0, alongForward) * degreesPerRadian,
+    elevation: Math.asin(Math.min(Math.max(alongUp, -1), 1)) * degreesPerRadian,
+  };
 };
 
 const validateProjection = (projection: unknown, name: string, framing: RenderCamera['framing']): void => {
@@ -797,13 +908,15 @@ const validateCamera = (camera: unknown, name: string): void => {
   }
   if (camera['framing'] === 'fit') {
     assertKnownKeys(camera, fitCameraKeys, name);
-    const direction = cameraVector(
-      camera['direction'] ?? [0.612_372_435_7, 0.5, 0.612_372_435_7],
-      `${name}.direction`,
-    );
-    const up = cameraVector(camera['up'] ?? [0, 1, 0], `${name}.up`);
-    if (normalizedCrossLength(direction, up) < minimumCameraVectorLength) {
-      throw new TypeError(`${name}.direction and ${name}.up must not be collinear`);
+    // Only shape is checked here: both fit vectors are optional and render-core
+    // defaults them in the declared world. A supplied `up` collinear with
+    // `direction` names no roll, which render-core resolves against the
+    // declared world rather than refusing.
+    if (camera['direction'] !== undefined) {
+      cameraVector(camera['direction'], `${name}.direction`);
+    }
+    if (camera['up'] !== undefined) {
+      cameraVector(camera['up'], `${name}.up`);
     }
     if (camera['margin'] !== undefined) {
       assertRange(camera['margin'], `${name}.margin`, renderImageMarginRange);
@@ -817,7 +930,7 @@ const validateCamera = (camera: unknown, name: string): void => {
   assertKnownKeys(camera, fixedCameraKeys, name);
   const position = cameraVector(camera['position'], `${name}.position`, true);
   const target = cameraVector(camera['target'], `${name}.target`, true);
-  const up = cameraVector(camera['up'], `${name}.up`);
+  cameraVector(camera['up'], `${name}.up`);
   const direction: RenderVector3 = [
     position[0] - target[0],
     position[1] - target[1],
@@ -825,9 +938,6 @@ const validateCamera = (camera: unknown, name: string): void => {
   ];
   if (Math.hypot(...direction) < minimumCameraVectorLength) {
     throw new TypeError(`${name}.position and ${name}.target must not coincide`);
-  }
-  if (normalizedCrossLength(direction, up) < minimumCameraVectorLength) {
-    throw new TypeError(`${name}.view direction and ${name}.up must not be collinear`);
   }
   validateProjection(camera['projection'], `${name}.projection`, 'fixed');
   const clipping = camera['clipping'];
@@ -1017,8 +1127,8 @@ const validateCameraCommon = (options: CameraCommonOptions, annotated: boolean):
   if (options.lineWidth !== undefined) {
     assertRange(options.lineWidth, 'lineWidth', renderImageLineWidthRange);
   }
-  validateCamera(options.camera, 'camera');
   validateWorld(options.world);
+  validateCamera(options.camera, 'camera');
   assertOptionalBoolean(options.axes, 'axes');
   assertOptionalBoolean(options.scaleBar, 'scaleBar');
   validateAnnotatedDimensions(options, annotated);

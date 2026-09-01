@@ -54,6 +54,10 @@ const sizes = {
 // the shrink is the deleted raw-pixels entry points: the wasm-bindgen glue for
 // the class method and the free function, their JS result object, and the
 // core's format-free pixels request path. Rendered bytes are unchanged.
+// Stable-toolchain main baseline: raw 751,233, gzip-9 307,369, brotli-11
+// 249,284 on macOS with Rust 1.98.0 / LLVM 22.1.8, wasm-pack 0.15.0, and
+// Binaryen 132 `-Oz`. This is the recorded main artifact before the camera,
+// presentation, and topology programs below; retain it as the long-range base.
 // Cartesian-camera build: raw 931,986, gzip-9 369,380, brotli-11 294,978 on
 // macOS, against 857,495 / 344,892 / 276,011 for the raw-output build —
 // +74,491 raw (+8.7%), +24,488 gzip-9 (+7.1%), +18,967 brotli-11 (+6.9%).
@@ -74,7 +78,71 @@ const sizes = {
 // render-core size optimisation: 1,136,902 / 454,642 / 361,654 (-116,146 raw,
 // -19,150 gzip-9, -4,366 brotli-11). The Brotli ceiling is the base plus the
 // accepted 5 KB P0 budget.
-const ceilings = { raw: 1_270_000, gzip9: 480_000, brotli11: 371_020 };
+// EXT_mesh_manifold trust-boundary validation: 1,203,046 / 474,602 / 375,135,
+// against a paired P0 worktree at 1,136,364 / 454,313 / 361,588 — +66,682 raw,
+// +20,289 gzip-9, +13,547 brotli-11. The Brotli ceiling enforces the accepted
+// 15 KB P1 budget over that exact base.
+// Rust-core closeout hardening: 1,207,761 / 481,705 / 377,159 — +4,715 raw,
+// +7,103 gzip-9, +2,024 brotli-11 for bounded topology work, fail-closed shell
+// ownership, lazy optional topology, and cap diagnostics. These exact measured
+// values replace the former 1,270,000 raw ceiling's 5.6% slack.
+// Draw-aware wireframe bias: 1,207,843 / 481,817 / 377,128 — +82 raw for
+// keying the surface polygon offset on line geometry actually drawing (model
+// edges enabled, or a section boundary) instead of on `options.lines` alone,
+// so identical renders of line-free models stay byte-identical.
+// Speed-first wasm build (Q1): 1,514,440 / 569,303 / 431,218 — +306,597 raw
+// (+25.4%), +87,486 gzip-9 (+18.2%), +54,090 brotli-11 (+14.3%). This entry
+// moves the ratchet the wrong way on purpose. `130ce4e` had added
+// `--config profile.release.package.render-core.opt-level="z"` to
+// `scripts/build-wasm.mjs` on the premise that only optional presentation
+// control flow would shrink; the premise was false. Codec generics
+// monomorphise into `render-core`, per-crate opt-level overrides do not fully
+// apply under fat LTO, and the flag cost 2.4x on lossless-WebP encode and
+// about 6.4 ms on the hero render for output that stayed byte-identical —
+// which is why every correctness gate here passed it. `rust/Cargo.toml:10-12`
+// had already recorded the same measurement for the profile as a whole. The
+// flag is gone; these are the O3 bytes, and `scripts/check-wasm-speed.mjs`
+// now gates the encode cost this ratchet cannot see.
+// Of the increase, 805 raw / 354 brotli-11 is not the opt level: it is the
+// section-plane array growing six to eight vec4s (Q6) and the default fit
+// direction resolving from a world-relative orbit (D4). An O3 build of the
+// tree before those two measured 1,513,635 raw / 430,864 brotli-11.
+// Coverage-gate restructures: 1,515,486 / 569,364 / 431,345 — +1,046 raw,
+// +61 gzip-9, +127 brotli-11 for making the fail-closed ceilings and ray
+// guards in `section.rs`/`glb.rs` reachable by tests (merged work-ceiling
+// accumulator, extracted `ray_crosses_triangle`, explicit accessor-total
+// bound) with behaviour pinned verbatim by the new tests.
+// Selection-aware wireframe bias: 1,516,379 / 570,052 / 431,779 — +893 raw for
+// finishing the "draw-aware wireframe bias" entry above. That predicate keyed
+// the surface polygon offset on any uploaded line geometry, which
+// `visiblePrimitives` can exclude from the draw entirely; it now walks the
+// instances and asks `primitive_selected`, exactly as the line pass does, so a
+// selection that excludes every line primitive renders through the same
+// unbiased pipeline as `lines: false`. Only `raw` moves: the compressed
+// figures land inside their existing 0.5% compressor allowance.
+// World-derived screen-up: 1,516,438 / 570,186 / 432,160 — +59 raw for
+// resolving an `up` collinear with the view direction to a declared world axis
+// (`world.forward`, or `world.up` for a view along it) in place of the parse
+// error that rejected the pair. Two comparisons and a rotate of the declared
+// basis; the compressed figures land inside their 0.5% compressor allowance.
+const ceilings = { raw: 1_516_438, gzip9: 569_364, brotli11: 431_345 };
+
+// `raw` is the artifact and is byte-reproducible, so it is enforced exactly.
+// The compressed figures are not properties of the artifact alone: they are
+// what *this host's* zlib and brotli make of it. A byte-identical wasm
+// measures 569,364 gzip-9 under Node 24 and 26 and 569,404 under CI's Node,
+// and 431,345 brotli-11 under Node 24/26 against 431,623 under Node 22 — so
+// an exact compressed ceiling fails on a build that changed nothing. That is
+// not hypothetical: it red-lined CI on the parent commit over a single byte.
+// Allow the compressors 0.5% of headroom, which absorbs every version spread
+// measured here and still catches the kilobyte-scale growth this ratchet
+// exists to police; `raw` keeps that growth honest to the byte regardless.
+const compressorTolerance = 0.005;
+const allowances = {
+  raw: 0,
+  gzip9: Math.ceil(ceilings.gzip9 * compressorTolerance),
+  brotli11: Math.ceil(ceilings.brotli11 * compressorTolerance),
+};
 
 for (const marker of ['fontdue', 'Geist Regular']) {
   if (wasm.includes(Buffer.from(marker))) {
@@ -88,9 +156,13 @@ if (wasm.includes(font.subarray(4096, 4224))) {
   throw new Error('render WASM unexpectedly embeds the full Geist TTF');
 }
 
-console.log(JSON.stringify({ sizes, ceilings }, null, 2));
+console.log(JSON.stringify({ sizes, ceilings, allowances }, null, 2));
 for (const [kind, ceiling] of Object.entries(ceilings)) {
-  if (sizes[kind] > ceiling) {
-    throw new Error(`render WASM ${kind} size ${sizes[kind]} exceeds ${ceiling}`);
+  const limit = ceiling + allowances[kind];
+  if (sizes[kind] > limit) {
+    throw new Error(
+      `render WASM ${kind} size ${sizes[kind]} exceeds ${ceiling}` +
+        (allowances[kind] === 0 ? '' : ` (+${allowances[kind]} compressor allowance)`),
+    );
   }
 }

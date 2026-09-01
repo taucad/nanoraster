@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { closedCubeGlb, withReusableManifoldTopology } from '../tests/pbr-fixture.mjs';
 
 const native = await import('../tests/out/native-bench/index.js');
 
@@ -96,6 +97,35 @@ for (const [name, glb] of Object.entries(fixtures)) {
   };
 }
 
+// 192 triangles: slightly larger than the committed 178-triangle Racing Drone reproduction.
+const topologyFixture = withReusableManifoldTopology(closedCubeGlb(16));
+const topologySamples = [];
+for (let index = 0; index < 6; index += 1) {
+  // `parse_scene` only takes the section path — the one that decodes optional
+  // `EXT_mesh_manifold` — when sections are requested, so the gate has to ask
+  // for one to measure the topology decode it claims to measure.
+  const result = await renderMany(topologyFixture, {
+    format: 'raw',
+    width: 16,
+    height: 16,
+    timings: true,
+    sections: { planes: onePlane },
+    views: [{ id: 'isometric' }],
+  });
+  if (index > 0) topologySamples.push(result.timings.parse);
+}
+const topologyParse = median(topologySamples);
+// The 0.5 ms this gate used to carry was measured on a request that asked for
+// no sections, so it timed a parse that never decoded the extension at all.
+// Now that it does, the honest baseline is what decoding costs: about 0.13 ms
+// on an M-series host and 0.62 ms on a CI x86_64 runner. 2 ms clears the
+// slower of those with room for a loaded runner, and still catches the
+// order-of-magnitude regression a mis-shaped topology decode would produce.
+const topologyCeiling = 2;
+if (topologyParse > topologyCeiling) {
+  throw new Error(`EXT_mesh_manifold parse median ${topologyParse}ms exceeds ${topologyCeiling}ms`);
+}
+
 const repeated = fixtures['heavy-instanced-planetary'];
 const repeatOptions = {
   format: 'raw',
@@ -120,4 +150,6 @@ if (rssGrowth > 128 * 1024 * 1024) {
 }
 renderer.dispose();
 
-process.stdout.write(`${JSON.stringify({ cases, repeat: { calls: rss.length, rssGrowth } }, null, 2)}\n`);
+process.stdout.write(
+  `${JSON.stringify({ cases, extension: { parse: topologyParse }, repeat: { calls: rss.length, rssGrowth } }, null, 2)}\n`,
+);

@@ -21,7 +21,7 @@ mod section;
 use glb::parse_glb;
 
 #[cfg(feature = "bench")]
-pub use bench::{bench_encodes, bench_multi_view, codec_conformance};
+pub use bench::{bench_encodes, bench_fixture_encodes, bench_multi_view, codec_conformance};
 pub use encode::{ImageFormat, encode, encode_jpeg, encode_png, encode_webp};
 pub use options::{
     CameraRequest, CreateRendererRequest, LightRequest, LightingRequest, LightingRigRequest,
@@ -185,8 +185,10 @@ pub struct Sections {
     pub clip_lines: bool,
 }
 
-/// Maximum number of simultaneous retained-half-space planes.
-pub const MAX_SECTION_PLANES: usize = 6;
+/// Maximum number of simultaneous retained-half-space planes. Eight, so an
+/// axis-aligned box crop (six faces) still has two planes spare; the limit is
+/// the `Frame` uniform's plane array, not the shader's clipping arithmetic.
+pub const MAX_SECTION_PLANES: usize = 8;
 
 impl ResolvedLighting {
     /// The studio preset — the one definition of the built-in rig. `fs_mesh`
@@ -589,12 +591,6 @@ fn build_plan(
     for view in views {
         let view_options = resolved_view_options(options, view);
         with_view_result(validate_options(&view_options), &view.id)?;
-        if view_options.camera.is_fit() && scene.presented_bounds(&view_options).is_none() {
-            return Err(with_view(
-                RenderError::Parse("fitted camera has no eligible geometry to frame".into()),
-                &view.id,
-            ));
-        }
         let prepared = with_view_result(
             capture_overlay::prepare_view(scene, &view_options),
             &view.id,
@@ -607,6 +603,15 @@ fn build_plan(
         });
     }
     Ok(plan)
+}
+
+fn parse_scene(glb: &[u8], options: &RenderOptions) -> Result<glb::Scene, RenderError> {
+    if options.sections.is_some() {
+        glb::parse_glb_for_sections(glb)
+    } else {
+        parse_glb(glb)
+    }
+    .map_err(RenderError::Parse)
 }
 
 /// Upload the parsed scene and run the plan on a ready renderer, assembling
@@ -682,7 +687,7 @@ async fn render_once(
         ));
     }
     let parse_started = clock(now);
-    let scene = parse_glb(glb).map_err(RenderError::Parse)?;
+    let scene = parse_scene(glb, options)?;
     let parse = clock(now) - parse_started;
     let setup_started = clock(now);
     let plan = build_plan(&scene, options, format, views)?;
@@ -729,7 +734,7 @@ impl Renderer {
         let counters_start = self.counters();
         self.recover_if_lost().await?;
         let parse_started = clock(now);
-        let scene = parse_glb(glb).map_err(RenderError::Parse)?;
+        let scene = parse_scene(glb, options)?;
         let parse = clock(now) - parse_started;
         let setup_started = clock(now);
         let plan = build_plan(&scene, options, format, views)?;
@@ -819,7 +824,7 @@ fn stage_clock<'a>(
 pub async fn render_rgba(glb: &[u8], options: &RenderOptions) -> Result<Rendered, RenderError> {
     validate_options(options)?;
     // Reject before any GPU work: parse and prepare precede device creation.
-    let parsed = parse_glb(glb).map_err(RenderError::Parse)?;
+    let parsed = parse_scene(glb, options)?;
     let prepared = capture_overlay::prepare_view(&parsed, options)?;
     let entry = render::PlanEntry {
         id: String::new(),
@@ -947,6 +952,9 @@ mod tests {
     use super::*;
 
     const FIXTURE: &[u8] = include_bytes!("../../../tests/fixtures/gear-12.glb");
+    /// [`FIXTURE`] is not watertight, so section requests need their own.
+    const SECTION_FIXTURE: &[u8] =
+        include_bytes!("../../../tests/fixtures/racing-drone-section-repro.glb");
 
     fn material_variant(metallic: f32, roughness: f32) -> Vec<u8> {
         let parsed = gltf::binary::Glb::from_slice(FIXTURE).expect("fixture");
@@ -1546,6 +1554,11 @@ mod tests {
         assert!(pollster::block_on(render_image_request(FIXTURE, request)).is_ok());
         let plural = r#"{"format":"png","width":192,"height":192,"background":[1,1,1,1],"views":[{"id":"front"}]}"#;
         assert!(pollster::block_on(render_images_request(FIXTURE, plural, None)).is_ok());
+        // A section request takes the topology-aware parse path, so it needs a
+        // watertight subject: the gear fixture's flat cap faces are not, and
+        // fail certification by design.
+        let sectioned = r#"{"format":"png","width":64,"height":64,"world":{"up":"+z","forward":"-y","unit":"meter"},"sections":{"planes":[{"point":[0,0,0],"normal":[1,0,0]}]}}"#;
+        assert!(pollster::block_on(render_image_request(SECTION_FIXTURE, sectioned)).is_ok());
         let raw = pollster::block_on(render_image_request(
             FIXTURE,
             r#"{"format":"raw","width":192,"height":192}"#,
@@ -1579,6 +1592,18 @@ mod tests {
             let benchmark = pollster::block_on(bench::bench_multi_view(FIXTURE, 192, 192, &clock))
                 .expect("multi-view benchmark");
             assert_eq!(benchmark["variants"].as_array().map(Vec::len), Some(8));
+            // The gear fixture's cap faces are not watertight, so the run
+            // reports the certification it lost rather than failing.
+            assert!(
+                benchmark["sectionsSkipped"]
+                    .as_str()
+                    .is_some_and(|reason| reason.ends_with("has an open material seam"))
+            );
+            assert!(
+                benchmark["variants"][0]["batch"]["timings"]["capBuild"]
+                    .as_f64()
+                    .is_some_and(|duration| duration > 0.0)
+            );
         }
     }
 
@@ -1785,5 +1810,47 @@ mod tests {
         );
 
         renderer.destroy();
+    }
+
+    /// The surface pipeline takes a slope-scaled depth bias only when line
+    /// geometry actually draws. `visiblePrimitives` can exclude every line
+    /// primitive while `lines` stays on, and that view must be the same render
+    /// as the one that turns lines off — same bytes, and the same pipeline, so
+    /// the bytes cannot fork on a host whose depth interpolation differs from
+    /// this one's.
+    #[test]
+    fn excluded_line_primitives_do_not_bias_surfaces() {
+        // Mesh 0 holds a TRIANGLES primitive (0) and a LINES primitive (1),
+        // instanced at nodes 1 and 2.
+        const LINES_FIXTURE: &[u8] =
+            include_bytes!("../../../tests/fixtures/interleaved-instanced-lines.glb");
+        const SIZE: &str = r#""format":"png","width":96,"height":96,"timings":true"#;
+        const SURFACES: &str = r#""visiblePrimitives":[
+            {"nodeIndex":1,"meshIndex":0,"primitiveIndex":0},
+            {"nodeIndex":2,"meshIndex":0,"primitiveIndex":0}]"#;
+        let mut renderer = pollster::block_on(Renderer::from_request(None)).expect("renderer");
+        let render = |renderer: &mut Renderer, tail: &str| {
+            let (mut images, timings) = pollster::block_on(renderer.render_images_request(
+                LINES_FIXTURE,
+                &format!(r#"{{{SIZE},{tail},"views":[{{"id":"iso"}}]}}"#),
+                None,
+            ))
+            .expect("render");
+            (images.remove(0), timings.expect("timings").pipeline_sets)
+        };
+
+        // Lines off builds the unbiased surface pipeline; the selection that
+        // excludes every line primitive must reuse it rather than compile the
+        // biased one, and must land on the same bytes.
+        let (disabled, _) = render(&mut renderer, r#""lines":false"#);
+        let (selected, pipeline_sets) = render(&mut renderer, SURFACES);
+        assert_eq!(
+            pipeline_sets, 0,
+            "excluded lines compiled a second pipeline"
+        );
+        assert_eq!(selected, disabled);
+        // Guard the premise: this fixture really does draw lines.
+        let (with_lines, _) = render(&mut renderer, r#""lines":true"#);
+        assert_ne!(with_lines, disabled);
     }
 }

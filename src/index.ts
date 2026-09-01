@@ -18,6 +18,7 @@ export { RenderError } from '#render-error.js';
 export type { RenderFailureCode } from '#render-error.js';
 export { imageMimeTypes } from '#image-file.js';
 export type { RenderedImageFile } from '#image-file.js';
+export { directionFromOrbit, orbitFromDirection } from '#options.js';
 export {
   renderImageAmbientRange,
   renderImageAnnotatedMinDimension,
@@ -44,6 +45,7 @@ export type {
   RenderImageOptions,
   RenderImagesOptions,
   RenderImageView,
+  RenderOrbit,
   RenderTimings,
   RenderViewTimings,
   RenderedImage,

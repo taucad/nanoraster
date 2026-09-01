@@ -18,6 +18,7 @@ expectTypeOf<keyof RenderModule>().toEqualTypeOf<
   | 'createRenderer'
   | 'describeAdapter'
   | 'imageMimeTypes'
+  | 'directionFromOrbit'
   | 'renderImage'
   | 'renderImageAmbientRange'
   | 'renderImageAnnotatedMinDimension'
@@ -36,6 +37,7 @@ expectTypeOf<keyof RenderModule>().toEqualTypeOf<
   | 'renderImageViewIdPattern'
   | 'renderImageZoomRange'
   | 'renderImages'
+  | 'orbitFromDirection'
 >();
 
 const glb = new Uint8Array([1, 2, 3]);
@@ -49,6 +51,21 @@ const world = {
 } as const satisfies renderModule.RenderWorld;
 expectTypeOf(world.up).toEqualTypeOf<'+z'>();
 expectTypeOf<renderModule.RenderWorldAxis>().toEqualTypeOf<'+x' | '-x' | '+y' | '-y' | '+z' | '-z'>();
+
+// The orbit pair is world-aware and Cartesian on the wire: angles never reach
+// the request, they only produce the `direction` it already accepts.
+const orbit = { azimuth: 45, elevation: 30 } as const satisfies renderModule.RenderOrbit;
+expectTypeOf(renderModule.directionFromOrbit(orbit)).toEqualTypeOf<renderModule.RenderVector3>();
+expectTypeOf(renderModule.directionFromOrbit(orbit, world)).toEqualTypeOf<renderModule.RenderVector3>();
+expectTypeOf(renderModule.orbitFromDirection(vector)).toEqualTypeOf<renderModule.RenderOrbit>();
+expectTypeOf(renderModule.orbitFromDirection(vector, world)).toEqualTypeOf<renderModule.RenderOrbit>();
+void renderImage(glb, {
+  format: 'png',
+  world,
+  camera: { framing: 'fit', direction: renderModule.directionFromOrbit(orbit, world) },
+});
+// @ts-expect-error orbit angles are not a camera field
+void ({ framing: 'fit', azimuth: 45 } as const satisfies renderModule.RenderCamera);
 void renderImage(glb, { format: 'png', world });
 // @ts-expect-error the unreleased camera-specific tuple name was consolidated
 expectTypeOf<renderModule.CameraVector>();
@@ -372,6 +389,33 @@ void ({
   // @ts-expect-error direction needs three components
   lighting: { lights: [{ direction: [0, 1], color: [1, 1, 1] }] },
 } as const satisfies ImageOptions);
+void renderImages(glb, {
+  format: 'png',
+  lighting: {
+    lights: [
+      {
+        direction: [0, 1, 0],
+        color: [1, 1, 1],
+        // @ts-expect-error deep unknown light keys are rejected by generic calls
+        intensity: 2,
+      },
+    ],
+  },
+  views: [{ id: 'front' }],
+});
+void renderImages(glb, {
+  format: 'png',
+  visiblePrimitives: [
+    {
+      nodeIndex: 0,
+      meshIndex: 0,
+      primitiveIndex: 0,
+      // @ts-expect-error deep unknown primitive keys are rejected by generic calls
+      componentId: 'part',
+    },
+  ],
+  views: [{ id: 'front' }],
+});
 void ({
   format: 'png',
   lighting: {

@@ -25,26 +25,37 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // Presentation adds three option types, one limit, and two task guides. The
 // API and site ceilings account only for that new public surface.
 // Caller-world coordinates add the axis and world contracts to that API page.
+//
+// Every angle-driven demo vector is authored through `directionFromOrbit`
+// rather than as a float triple, so the six raised rows below pay for the call
+// and the `world` constant it takes, in fences that already existed. No prose
+// was added for it.
+//
+// World-derived screen-up is a public rule with two documented sites: a view
+// collinear with `up` names no roll, so screen-up becomes `world.forward`, or
+// `world.up` along forward. `api.mdx` and `place-the-camera.mdx` each state it
+// in one sentence, in place of the shorter clause that named only the
+// constraint. `frame-the-model.mdx` states it and stays well inside its row.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 2_920,
+  'api.mdx': 3_193,
   'guides/choose-visible-geometry.mdx': 340,
-  'guides/render-section-views.mdx': 340,
+  'guides/render-section-views.mdx': 360,
   'guides/format-and-annotate.mdx': 830,
   'guides/frame-the-model.mdx': 620,
   'guides/handle-render-failures.mdx': 560,
-  'guides/light-the-subject.mdx': 650,
-  'guides/place-the-camera.mdx': 730,
+  'guides/light-the-subject.mdx': 662,
+  'guides/place-the-camera.mdx': 739,
   'guides/render-for-llms.mdx': 500,
-  'guides/render-in-the-browser.mdx': 700,
+  'guides/render-in-the-browser.mdx': 740,
   'guides/render-multiple-views.mdx': 660,
   'guides/reuse-the-renderer.mdx': 650,
-  'guides/work-with-raw-pixels.mdx': 730,
+  'guides/work-with-raw-pixels.mdx': 734,
   'how-it-works.mdx': 1_180,
-  'index.mdx': 330,
+  'index.mdx': 335,
   'install.mdx': 740,
-  'tutorial.mdx': 690,
+  'tutorial.mdx': 696,
 };
-const siteCeiling = 12_690;
+const siteCeiling = 13_264;
 
 const pages = globSync('**/*.mdx', { cwd: docsDir })
   .toSorted()

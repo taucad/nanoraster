@@ -3,8 +3,8 @@ title: API reference
 description: Every public export of nanoraster — the two render calls, the renderer handle, the request and result types, the failure codes, and the validation constants.
 ---
 
-Everything below is imported from `nanoraster`. GLB bytes you pass in are owned by
-the call; the bytes you get back are newly allocated and yours.
+Every export on this page comes from `nanoraster`. The call owns the GLB
+bytes that you pass in. Returned bytes are newly allocated, and you own them.
 
 ## Every option and its default
 
@@ -31,11 +31,10 @@ const image = await renderImage(glb, {
 });
 ```
 
-`renderImages` takes the same shared keys, minus `label` and singular `camera`,
-plus `views: [{ id, label?, camera?, width?, height?, format?, quality? }]`,
-one entry per image in result order, and `timings: true` to attach stage
-timings. `format: 'raw'` skips the encoder and returns the frame itself, at
-call level or per view; see [Work with raw pixels](guides/work-with-raw-pixels).
+`renderImages` accepts the same shared keys, except `label` and the singular
+`camera`. It adds `views: [{ id, label?, camera?, width?, height?, format?, quality? }]`,
+one entry per image in result order. It accepts `timings: true` to
+attach stage timings.
 
 ## Render
 
@@ -64,9 +63,9 @@ const image = await renderImage(glb, { format: 'webp', width: 512 });
 
 ### `renderImages`
 
-Parse and upload a GLB once, then render an ordered set of identified views:
-the plan call. Each view may override the shared `width`, `height`, `format`
-and `quality`, so one call renders a whole resolution or format ladder.
+Parse and upload a GLB once, then render an ordered set of identified views.
+This is the plan call. Each view can override the shared `width`, `height`,
+`format` and `quality`.
 
 ```typescript
 export declare const renderImages: <const Options extends RenderImagesOptions>(
@@ -76,10 +75,10 @@ export declare const renderImages: <const Options extends RenderImagesOptions>(
 ```
 
 - **Parameters:** owned GLB bytes and shared settings with a non-empty view tuple.
-- **Returns:** a tuple with the input view IDs and order preserved; each
+- **Returns:** a tuple that preserves the input view IDs and order. Each
   entry's MIME type follows its own `format` override.
-- **Throws:** as above, plus a mismatch between the views requested and the
-  images returned.
+- **Throws:** the same errors as `renderImage`, plus an error when the
+  requested views and the returned images do not match.
 
 ```typescript
 import { renderImages } from 'nanoraster';
@@ -92,9 +91,10 @@ const [iso, front] = await renderImages(glb, {
 
 ## Renderer reuse
 
-The one-shot functions share one lazily created renderer per process, run in
-sequence and never disposed; create your own to control its lifetime or power
-preference. [Reuse the renderer](guides/reuse-the-renderer) covers when and how.
+The one-shot functions share one renderer per process. The first call creates
+it, and nothing disposes it.
+Create your own renderer to control lifetime or power preference.
+[Reuse the renderer](guides/reuse-the-renderer) covers when and how.
 
 ### `createRenderer`
 
@@ -119,9 +119,9 @@ const image = await renderer.renderImage(glb, { format: 'webp' });
 
 ### `Renderer`
 
-The persistent handle returned by [`createRenderer`](#createrenderer). Its two
-render methods mirror the module-level functions exactly (same options, same
-results, byte-identical pixels on the same adapter) but reuse one device.
+[`createRenderer`](#createrenderer) returns this persistent handle. Its two
+render methods mirror the module-level functions exactly: same options, same
+results, and byte-identical pixels on the same adapter.
 
 ```typescript
 export type Renderer = {
@@ -138,16 +138,16 @@ export type Renderer = {
 };
 ```
 
-- A renderer is **single-realm**: create it inside the worker that uses it;
-  bytes cross `postMessage`, handles do not.
-- Calls on one renderer run **in sequence**; a declared set of images goes
-  through one `renderImages` call, never a loop.
-- **Device loss is recovered** on the next call, which rebuilds the device and
-  re-uploads.
-- `dispose()` marks the renderer disposed at once, is idempotent, and backs
-  `using` through `Symbol.dispose`; every later call rejects with
-  `RenderError` code `'gpu'`, so recreate rather than retry. GPU teardown
-  follows the queued calls, with no completion signal.
+- A renderer is **single-realm**. Create it inside the worker that uses it.
+  Bytes cross `postMessage`; handles do not.
+- Calls on one renderer run **in sequence**. Send a declared set of images
+  through one `renderImages` call, not a loop.
+- The next call **recovers device loss**: it rebuilds the device and uploads
+  again.
+- `dispose()` marks the renderer disposed at once. It is idempotent and
+  backs `using` through `Symbol.dispose`. Every later call rejects with
+  `RenderError` code `'gpu'`, so create a new renderer instead of retrying.
+  GPU teardown follows the queued calls, with no completion signal.
 
 ### `CreateRendererOptions`
 
@@ -155,18 +155,18 @@ export type Renderer = {
 
 ### `describeAdapter`
 
-Describe the adapter a renderer created with these options would bind; pass
-the same `powerPreference` you would pass `createRenderer`.
+Describe the adapter that a renderer with these options would bind. Pass the
+`powerPreference` that you would pass to `createRenderer`.
 
 ```typescript
 export declare const describeAdapter: (options?: CreateRendererOptions) => Promise<AdapterInfo | undefined>;
 ```
 
 `deviceType === 'cpu'` means software rasterisation, an order of magnitude
-slower; use this as the preflight when performance matters. Native hosts
-report the full device class; browsers report `'unknown'` unless the adapter
-declares itself a fallback. No adapter resolves `undefined`; only invalid
-options reject.
+slower. Use it as the preflight when performance matters.
+Native hosts report the full device class. Browsers report `'unknown'` unless
+the adapter declares itself a fallback. When no adapter exists, the call
+resolves `undefined`. Only invalid options reject.
 
 ### `AdapterInfo`
 
@@ -174,9 +174,9 @@ options reject.
 
 ## Options held in a variable
 
-A variable widens `'webp'` to `string` and the view IDs with it, so the result
-tuple loses its names; `as const satisfies` keeps the literals and still checks
-the keys, at compile time only.
+A variable widens `'webp'` to `string` and the view IDs with it, so the
+result tuple loses its names. `as const satisfies` keeps the literals and
+still checks the keys, at compile time only.
 
 ```typescript
 import { renderImages, type RenderImagesOptions } from 'nanoraster';
@@ -202,9 +202,9 @@ show these fields in use.
 export type RenderVector3 = readonly [x: number, y: number, z: number];
 ```
 
-A Cartesian vector in the request's caller-world frame. That frame is glTF
-world space when `world` is omitted. Direction and up vectors accept any finite
-non-zero magnitude and are normalized internally.
+A Cartesian vector in the request's caller-world frame, which is glTF world
+space when the request omits `world`. Direction and up vectors accept any
+finite non-zero magnitude, and the renderer normalizes them.
 
 ### `RenderWorldAxis`
 
@@ -224,10 +224,10 @@ export type RenderWorld = {
 };
 ```
 
-Declares the coordinate frame used by camera, section, world-light, axes, and
-scale-bar values without changing the submitted GLB. Defaults are glTF `+Y`
-up, `+Z` forward, and metres. Up and forward must name distinct axes and form a
-right-handed frame. The setting is shared by every view in a batch.
+Declares the coordinate frame for camera, section, world-light, axes, and
+scale-bar values. It does not change the submitted GLB. The defaults are glTF
+`+Y` up, `+Z` forward, and metres. Up and forward must name distinct axes and
+form a right-handed frame. Every view in a batch shares the setting.
 
 ### `RenderPrimitiveReference`
 
@@ -251,8 +251,8 @@ export type RenderSectionPlane = {
 };
 ```
 
-The normal points into the retained world-space half-space and is normalized
-internally.
+The normal points into the retained world-space half-space. The renderer
+normalizes it.
 
 ### `RenderSections`
 
@@ -264,17 +264,17 @@ export type RenderSections = {
 };
 ```
 
-One to `renderImageMaxSections` planes shared by the request. Both clip flags
-default to `true`; [Cut section views](guides/render-section-views) covers caps,
-outlines, and multiple retained half-spaces. Successful closed-surface cuts
-contain every cap; failures return `parse`.
+The request shares one to `renderImageMaxSections` planes. Both clip flags
+default to `true`. [Cut section views](guides/render-section-views) covers
+caps, outlines, and multiple retained half-spaces. A successful closed-surface
+cut contains every cap. A failed cut returns `parse`.
 
 ### `RenderCamera`
 
-The tagged camera contract. A fit camera supplies orientation and lets
-nanoraster solve a geometry-tight optical target, distance, and clipping; a
-fixed camera preserves caller-owned pose and projection. Perspective is a
-rectilinear projection whose requested field of view is preserved exactly.
+The tagged camera contract. A fit camera supplies orientation, and nanoraster
+solves a geometry-tight optical target, distance, and clipping. A fixed camera
+preserves the caller-owned pose and projection. Perspective is rectilinear
+and preserves the requested field of view exactly.
 
 ```typescript
 export type RenderCamera =
@@ -299,13 +299,67 @@ export type RenderCamera =
     };
 ```
 
-Defaults are fit direction `[0.6123724357, 0.5, 0.6123724357]`, up `[0, 1, 0]`,
-minimum margin `0.1`, and perspective field of view `45` with zoom `1`.
-`direction` fixes orientation from the subject toward the camera; fitting may
-translate the optical axis to balance the projected geometry. A fixed camera
-requires non-coincident position/target and a non-collinear up vector. Omitted
-clipping derives safe planes from referenced geometry. Explicit range outside
-the referenced subject is tightened without changing visible geometry.
+The default fit camera looks from 45 degrees azimuth and 30 degrees
+elevation in the declared world, and its `up` is `world.up`. In
+glTF world, that direction is `[0.6123724357, 0.5, 0.6123724357]` and that up
+is `[0, 1, 0]`. The minimum margin defaults to `0.1`, the perspective field of
+view to `45`, and the zoom to `1`. `direction` fixes the orientation from the
+subject toward the camera. The fit can translate the optical axis to balance
+the projected geometry.
+
+A fixed camera requires a position and target that do not coincide. A view
+collinear with `up` names no roll. Screen-up then becomes `world.forward`, or
+`world.up` along forward. Omitted clipping derives safe planes from referenced
+geometry. The renderer tightens an explicit range outside the referenced
+subject, without changing the visible geometry.
+
+### `RenderOrbit`
+
+```typescript
+export type RenderOrbit = {
+  readonly elevation: number;
+  readonly azimuth: number;
+};
+```
+
+A viewing direction as two angles in degrees around the caller world.
+`elevation` is the angle above the world horizontal plane, from `-90` to `90`.
+`azimuth` is the angle in that plane, zero on `world.forward` and positive
+toward the viewer's right.
+
+### `directionFromOrbit`
+
+```typescript
+export declare const directionFromOrbit: (orbit: RenderOrbit, world?: RenderWorld) => RenderVector3;
+```
+
+- **Parameters:** the orbit angles, and the world they are measured in. Pass
+  the request's `world`, or omit it for the glTF default.
+- **Returns:** the unit `direction` that a fitted camera takes.
+- **Throws:** `TypeError` for a non-finite azimuth, an elevation outside
+  `-90` to `90`, or an invalid world.
+
+```typescript
+import { directionFromOrbit } from 'nanoraster';
+
+const world = { up: '+z', forward: '-y' } as const;
+const direction = directionFromOrbit({ azimuth: 45, elevation: 30 }, world);
+```
+
+### `orbitFromDirection`
+
+```typescript
+export declare const orbitFromDirection: (direction: RenderVector3, world?: RenderWorld) => RenderOrbit;
+```
+
+- **Parameters:** any finite non-zero direction, and the world it is
+  expressed in. The function ignores the magnitude.
+- **Returns:** the orbit angles that reproduce the direction. The result
+  exactly inverts [`directionFromOrbit`](#directionfromorbit) in the same
+  world. The azimuth is above `-180` and up to `180`. At the poles, elevation
+  `-90` or `90`, the azimuth is undefined and reported as `0`.
+- **Throws:** `TypeError` for a zero or non-finite direction, or an invalid
+  world.
 
 ### `RenderImageOptions`
 
@@ -314,7 +368,7 @@ export type RenderImageOptions = RenderImageSharedOptions & RenderCameraOptions;
 ```
 
 `RenderImageSharedOptions` and `RenderCameraOptions` are internal composition
-types; the table is the complete consumer-visible shape.
+types.
 
 <auto-type-table path="./props.ts" name="RenderImageOptions" caption="RenderImageOptions properties" />
 
@@ -332,10 +386,10 @@ export type RenderImageView<Id extends string = string> = {
 };
 ```
 
-IDs must be unique within a request. The four output fields are per-view
-overrides: each defaults to the shared value, follows the same validation, and
-flows into that entry's filename and MIME type; `format: 'raw'` is accepted
-here too. Omitted `camera` means the default fitted camera.
+IDs must be unique within a request. The four per-view output overrides
+default to the shared value, follow the same validation, and flow into that
+entry's filename and MIME type. A view also
+accepts `format: 'raw'`. An omitted `camera` means the default fitted camera.
 
 <auto-type-table path="./props.ts" name="RenderImageView" caption="RenderImageView properties" />
 
@@ -349,20 +403,20 @@ export type RenderImagesOptions<Views extends readonly RenderImageView[] = reado
   };
 ```
 
-`views` must be a non-empty ordered tuple with unique IDs; a view is labelled
-when its own entry sets `label`. `timings: true` attaches a
-[`RenderTimings`](#rendertimings) to the result without changing what is
-rendered.
+`views` must be a non-empty ordered tuple with unique IDs. A view has a label
+only when its own entry sets `label`. `timings: true` attaches a
+[`RenderTimings`](#rendertimings) to the result. It does not change what the
+call renders.
 
 <auto-type-table path="./props.ts" name="RenderImagesOptions" caption="RenderImagesOptions properties" />
 
 ### `StrictRenderImagesOptions`
 
 The exact parameter type of [`renderImages`](#renderimages) and
-`Renderer.renderImages`: `RenderImagesOptions` narrowed so extra keys, empty
-view tuples, and per-view settings placed at call level are compile errors.
-Callers pass plain `RenderImagesOptions` literals; name this type only when
-you forward the plan call through a generic wrapper:
+`Renderer.renderImages`. It narrows `RenderImagesOptions` so that extra keys,
+empty view tuples, and per-view settings at call level are compile errors.
+Callers pass plain `RenderImagesOptions` literals. Name it only when you
+forward the plan call through a generic wrapper:
 
 ```typescript
 import { renderImages, type RenderImagesOptions, type StrictRenderImagesOptions } from 'nanoraster';
@@ -379,24 +433,25 @@ const renderCatalogue = async <const Options extends RenderImagesOptions>(
 export type RenderLighting = 'studio' | RenderLightingRig;
 ```
 
-The studio preset by name, or a rig. Omitting `lighting`, passing `'studio'`
-and spelling out the studio values render the same bytes; one rig applies to
-every view of a batch. [Light the subject](guides/light-the-subject) shows each
-field in use.
+The studio preset by name, or a rig. Three requests render the same bytes:
+omit `lighting`, pass `'studio'`, or state the studio values in full. One rig
+applies to every view of a batch. [Light the subject](guides/light-the-subject)
+shows each field in use.
 
 ### `RenderLightingRig`
 
-A rig replaces the studio lights outright and inherits every other studio
-value it leaves out. Directions are view-space by default (`+x` right, `+y` up,
-`+z` toward the viewer); `space: 'world'` uses the declared caller world.
+A rig replaces the studio lights outright. It inherits every other studio
+value that it leaves out. Directions are view-space by default: `+x` right,
+`+y` up, `+z` toward the viewer. `space: 'world'` uses the declared caller
+world.
 
 <auto-type-table path="./props.ts" name="RenderLightingRig" caption="RenderLightingRig properties" />
 
 ### `RenderLight`
 
-One directional light. `direction` points from the surface toward the light and
-is normalised by the renderer; `color` is linear RGB radiance, unitless, each
-channel within `renderImageLightColorRange`.
+One directional light. `direction` points from the surface toward the light,
+and the renderer normalises it. `color` is linear RGB radiance, unitless. Each
+channel is within `renderImageLightColorRange`.
 
 <auto-type-table path="./props.ts" name="RenderLight" caption="RenderLight properties" />
 
@@ -404,11 +459,11 @@ channel within `renderImageLightColorRange`.
 
 ### `RenderedImageFile`
 
-Returned by [`renderImage`](#renderimage), and as the `file` of every batch
-entry. `width` and `height` are the dimensions the request resolved to. With
-`format: 'raw'`, `bytes` is the frame itself (straight-alpha sRGB RGBA8,
-`width * height * 4` bytes, top row first) and `mimeType` is
-`application/octet-stream`; [Work with raw pixels](guides/work-with-raw-pixels)
+[`renderImage`](#renderimage) returns this type, and every batch entry carries
+it as `file`. `width` and `height` are the resolved request dimensions. With
+`format: 'raw'`, `bytes` is the frame itself: straight-alpha sRGB
+RGBA8, `width * height * 4` bytes, top row first. Its `mimeType` is then
+`application/octet-stream`. [Work with raw pixels](guides/work-with-raw-pixels)
 has the layout in full.
 
 <auto-type-table path="./props.ts" name="RenderedImageFile" caption="RenderedImageFile properties" />
@@ -424,8 +479,8 @@ await writeFile(image.name, image.bytes);
 
 ### `RenderedImage`
 
-One identified entry in a batch result; the `id` is the literal you supplied on
-the matching view.
+One identified entry in a batch result. The `id` is the literal from the
+matching view.
 
 <auto-type-table path="./props.ts" name="RenderedImage" caption="RenderedImage properties" />
 
@@ -444,18 +499,17 @@ export type RenderedImages<
 };
 ```
 
-This mapped tuple preserves each input view's literal ID, position and length,
-and narrows each entry's MIME type through its view's `format` override,
+This mapped tuple preserves each input view's literal ID, position and length.
+It narrows each entry's MIME type through the view's `format` override,
 falling back to the shared format. Entry files are named
 `render-<id>.<format>`.
 
 ### `RenderedImagesResult`
 
-What [`renderImages`](#renderimages) resolves to: the
+The type that [`renderImages`](#renderimages) resolves to. It is the
 [`RenderedImages`](#renderedimages) tuple, plus a
 [`RenderTimings`](#rendertimings) on `timings` when the options literal set
-`timings: true`. Reading `timings` without having requested it is a compile
-error.
+`timings: true`. A read of `timings` without that request is a compile error.
 
 ```typescript
 import { renderImages, type RenderedImagesResult, type RenderImagesOptions } from 'nanoraster';
@@ -472,10 +526,11 @@ console.log(result[0].file.name, result.timings.parse); // 'render-iso.webp' 0.4
 
 ### `RenderTimings`
 
-Attached to a plan call's result when the options set `timings: true`. The
-fields map onto the [pipeline stages](how-it-works): parse, shared cap-build,
-source upload, then per-view rasterise, annotate and encode. Resource counters
-show which work the call acquired; `presentationBuilds` is `1` for one plan.
+A plan call's result carries this type when the options set `timings: true`.
+The fields map onto the [pipeline stages](how-it-works): parse, shared
+cap-build, source upload, then per-view rasterise, annotate and encode.
+Resource counters show which work the call acquired. `presentationBuilds` is
+`1` for one plan.
 
 <auto-type-table path="./props.ts" name="RenderTimings" caption="RenderTimings properties" />
 
@@ -488,8 +543,7 @@ order.
 
 ### `imageMimeTypes`
 
-The readonly runtime map of every accepted output format to its emitted MIME
-type.
+The readonly runtime map from output format to emitted MIME type.
 
 ```typescript
 export declare const imageMimeTypes: {
@@ -504,7 +558,7 @@ export declare const imageMimeTypes: {
 ## Errors
 
 Rendering rejects with `RenderError`. Parse and encode failures are
-deterministic for the same request; GPU faults may succeed after the host
+deterministic for the same request. GPU faults can succeed after the host
 recovers, so [Handle render failures](guides/handle-render-failures) retries
 them.
 
@@ -533,7 +587,7 @@ export type RenderFailureCode =
 
 ### `RenderError`
 
-`RenderError` extends the native `Error` class and adds this public surface:
+`RenderError` extends `Error` and adds this public surface:
 
 ```typescript
 export declare class RenderError extends Error {
@@ -544,9 +598,9 @@ export declare class RenderError extends Error {
 }
 ```
 
-`RenderError.from(error)` returns an existing `RenderError` unchanged or
-classifies any other thrown value, and never throws. `isGpuFault` is `true`
-for `adapter-unavailable`, `device-lost` and `gpu`.
+`RenderError.from(error)` returns an existing `RenderError` unchanged and
+classifies any other thrown value. It never throws. `isGpuFault` is
+`true` for `adapter-unavailable`, `device-lost` and `gpu`.
 
 ```typescript
 import { RenderError, renderImage } from 'nanoraster';
@@ -561,8 +615,9 @@ try {
 
 ## Constants
 
-Every bound and pattern the validator applies, as the exact runtime values;
-import them rather than restating them, so caller-side checks cannot drift.
+Every bound and pattern that the validator applies, as the exact runtime
+values. Import them instead of restating values, so caller-side checks cannot
+drift.
 
 | Export                                | Runtime value                             | Unit or syntax              | Affected field              |
 | ------------------------------------- | ----------------------------------------- | --------------------------- | --------------------------- |
@@ -578,7 +633,7 @@ import them rather than restating them, so caller-side checks cannot drift.
 | `renderImageViewIdPattern`            | `/^[\dA-Za-z][\w-]{0,63}$/u`              | identifier syntax           | `id`                        |
 | `renderImageBackgroundPattern`        | `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`   | hexadecimal colour          | `background`                |
 | `renderImageMaxLights`                | `8`                                       | lights per rig              | `lighting.lights`           |
-| `renderImageMaxSections`              | `6`                                       | planes per request          | `sections.planes`           |
+| `renderImageMaxSections`              | `8`                                       | planes per request          | `sections.planes`           |
 | `renderImageLightColorRange`          | `readonly [0, 32]`                        | linear radiance per channel | `lighting.lights[].color`   |
 | `renderImageAmbientRange`             | `readonly [0, 4]`                         | diffuse multiplier          | `lighting.ambient`          |
 | `renderImageExposureRange`            | `readonly [0.01, 16]`                     | linear multiplier           | `lighting.exposure`         |
@@ -593,7 +648,7 @@ const clamp = (value: number): number => Math.min(Math.max(value, min), max);
 
 ### `renderImageDimensionRange`
 
-Inclusive pixel bounds for both image dimensions.
+Inclusive bounds for both image dimensions.
 
 ### `renderImageMarginRange`
 
@@ -601,7 +656,7 @@ Inclusive minimum fitted-margin bounds.
 
 ### `renderImageVerticalFieldOfViewRange`
 
-Inclusive vertical perspective field-of-view bounds in degrees.
+Inclusive vertical perspective field-of-view bounds.
 
 ### `renderImageZoomRange`
 
@@ -609,7 +664,7 @@ Inclusive perspective and orthographic magnification bounds.
 
 ### `renderImageLineWidthRange`
 
-Inclusive authored-edge line width in output pixels.
+Inclusive authored-edge line-width bounds.
 
 ### `renderImageAnnotatedMinDimension`
 
@@ -617,18 +672,18 @@ Minimum width and height when any annotation is enabled.
 
 ### `renderImageQualityRange`
 
-Inclusive encoder-quality bounds. JPEG treats the value as compression level
-(default `0.92`); WebP treats `1`, its default, as lossless and anything lower
-as lossy; PNG and raw ignore it.
+Inclusive encoder-quality bounds. JPEG treats the value as a compression
+level, with default `0.92`. WebP defaults to `1`, lossless, and treats any
+lower value as lossy. PNG and raw ignore the value.
 
 ### `renderImageBackgroundPattern`
 
-Hex clear-colour syntax; normalised straight-alpha RGBA backgrounds are not
-covered by it.
+The hex clear-colour syntax. It does not cover normalised straight-alpha RGBA
+backgrounds.
 
 ### `renderImageLabelMaxLength`
 
-Maximum label length in Unicode code points.
+Maximum label length.
 
 ### `renderImageLabelPattern`
 
@@ -637,20 +692,20 @@ minus sign.
 
 ### `renderImageViewIdPattern`
 
-Stable view identifier syntax; IDs become result filenames, so the first
-character is restricted.
+The view identifier syntax. IDs become filenames, so the pattern restricts
+the first character.
 
 ### `renderImageMaxLights`
 
-Most directional lights one rig may carry.
+The directional-light cap for one rig.
 
 ### `renderImageMaxSections`
 
-Most simultaneous retained-half-space planes one request may carry.
+The simultaneous retained-half-space plane cap for one request.
 
 ### `renderImageLightColorRange`
 
-Inclusive per-channel bounds for a light's linear radiance.
+Inclusive per-channel bounds for a light's radiance.
 
 ### `renderImageAmbientRange`
 

@@ -128,12 +128,28 @@ pub struct SectionsRequest {
     clip_lines: Option<bool>,
 }
 
+/// Wrap a present field so an explicit `null` survives as `Some(None)`. Serde
+/// only calls this for a field that is actually there, so an absent one still
+/// lands on `Default` — `None` — and a plain `Option` would collapse the two.
+fn present_option<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::deserialize(deserializer).map(Some)
+}
+
 /// Coordinate system of caller-authored spatial values and presentation.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorldRequest {
-    up: Option<String>,
-    forward: Option<String>,
+    // `Option<Option<_>>` separates an absent field (`None`, which defaults)
+    // from an explicit JSON `null` (`Some(None)`, which is rejected), so
+    // `{"up": null}` cannot silently take the default the TypeScript facade
+    // rejects outright.
+    #[serde(default, deserialize_with = "present_option")]
+    up: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present_option")]
+    forward: Option<Option<String>>,
     unit: Option<String>,
 }
 
@@ -142,7 +158,16 @@ struct WorldTransform {
     rotation: glam::Mat3,
     meters_per_unit: f32,
     axes: [[f32; 3]; 3],
+    caller_up: glam::Vec3,
+    caller_forward: glam::Vec3,
 }
+
+/// Orbit of the default fit camera, in the declared world's own basis:
+/// azimuth swings from `world.forward` toward the caller's right, elevation
+/// rises above the caller's horizontal plane. Degrees, and `f64` so the
+/// resolved direction is the correctly rounded `f32` on every target.
+const DEFAULT_FIT_AZIMUTH_DEG: f64 = 45.0;
+const DEFAULT_FIT_ELEVATION_DEG: f64 = 30.0;
 
 impl WorldTransform {
     fn point(self, value: glam::Vec3) -> glam::Vec3 {
@@ -155,6 +180,26 @@ impl WorldTransform {
 
     fn length(self, value: f32) -> f32 {
         value * self.meters_per_unit
+    }
+
+    /// The default fit direction, built from the orbit above in the declared
+    /// basis rather than substituted as a literal, so an omitted `direction`
+    /// frames the same picture in every world. Elevation used to drift with
+    /// the declaration — about 37.8 degrees for a Z-up world. The glTF default
+    /// world still resolves to the historic `[0.612_372_46, 0.5, 0.612_372_46]`
+    /// bit for bit: `rotation` is a signed axis permutation, so the multiply
+    /// only moves and negates exact components.
+    fn default_fit_direction(self) -> glam::Vec3 {
+        let (azimuth, elevation) = (
+            DEFAULT_FIT_AZIMUTH_DEG.to_radians(),
+            DEFAULT_FIT_ELEVATION_DEG.to_radians(),
+        );
+        let right = self.caller_up.cross(self.caller_forward);
+        self.direction(
+            (elevation.cos() * azimuth.cos()) as f32 * self.caller_forward
+                + (elevation.cos() * azimuth.sin()) as f32 * right
+                + elevation.sin() as f32 * self.caller_up,
+        )
     }
 }
 
@@ -612,13 +657,32 @@ fn signed_axis(value: &str, name: &str) -> Result<(usize, glam::Vec3), RenderErr
     Ok((index, vector))
 }
 
+/// Flatten one declared axis field: absent stays absent, an explicit `null` is
+/// an error rather than a silent fall back to the default.
+fn declared_axis<'a>(
+    field: Option<&'a Option<String>>,
+    name: &str,
+) -> Result<Option<&'a str>, RenderError> {
+    match field {
+        None => Ok(None),
+        Some(None) => Err(RenderError::Parse(format!("{name} must not be null"))),
+        Some(Some(value)) => Ok(Some(value.as_str())),
+    }
+}
+
 fn resolve_world(request: Option<&WorldRequest>) -> Result<WorldTransform, RenderError> {
-    let up_name = request
-        .and_then(|world| world.up.as_deref())
-        .unwrap_or("+y");
-    let forward_name = request
-        .and_then(|world| world.forward.as_deref())
-        .unwrap_or("+z");
+    let up_declared = declared_axis(request.and_then(|world| world.up.as_ref()), "world.up")?;
+    let forward_declared = declared_axis(
+        request.and_then(|world| world.forward.as_ref()),
+        "world.forward",
+    )?;
+    if up_declared.is_some() != forward_declared.is_some() {
+        return Err(RenderError::Parse(
+            "world.up and world.forward must be provided together".into(),
+        ));
+    }
+    let up_name = up_declared.unwrap_or("+y");
+    let forward_name = forward_declared.unwrap_or("+z");
     let (up_index, up) = signed_axis(up_name, "world.up")?;
     let (forward_index, forward) = signed_axis(forward_name, "world.forward")?;
     if up_index == forward_index {
@@ -626,13 +690,7 @@ fn resolve_world(request: Option<&WorldRequest>) -> Result<WorldTransform, Rende
             "world.up and world.forward must name different axes".into(),
         ));
     }
-    let remaining = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z][3 - up_index - forward_index];
-    let caller_basis = glam::Mat3::from_cols(remaining, up, forward);
-    if caller_basis.determinant() < 0.0 {
-        return Err(RenderError::Parse(
-            "world.up and world.forward must define a right-handed frame".into(),
-        ));
-    }
+    let caller_basis = glam::Mat3::from_cols(up.cross(forward), up, forward);
     let rotation = caller_basis.transpose();
     let meters_per_unit = match request.and_then(|world| world.unit.as_deref()) {
         None | Some("meter") => 1.0,
@@ -651,6 +709,8 @@ fn resolve_world(request: Option<&WorldRequest>) -> Result<WorldTransform, Rende
             (rotation * glam::Vec3::Y).to_array(),
             (rotation * glam::Vec3::Z).to_array(),
         ],
+        caller_up: up,
+        caller_forward: forward,
     })
 }
 
@@ -669,11 +729,29 @@ fn normalized_direction(value: [f32; 3], name: &str) -> Result<glam::Vec3, Strin
     finite_vector(value, name, false).map(glam::Vec3::normalize)
 }
 
-fn validate_orientation(direction: glam::Vec3, up: glam::Vec3, name: &str) -> Result<(), String> {
-    if direction.cross(up).length() < MIN_DIRECTION_LENGTH {
-        return Err(format!("{name} and up must not be collinear"));
+fn collinear(left: glam::Vec3, right: glam::Vec3) -> bool {
+    left.cross(right).length() < MIN_DIRECTION_LENGTH
+}
+
+/// Screen-up for a view, substituting a declared-world axis where the
+/// requested `up` is collinear with `direction` and so names no roll.
+///
+/// The substitute is `world.forward`, falling back to `world.up` for the one
+/// family of views `world.forward` cannot serve: those running along
+/// `world.forward` itself. Those two exhaust the degeneracy, because the two
+/// axes are orthogonal — a direction collinear with one is perpendicular to
+/// the other — so the caller's right axis is never reached and is not offered.
+/// Both vectors are unit length, and the substitution reads only the declared
+/// world, so one request always resolves to one basis.
+fn resolved_up(direction: glam::Vec3, up: glam::Vec3, world: WorldTransform) -> glam::Vec3 {
+    if !collinear(direction, up) {
+        return up;
     }
-    Ok(())
+    let forward = world.direction(world.caller_forward);
+    if collinear(direction, forward) {
+        return world.direction(world.caller_up);
+    }
+    forward
 }
 
 fn resolve_vertical_field_of_view(value: Option<f32>) -> Result<f32, String> {
@@ -776,12 +854,18 @@ fn resolve_camera(
             margin,
             projection,
         } => {
-            let direction = world.direction(normalized_direction(
-                direction.unwrap_or([0.612_372_46, 0.5, 0.612_372_46]),
-                "direction",
-            )?);
-            let up = world.direction(normalized_direction(up.unwrap_or([0.0, 1.0, 0.0]), "up")?);
-            validate_orientation(direction, up, "direction")?;
+            let direction = match direction {
+                Some(direction) => world.direction(normalized_direction(*direction, "direction")?),
+                None => world.default_fit_direction(),
+            };
+            let up = resolved_up(
+                direction,
+                world.direction(match up {
+                    Some(up) => normalized_direction(*up, "up")?,
+                    None => world.caller_up,
+                }),
+                world,
+            );
             let margin = margin.unwrap_or(0.1);
             if !margin.is_finite() || !(0.0..=0.5).contains(&margin) {
                 return Err(format!("margin {margin} outside 0..=0.5"));
@@ -806,8 +890,11 @@ fn resolve_camera(
             if direction.length() < MIN_DIRECTION_LENGTH {
                 return Err("position and target must not coincide".into());
             }
-            let up = world.direction(normalized_direction(*up, "up")?);
-            validate_orientation(direction.normalize(), up, "view direction")?;
+            let up = resolved_up(
+                direction.normalize(),
+                world.direction(normalized_direction(*up, "up")?),
+                world,
+            );
             let clipping = clipping
                 .as_ref()
                 .map(|clipping| {
@@ -1014,6 +1101,14 @@ mod tests {
         );
     }
 
+    /// `(up, direction)` for a fit camera, `None` for a fixed one.
+    fn fit_orientation(camera: RenderCamera) -> Option<([f32; 3], [f32; 3])> {
+        match camera {
+            RenderCamera::Fit { up, direction, .. } => Some((up, direction)),
+            RenderCamera::Fixed { .. } => None,
+        }
+    }
+
     #[test]
     fn singular_defaults_annotations_off() {
         let (options, format) = RenderRequest::from_json(r#"{"format":"png"}"#)
@@ -1035,8 +1130,8 @@ mod tests {
         assert_eq!(default.axes, RenderOptions::default().world_axes);
 
         let tau = resolve_world(Some(&WorldRequest {
-            up: Some("+z".into()),
-            forward: Some("-y".into()),
+            up: Some(Some("+z".into())),
+            forward: Some(Some("-y".into())),
             unit: Some("millimeter".into()),
         }))
         .expect("Tau world");
@@ -1061,15 +1156,44 @@ mod tests {
         );
         assert!(signed_axis("sideways", "axis").is_err());
 
+        let axes = ["+x", "-x", "+y", "-y", "+z", "-z"];
+        let mut accepted = 0;
+        for up in axes {
+            for forward in axes {
+                if up[1..] == forward[1..] {
+                    let collinear = resolve_world(Some(&WorldRequest {
+                        up: Some(Some(up.into())),
+                        forward: Some(Some(forward.into())),
+                        unit: None,
+                    }))
+                    .expect_err("collinear signed-axis pair");
+                    assert_eq!(
+                        collinear.to_string(),
+                        "parse: world.up and world.forward must name different axes"
+                    );
+                    continue;
+                }
+                let world = resolve_world(Some(&WorldRequest {
+                    up: Some(Some(up.into())),
+                    forward: Some(Some(forward.into())),
+                    unit: None,
+                }))
+                .expect("every non-collinear signed-axis pair");
+                assert!((world.rotation.determinant() - 1.0).abs() < 1e-6);
+                accepted += 1;
+            }
+        }
+        assert_eq!(accepted, 24);
+
         for request in [
             WorldRequest {
-                up: Some("+z".into()),
-                forward: Some("+y".into()),
+                up: Some(Some("+z".into())),
+                forward: None,
                 unit: None,
             },
             WorldRequest {
-                up: Some("+z".into()),
-                forward: None,
+                up: None,
+                forward: Some(Some("-y".into())),
                 unit: None,
             },
             WorldRequest {
@@ -1080,6 +1204,168 @@ mod tests {
         ] {
             assert!(resolve_world(Some(&request)).is_err());
         }
+
+        // An explicit JSON `null` is a caller mistake, not an omission: serde
+        // collapses both to `None` unless the field is `Option<Option<_>>`, and
+        // the TypeScript facade rejects `null` outright. Omitting both fields
+        // still takes the documented `+y`/`+z` defaults.
+        for (world, message) in [
+            (r#"{"up":null}"#, "parse: world.up must not be null"),
+            (
+                r#"{"forward":null}"#,
+                "parse: world.forward must not be null",
+            ),
+            (
+                r#"{"up":null,"forward":null}"#,
+                "parse: world.up must not be null",
+            ),
+            (
+                r#"{"up":null,"forward":"+z"}"#,
+                "parse: world.up must not be null",
+            ),
+        ] {
+            let error = RenderRequest::from_json(&format!(r#"{{"format":"png","world":{world}}}"#))
+                .expect("parse")
+                .resolve()
+                .expect_err("explicit null world axis");
+            assert_eq!(error.to_string(), message, "for world {world}");
+        }
+        let omitted = RenderRequest::from_json(r#"{"format":"png","world":{"unit":"millimeter"}}"#)
+            .expect("parse")
+            .resolve()
+            .expect("omitted axes keep the defaults");
+        assert_eq!(omitted.0.world_axes, RenderOptions::default().world_axes);
+    }
+
+    #[test]
+    fn default_fit_camera_uses_the_declared_world_up() {
+        // D4: the default direction is the same 45/30 orbit in every declared
+        // basis, so it resolves to one vector — and that vector is the historic
+        // Y-up literal, bit for bit, so default glTF renders cannot move.
+        const HISTORIC_LITERAL: [f32; 3] = [0.612_372_46, 0.5, 0.612_372_46];
+        for (up, forward) in [
+            ("+y", "+z"),
+            ("+z", "-y"),
+            ("+x", "+z"),
+            ("-y", "+x"),
+            ("-z", "-x"),
+        ] {
+            let options = RenderRequest::from_json(&format!(
+                r#"{{"format":"png","world":{{"up":"{up}","forward":"{forward}"}}}}"#
+            ))
+            .expect("parse")
+            .resolve_options()
+            .expect("resolve");
+            let (resolved_up, direction) =
+                fit_orientation(options.camera).expect("default camera must fit");
+            assert_vec3_near(resolved_up.into(), glam::Vec3::Y);
+            assert_eq!(direction, HISTORIC_LITERAL, "world {up}/{forward}");
+        }
+        let fixed = RenderRequest::from_json(
+            r#"{"format":"png","camera":{"framing":"fixed","position":[4,3,2],"target":[0,0,0],"up":[0,0,1]}}"#,
+        )
+        .expect("parse")
+        .resolve_options()
+        .expect("resolve");
+        assert!(fit_orientation(fixed.camera).is_none());
+        // Resolved space puts the declared up on Y, so the elevation reads back
+        // as the 30 degrees the orbit asks for — not the ~37.8 the literal
+        // substitution used to hand a Z-up caller.
+        let elevation = glam::Vec3::from(HISTORIC_LITERAL)
+            .dot(glam::Vec3::Y)
+            .asin()
+            .to_degrees();
+        assert!((elevation - DEFAULT_FIT_ELEVATION_DEG as f32).abs() < 1.0e-4);
+    }
+
+    /// Resolve one request and hand back its camera's screen-up and direction.
+    /// Resolution maps the declared world onto the engine basis, so a
+    /// substituted `world.forward` reads back as `+Z` and `world.up` as `+Y`
+    /// whichever axes the caller declared.
+    fn resolved_orientation(json: &str) -> ([f32; 3], [f32; 3]) {
+        let camera = RenderRequest::from_json(json)
+            .expect("parse")
+            .resolve_options()
+            .expect("resolve")
+            .camera;
+        match camera {
+            RenderCamera::Fit { up, direction, .. } => (up, direction),
+            RenderCamera::Fixed {
+                up,
+                position,
+                target,
+                ..
+            } => (
+                up,
+                (glam::Vec3::from(position) - glam::Vec3::from(target))
+                    .normalize()
+                    .to_array(),
+            ),
+        }
+    }
+
+    #[test]
+    fn a_degenerate_up_resolves_to_a_declared_world_axis() {
+        const FORWARD: [f32; 3] = [0.0, 0.0, 1.0];
+        const UP: [f32; 3] = [0.0, 1.0, 0.0];
+
+        // Fit at elevation ±90 puts the view on the pole an omitted `up`
+        // already occupies; `world.forward` takes the roll.
+        for direction in ["[0,1,0]", "[0,-1,0]"] {
+            let (up, _) = resolved_orientation(&format!(
+                r#"{{"format":"png","camera":{{"framing":"fit","direction":{direction}}}}}"#
+            ));
+            assert_eq!(up, FORWARD, "fit along {direction}");
+        }
+        // The same view in a declared world reads the same substitution there:
+        // `world.forward` is `-y`, which resolution puts on `+Z`.
+        assert_eq!(
+            resolved_orientation(
+                r#"{"format":"png","world":{"up":"+z","forward":"-y"},"camera":{"framing":"fit","direction":[0,0,1]}}"#
+            ),
+            (FORWARD, UP),
+        );
+        // An explicit `up` that contradicts an explicit `direction` resolves
+        // the same way, for both framings.
+        assert_eq!(
+            resolved_orientation(
+                r#"{"format":"png","camera":{"framing":"fit","direction":[0,2,0],"up":[0,3,0]}}"#
+            ),
+            (FORWARD, UP),
+        );
+        assert_eq!(
+            resolved_orientation(
+                r#"{"format":"png","camera":{"framing":"fixed","position":[0,4,0],"target":[0,0,0],"up":[0,1,0]}}"#
+            ),
+            (FORWARD, UP),
+        );
+        // A view along `world.forward` is the one case `world.forward` cannot
+        // serve, so the second fallback — `world.up` — is taken.
+        assert_eq!(
+            resolved_orientation(
+                r#"{"format":"png","camera":{"framing":"fit","direction":[0,0,1],"up":[0,0,5]}}"#
+            ),
+            (UP, FORWARD),
+        );
+        assert_eq!(
+            resolved_orientation(
+                r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,4],"target":[0,0,0],"up":[0,0,1]}}"#
+            ),
+            (UP, FORWARD),
+        );
+        assert_eq!(
+            resolved_orientation(
+                r#"{"format":"png","world":{"up":"+z","forward":"-y"},"camera":{"framing":"fit","direction":[0,-1,0],"up":[0,-1,0]}}"#
+            ),
+            (UP, FORWARD),
+        );
+        // An `up` that names a roll keeps it, so no accepted request moves.
+        let request =
+            r#"{"format":"png","camera":{"framing":"fit","direction":[0,1,0],"up":[1,0,0]}}"#;
+        assert_eq!(resolved_orientation(request), ([1.0, 0.0, 0.0], UP));
+        // Resolution reads the request and the declared world alone, so the
+        // same request always names the same basis.
+        assert_eq!(resolved_orientation(request), resolved_orientation(request));
     }
 
     #[test]
@@ -1463,7 +1749,6 @@ mod tests {
             r#"{"format":"png","visiblePrimitives":[{"nodeIndex":0,"meshIndex":0,"primitiveIndex":0},{"nodeIndex":0,"meshIndex":0,"primitiveIndex":0}]}"#,
             r#"{"format":"png","sections":{"planes":[]}}"#,
             r#"{"format":"png","sections":{"planes":[{"point":[0,0,0],"normal":[0,0,0]}]}}"#,
-            r#"{"format":"png","sections":{"planes":[{"point":[0,0,0],"normal":[1,0,0]},{"point":[0,0,0],"normal":[0,1,0]},{"point":[0,0,0],"normal":[0,0,1]},{"point":[0,0,0],"normal":[-1,0,0]},{"point":[0,0,0],"normal":[0,-1,0]},{"point":[0,0,0],"normal":[0,0,-1]},{"point":[0,0,0],"normal":[1,1,0]}]}}"#,
         ] {
             assert!(
                 RenderRequest::from_json(json)
@@ -1471,6 +1756,26 @@ mod tests {
                     .is_err()
             );
         }
+        // The limit itself resolves; one plane past it does not.
+        let request = |count: usize| {
+            let planes = (1..=count)
+                .map(|index| format!(r#"{{"point":[0,0,0],"normal":[{index},1,0]}}"#))
+                .collect::<Vec<_>>()
+                .join(",");
+            RenderRequest::from_json(&format!(
+                r#"{{"format":"png","sections":{{"planes":[{planes}]}}}}"#
+            ))
+            .and_then(|request| request.resolve())
+        };
+        assert!(request(MAX_SECTION_PLANES).is_ok());
+        assert_eq!(
+            request(MAX_SECTION_PLANES + 1)
+                .err()
+                .map(|error| error.to_string()),
+            Some(format!(
+                "parse: sections.planes must contain between 1 and {MAX_SECTION_PLANES} planes"
+            ))
+        );
     }
 
     #[test]
@@ -1478,6 +1783,9 @@ mod tests {
         let cases = [
             r#"{"format":"png","camera":{"framing":"fit"}}"#,
             r#"{"format":"png","camera":{"framing":"fit","direction":[1,-1,1],"up":[0,0,1],"margin":0.2,"projection":{"kind":"perspective","verticalFieldOfView":60}}}"#,
+            // A degenerate `up` names a substitution, not a mistake.
+            r#"{"format":"png","camera":{"framing":"fit","direction":[0,1,0],"up":[0,2,0]}}"#,
+            r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,0,1]}}"#,
             r#"{"format":"png","camera":{"framing":"fit","projection":{"kind":"orthographic"}}}"#,
             r#"{"format":"png","camera":{"framing":"fixed","position":[4,3,2],"target":[0,0,0],"up":[0,0,1]}}"#,
             r#"{"format":"png","camera":{"framing":"fixed","position":[4,3,2],"target":[0,0,0],"up":[0,0,1],"projection":{"kind":"perspective","verticalFieldOfView":35,"zoom":2},"clipping":{"near":0.1,"far":100}}}"#,
@@ -1492,12 +1800,12 @@ mod tests {
 
         for json in [
             r#"{"format":"png","camera":{"framing":"fit","direction":[0,0,0]}}"#,
-            r#"{"format":"png","camera":{"framing":"fit","direction":[0,1,0],"up":[0,2,0]}}"#,
+            r#"{"format":"png","camera":{"framing":"fit","up":[0,0,0]}}"#,
             r#"{"format":"png","camera":{"framing":"fit","margin":0.6}}"#,
             r#"{"format":"png","camera":{"framing":"fit","projection":{"kind":"perspective","verticalFieldOfView":0}}}"#,
             r#"{"format":"png","camera":{"framing":"fit","projection":{"kind":"perspective","zoom":2}}}"#,
             r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,0],"target":[0,0,0],"up":[0,1,0]}}"#,
-            r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,0,1]}}"#,
+            r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,0,0]}}"#,
             r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,1,0],"projection":{"kind":"orthographic","verticalSpan":0}}}"#,
             r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,1,0],"projection":{"kind":"perspective","zoom":0}}}"#,
             r#"{"format":"png","camera":{"framing":"fixed","position":[0,0,1],"target":[0,0,0],"up":[0,1,0],"clipping":{"near":1,"far":1}}}"#,

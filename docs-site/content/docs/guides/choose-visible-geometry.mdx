@@ -29,9 +29,9 @@ const image = await renderImage(glb, {
 
 </RenderDemo>
 
-Turn off `lines` for a shaded render or turn off `surfaces` for an authored
-line drawing. Section-cap outlines remain part of a shown section surface;
-they are not authored line primitives.
+Turn off `lines` for a shaded render. Turn off `surfaces` for an authored
+line drawing. Section-cap outlines remain part of a shown section surface, not
+authored line primitives.
 
 ## Select primitive instances
 
@@ -51,14 +51,14 @@ const edges = await renderImage(glb, {
 });
 ```
 
-A fitted camera frames the admitted surfaces and lines. If no geometry is
-admitted, fitted framing fails because there is no subject; a fixed camera may
+A fitted camera frames the admitted surfaces and lines. If the request admits
+no geometry, fitted framing fails: there is no subject. A fixed camera may
 still render a background and annotations.
 
 ## Resolve product identity before rendering
 
 The renderer accepts document identity, not application component IDs. Keep
 the mapping from assemblies, layers, hide state, or isolation state in the
-caller that owns those concepts, then send one final allowlist. This keeps the
-request serializable and makes the same render portable to a worker or remote
-renderer.
+caller that owns those concepts. Then send one final allowlist. This split
+keeps the request serializable, and it makes the same render portable to a
+worker or a remote renderer.

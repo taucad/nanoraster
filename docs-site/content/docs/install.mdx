@@ -3,7 +3,7 @@ title: Install nanoraster
 description: Add the package, understand the native and wasm artifacts, and confirm your host is supported.
 ---
 
-nanoraster is one JavaScript package that loads a different render artifact
+nanoraster is one JavaScript package. It loads a different render artifact
 per host: Node.js 22.13 or newer, or a browser with WebGPU enabled.
 
 ```bash tab="npm"
@@ -20,16 +20,18 @@ yarn add nanoraster
 
 ## What gets installed
 
-The package selects its render artifact at runtime; nothing needs configuring.
+The package selects its render artifact at runtime; nothing needs
+configuring.
 
 | Host    | Artifact loaded                | Delivered by                    |
 | ------- | ------------------------------ | ------------------------------- |
 | Node.js | Native N-API binary            | Platform `optionalDependencies` |
 | Browser | WebAssembly module plus WebGPU | The `nanoraster/wasm` subpath   |
 
-Sixteen platform packages are declared as optional dependencies. Each one
-declares the `os`, `cpu` and (except on armv7) `libc` it serves, and your
-package manager installs the single package matching your machine.
+The package declares sixteen platform packages as optional dependencies. Each
+platform package declares the `os`, `cpu`, and (except on armv7) `libc` it
+serves. Your package manager installs the single package that matches your
+machine.
 
 | Package                           | Platform                       |
 | --------------------------------- | ------------------------------ |
@@ -52,22 +54,23 @@ package manager installs the single package matching your machine.
 
 The Android packages are experimental: their binaries are built and inspected,
 and no job renders on an Android device. The armv7 and Windows x86 packages run
-on the Node.js 22 line, which Node.js 24 and 26 do not publish binaries for.
-Because platform packages are optional, an install on an unlisted platform
-succeeds and then fails at render time. Check your host against
-the [compatibility matrix](https://github.com/taucad/nanoraster/blob/main/compatibility.md)
-before deploying.
+on the Node.js 22 line. Node.js 24 and 26 do not publish binaries for those
+platforms. Platform packages are optional, so an install on an unlisted platform
+succeeds and then fails at render time. Check your host against the
+[compatibility
+matrix](https://github.com/taucad/nanoraster/blob/main/compatibility.md) before
+deploying.
 
 ## Node.js, browsers and bundlers
 
-The package exports a `node` condition. Node.js, Bun, a Vite SSR build and a
-Next.js server build resolve it and reach the native binary. Everything else —
-a browser bundle from Vite, webpack 5, Rspack or Next.js — resolves the default
-entry, which imports no Node.js builtin and never references the native loader,
-so no bundler needs a `fs` or `module` fallback.
+The package exports a `node` condition. Node.js, Bun, a Vite SSR build, and a
+Next.js server build resolve it and reach the native binary. Everything else (a
+browser bundle from Vite, webpack 5, Rspack, or Next.js) resolves the default
+entry. It imports no Node.js builtin and never references the
+native loader, so no bundler needs a `fs` or `module` fallback.
 
-Keep nanoraster external in a server bundle, so the native binary is loaded
-from disk instead of being inlined:
+Keep nanoraster external in a server bundle, so the native binary loads
+from disk and the bundler does not inline it:
 
 ```js title="next.config.js"
 export default { serverExternalPackages: ['nanoraster'] };
@@ -79,10 +82,9 @@ export default { ssr: { external: ['nanoraster'] } };
 
 ## Installing for another platform
 
-Building an image for a platform other than the one you install on — a Linux
-container assembled on macOS, or an arm64 image built on x64 — needs that
-platform's package instead of the host's. pnpm and Yarn Berry take the set to
-install:
+An image for a platform other than the install host needs that platform's
+package instead of the host's. Examples: a Linux container assembled on macOS,
+or an arm64 image built on x64. pnpm and Yarn Berry accept the set to install:
 
 ```yaml title="pnpm-workspace.yaml"
 supportedArchitectures:
@@ -91,13 +93,13 @@ supportedArchitectures:
   libc: [glibc, musl]
 ```
 
-Yarn classic has no `libc` selector and installs both Linux packages for an
+Yarn classic has no `libc` selector, and it installs both Linux packages for an
 architecture. The loader probes the host at runtime and loads the matching
 binary either way, so the cost is disk space.
 
 ## Verify the install
 
-Any static glTF 2.0 binary works as `model.glb`; the examples in these docs use
+Any static glTF 2.0 binary works as `model.glb`. The examples in these docs use
 a 12-tooth spur gear.
 
 ```typescript
@@ -117,19 +119,20 @@ console.log(image.name, image.bytes.length, image.mimeType);
 render.webp 21208 image/webp
 ```
 
-The exact byte count depends on your model; what matters is that a name, a
-non-zero length and a MIME type print rather than an error.
+The exact byte count depends on your model. Confirm that a name, a non-zero
+length, and a MIME type print instead of an error.
 
 ## Bundling for the browser
 
-Browser builds need the WebAssembly binary reachable at runtime. It is published
-on a dedicated subpath so bundlers can emit it as an asset:
+Browser builds need the WebAssembly binary to be reachable at runtime. The
+package publishes it on a dedicated subpath, so that bundlers can emit it as an
+asset:
 
 ```js
 import wasmUrl from 'nanoraster/wasm?url';
 ```
 
-The `?url` import is tested with Vite, webpack 5 and Rspack; in TypeScript it
+The `?url` import is tested with Vite, webpack 5, and Rspack. In TypeScript it
 needs the bundler's ambient types (Vite's `vite/client`) or a
 `declare module '*?url'` declaration.
 [Render in the browser](guides/render-in-the-browser) covers the rest,

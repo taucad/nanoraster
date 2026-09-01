@@ -4,14 +4,14 @@ description: Size, encode, and annotate renders for multimodal models — pixel-
 ---
 
 A render sent to a multimodal model faces different constraints than one sent
-to a person: the model is billed by the pixel, reads compression artifacts as
-if they were geometry, and cannot infer orientation or physical size from
-shading alone.
+to a person. The provider bills the model by the pixel. The model reads
+compression artifacts as if they were geometry, and it cannot infer
+orientation or physical size from shading alone.
 
 ### 1. Bytes are free, pixels are billed
 
 The major vision APIs convert an image to tokens from its pixel dimensions
-alone; the encoded file size never enters the bill. A 5 KB lossy WebP and a
+alone. The encoded file size never enters the bill. A 5 KB lossy WebP and a
 30 KB lossless WebP of the same 768×432 render cost identical tokens on every
 provider below.
 
@@ -21,36 +21,35 @@ provider below.
 | Anthropic | ⌈width/28⌉ × ⌈height/28⌉ visual tokens          | [Vision](https://platform.claude.com/docs/en/build-with-claude/vision)           |
 | Gemini    | fixed per-image budget, set by media resolution | [Image understanding](https://ai.google.dev/gemini-api/docs/image-understanding) |
 
-These are the documented base formulas for current-generation models on
-images small enough to skip provider-side resizing; some models add
-multipliers or `detail` and resolution settings that scale the result — the
-linked pages carry the per-model rules. Under those base formulas the default
-768×432 render costs 336 patches on OpenAI and 448 visual tokens on
-Anthropic. Width and height are the only cost lever the renderer controls:
-halving both roughly quarters the bill, and shrinking the file changes
-nothing.
+The documented base formulas apply to images small enough to skip
+provider-side resizing. Some models add multipliers, or `detail` and
+resolution settings, that scale the result; the linked pages carry the
+per-model rules. Under them, the default 768×432 render costs
+336 patches on OpenAI and 448 visual tokens on Anthropic. Width and height
+are the only cost lever the renderer controls. Halve both and the bill
+roughly quarters; shrink the file and nothing changes.
 
 ### 2. Send lossless input
 
-Since bytes are free, lossy compression can only lose information the model
+Because bytes are free, lossy compression can only lose information the model
 might need. WebP's default `quality` of `1` encodes lossless, so an explicit
 `format: 'webp'` with no `quality` sends the model exactly the rendered
 pixels. Anthropic's vision guidance warns that lossy artifacts can degrade
-model performance while saving nothing on tokens. Reach for
-[lossy WebP](format-and-annotate) — `quality` below `1` — only when upload
+model performance while they save nothing on tokens. Use
+[lossy WebP](format-and-annotate), `quality` below `1`, only when upload
 latency matters more than fidelity.
 
 ### 3. Annotate for spatial reasoning
 
-A model reading a render has no camera, no ruler, and no filename. The three
-annotations exist to put that context into the pixels themselves:
+A model that reads a render has no camera, no ruler, and no filename. The
+three annotations put that context into the pixels:
 
 - `axes` draws a camera-aware XYZ indicator, so the model knows which
   way the part is oriented.
 - `scaleBar` draws physical size in model units; without it a gearbox
   and a wristwatch gear read identically.
 - `label` names the subject or view, so a multi-image prompt stays
-  attributable. Setting it is what draws it.
+  attributable. The renderer draws the label only when you set it.
 
 <RenderDemo>
 
@@ -68,8 +67,8 @@ const image = await renderImage(glb, {
 
 </RenderDemo>
 
-Annotated output needs at least 192 pixels on both axes; the mechanics of
+Annotated output needs at least 192 pixels on both axes. The mechanics of
 each overlay live in [Format and annotate](format-and-annotate). For the
 strongest spatial evidence, send several labelled orthogonal views from one
-[batch call](render-multiple-views) — the shared label and axes let the model
+[batch call](render-multiple-views). The shared label and axes let the model
 reconcile the views into one part.

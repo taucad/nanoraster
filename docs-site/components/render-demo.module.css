@@ -33,6 +33,14 @@
 
 .stage {
   display: grid;
+
+  /* Sized by its own content, so the evidence badge below the image always
+     has its row: an aspect-locked stage under `overflow: hidden` clips the
+     badge away as soon as the image is wide enough to fill the box. The
+     render's aspect is reserved by whatever occupies the stage instead — the
+     image once there is one, the pending placeholder until then — so the
+     panel is the same height before and after the first frame. */
+  align-self: start;
   min-height: 240px;
   place-items: center;
   overflow: hidden;
@@ -111,6 +119,13 @@
 .image {
   display: block;
   width: 100%;
+
+  /* The render's own aspect, so the first paint lands in the space already
+     reserved for it instead of reflowing the panel. It sits on the image
+     rather than on `.stage`, because the stage also holds the evidence badge:
+     an aspect-locked stage plus `overflow: hidden` clips the badge out of
+     view exactly when the image is wide enough to fill the box. */
+  aspect-ratio: 4 / 3;
   height: auto;
 }
 
@@ -123,11 +138,82 @@
   text-align: center;
 }
 
+/* The placeholder standing in for a frame that has not arrived holds the
+   frame's own shape, so the panel does not resize under the reader when the
+   first render lands. */
+.pending {
+  display: grid;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  place-items: center;
+}
+
+/* One grid for the whole panel: every label shares a track, so the rows line
+   up and the widest label sets the column instead of penalising its own row.
+   The inputs keep a floor no label can push them under. */
 .controls {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(8rem, 1fr);
   gap: 10px;
+  align-items: center;
+  align-content: start;
   min-width: 0;
+}
+
+/* A group of rows still contributes its cells to the panel grid. */
+.group {
+  display: contents;
+}
+
+.reset {
+  grid-column: 1 / -1;
+  justify-self: start;
+  padding: 3px 8px;
+  color: var(--color-fd-muted-foreground);
+  background: var(--color-fd-background);
+  border: 1px solid var(--color-fd-border);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.action {
+  padding: 3px 8px;
+  justify-self: start;
+  color: var(--color-fd-muted-foreground);
+  background: var(--color-fd-background);
+  border: 1px solid var(--color-fd-border);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.advanced {
+  grid-column: 1 / -1;
+}
+
+.advanced summary {
+  margin-bottom: 10px;
+  color: var(--color-fd-muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+/* The example is the thing being copied, so it wraps rather than scrolling
+   sideways under an overlay scrollbar that shows nothing is hidden. */
+.demo :global(pre) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Fumadocs still sizes that `pre` to its longest line inside a scrolling
+   wrapper, so a rewritten literal can summon a horizontal scrollbar. Reserving
+   the gutter keeps one from resizing the panel under a moving slider. */
+.demo :global(.fd-scroll-container) {
+  scrollbar-gutter: stable;
 }
 
 .code {
@@ -138,21 +224,42 @@
   border-radius: 6px;
 }
 
+/* Rows place their two cells directly in the panel grid above. */
 .control {
-  display: grid;
-  grid-template-columns: minmax(5.5rem, max-content) minmax(0, 1fr);
-  gap: 10px;
-  align-items: center;
+  display: contents;
   font-size: 0.78rem;
 }
 
+/* Labels wrap rather than ellipse: the composed ones are the least
+   self-explanatory, so `label · three-quar…` is the worst thing to show. */
 .control > span {
-  overflow: hidden;
-  white-space: nowrap;
   color: var(--color-fd-muted-foreground);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.72rem;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
+/* A track's own value is printed in its label, and the label column is sized
+   by its content, so a value that grows a digit widens the column and shrinks
+   every input in the panel while the handle is still moving. Each reading
+   reserves the width of the widest value its own control can print and sets
+   its digits right, so the column is the same width at every position. */
+.reading {
+  display: inline-block;
+  min-width: 4ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Lengths and factors print more characters than a whole-degree angle. */
+.measure {
+  min-width: 8ch;
+}
+
+/* Three sliders for one point, stacked so each keeps the full input width. */
+.stack {
+  display: grid;
+  gap: 4px;
 }
 
 .control input[type='range'] {
@@ -219,17 +326,6 @@
 .status {
   grid-column: 3;
   justify-self: end;
-}
-
-/* A panel with the whole option surface on it (the homepage) runs past the
-   image as one column, so wide viewports split it in two. */
-@media (min-width: 1024px) {
-  .controls[data-columns='two'] {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px 16px;
-    align-content: start;
-  }
 }
 
 @media (max-width: 760px) {

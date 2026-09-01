@@ -270,11 +270,33 @@ describe('renderImages', () => {
   });
 
   it('should keep malformed timings inside the taxonomy', async () => {
-    plural.mockResolvedValue({ images: [new Uint8Array([1])], timings: 'not json' });
-
-    await expect(
-      renderImages(glb, { format: 'png', timings: true, views: [{ id: 'front' }] }),
-    ).rejects.toMatchObject({ code: 'unknown' });
+    const valid = {
+      parse: 0.5,
+      setup: 2,
+      capBuild: 0.25,
+      upload: 0.5,
+      peakReadbackBytes: 4,
+      glbParses: 1,
+      adapterDeviceRequests: 0,
+      pipelineSets: 0,
+      presentationBuilds: 1,
+      sceneUploads: 1,
+      targetAllocations: 0,
+      views: [{ id: 'front', render: 1, overlay: 0, encode: 3 }],
+    };
+    for (const timings of [
+      'not json',
+      JSON.stringify([valid]),
+      JSON.stringify({ ...valid, capBuild: undefined }),
+      JSON.stringify({ ...valid, views: 'front' }),
+      JSON.stringify({ ...valid, views: [{ ...valid.views[0], encode: '3' }] }),
+      JSON.stringify({ ...valid, views: [{ ...valid.views[0], id: 7 }] }),
+    ]) {
+      plural.mockResolvedValue({ images: [new Uint8Array([1])], timings });
+      await expect(
+        renderImages(glb, { format: 'png', timings: true, views: [{ id: 'front' }] }),
+      ).rejects.toMatchObject({ code: 'unknown' });
+    }
   });
 
   it('should reject cardinality mismatches atomically', async () => {

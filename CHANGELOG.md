@@ -98,5 +98,36 @@ All notable changes to nanoraster are recorded here.
 ## Unreleased
 
 - Extract the renderer into its standalone package.
-- Add a shared caller-world declaration for camera, section, world-light, axes,
-  and scale-bar values while preserving glTF-space defaults.
+- Replace orbit angles with fitted and fixed Cartesian cameras, configurable
+  field of view and zoom, and a flat 3-pixel output-space line width.
+- Add surface and authored-line switches, exact primitive selection,
+  deterministic multi-plane sections, caller-world camera/plane/world-light
+  coordinates, and expanded timing and resource evidence.
+- Consume validated `EXT_mesh_manifold` topology for deterministic section
+  caps.
+- Close valid section cuts through paired halfedges. A true cut ring that
+  collapses below the fixed-point quantum now fails with the named diagnostic
+  prefix `sections: cap:`, naming the collapse below three quantized points,
+  instead of returning an empty cap.
+- Build browser artifacts with Rust 1.98, wasm-pack 0.15, and exact-pinned
+  Binaryen 132.
+- Export `directionFromOrbit` and `orbitFromDirection` beside the
+  `RenderOrbit` angle type. The pair converts between a fitted camera's
+  Cartesian `direction` and azimuth and elevation in degrees, resolving its
+  axes from the world the request declares, and each inverts the other exactly.
+  Azimuth is zero on `world.forward` and positive toward the viewer's right;
+  elevation is measured above the world horizontal plane, and at its poles
+  azimuth is reported as zero.
+- Measure the default fitted camera in the declared caller world: 45 degrees of
+  azimuth and 30 degrees of elevation in every world, with the default screen
+  `up` the declared `world.up`. The fixed vector it replaces was those angles
+  only for a +Y-up caller; a +Z-up caller was framed from about 37.8 degrees of
+  elevation instead. Renders in the glTF default world are byte-identical.
+- Raise the section-plane limit from six to eight. `renderImageMaxSections` is
+  `8`, and a request carrying seven or eight planes renders instead of failing
+  validation.
+- Build the WebAssembly render core at full optimization. The size override it
+  carried cost about 6.4 ms of render time; dropping it recovers that time for
+  about 54 KB more brotli-compressed wasm, with byte-identical output at either
+  optimization level. A render-time gate in continuous integration holds the
+  recovered speed.

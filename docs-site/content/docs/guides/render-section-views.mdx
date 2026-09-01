@@ -3,26 +3,29 @@ title: Cut section views
 description: Cut one or more retained half-spaces and render deterministic striped caps and outlines.
 ---
 
-A section plane is a point and a normal in the submitted GLB's world frame.
-The normal points into the half-space that remains visible.
+Plane points and normals use the caller world. Normals point into the
+retained half-space. Omit `world` for canonical glTF +Y-up metres.
 
 ## Cut with one or more planes
 
-Use `sections.planes` for one to six simultaneous cuts. The retained subject is
-the intersection of every half-space, so changing plane order does not change
-the image.
+Use `sections.planes` for one to eight simultaneous cuts. The retained
+subject is the intersection of every half-space. Plane order therefore does
+not change the image.
 
 <RenderDemo model="/demo/overlapping-cubes.glb">
 
 ```typescript
-import { renderImage } from 'nanoraster';
+import { directionFromOrbit, renderImage } from 'nanoraster';
+
+const world = { up: '+z', forward: '-y', unit: 'meter' } as const;
 
 const image = await renderImage(glb, {
   format: 'webp',
+  world,
   sections: {
     planes: [
-      { point: [0, 0, 0], normal: [-1, 0, 0] },
-      { point: [0, 0, 0], normal: [0, 0, 1] },
+      { point: [0, 0, 0], normal: directionFromOrbit({ azimuth: -90, elevation: 0 }, world) },
+      { point: [0, 0, 0], normal: directionFromOrbit({ azimuth: 0, elevation: 90 }, world) },
     ],
     clipSurfaces: true,
     clipLines: true,
@@ -32,28 +35,37 @@ const image = await renderImage(glb, {
 
 </RenderDemo>
 
-Normals accept any finite non-zero magnitude and are normalized internally.
-An empty plane list is invalid; omit `sections` to render without a cut.
+Normals take any finite non-zero magnitude, and
+[`directionFromOrbit`](../api#directionfromorbit) names one. Omit
+`sections` for no cut. Elevation 90 is caller +Z. nanoraster converts the
+plane once.
 
 ## Control what each plane clips
 
-`clipSurfaces` and `clipLines` both default to `true`. Turning off
-`clipSurfaces` leaves triangle surfaces unchanged and produces no caps while
-authored lines may still be cut. Turning off `clipLines` leaves authored lines
-unchanged while surfaces, caps, and cap outlines still follow the planes.
+Both switches default to `true`. Disabling `clipSurfaces` leaves triangles
+uncut and produces no caps. Disabling `clipLines` leaves authored lines uncut.
 
 ## Read the cap
 
-Closed, orientable triangle surfaces receive striped material-colour caps and
-black outlines. Overlapping caps are red with yellow cross-stripes; touching
-regions retain their material style.
+Closed orientable surfaces receive striped material-colour caps and black
+outlines. Overlaps are red with yellow cross-stripes.
 
-A successful render contains every true cap. Open or non-manifold topology and
-fixed-precision overflow return a source-and-plane `parse` error. Tangent planes
-may yield an outline without a cap. nanoraster pairs duplicated glTF seams but
-does not repair meshes.
+A successful render contains every true cap. Unsupported topology and
+fixed-precision overflow return source-and-plane `parse` errors. Tangent planes
+may yield only an outline. nanoraster pairs duplicated glTF seams but does not
+repair meshes.
 
-Hatch direction follows the section plane; spacing follows the camera.
+### Contract note: sub-quantum ring collapse
+
+If a true cut ring collapses below three fixed-grid points, the render fails
+rather than returning a partial cap. The named `sections: cap:` diagnostic
+says `true cut ring collapsed below three quantized points`. The diagnostic
+includes the source and plane. Rescale the model, or move the cut beyond that
+quantum.
+
+A valid `EXT_mesh_manifold` mesh supplies exact topology. Base primitives still
+control rendering, materials, and visibility. Hatch direction follows the
+plane. Hatch spacing follows the camera.
 
 Fitted framing follows the visible primitive set but does not refit after a
 plane moves. The cut therefore reveals the interior without making the camera

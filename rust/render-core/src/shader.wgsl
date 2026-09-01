@@ -19,7 +19,7 @@ struct Frame {
     ambient: f32,
     exposure: f32,
     environment: u32,
-    section_planes: array<vec4<f32>, 6>,
+    section_planes: array<vec4<f32>, 8>,
     section_count: u32,
     clip_surfaces: u32,
     clip_lines: u32,
@@ -190,7 +190,7 @@ struct CapOut {
     @location(0) plane_uv: vec2<f32>,
     @location(1) base_color: vec4<f32>,
     @location(2) stripe_color: vec4<f32>,
-    @location(3) style: vec4<f32>,
+    @location(3) style: vec2<f32>,
     @location(4) world_position: vec3<f32>,
 }
 
@@ -200,7 +200,7 @@ fn vs_cap(
     @location(1) plane_uv: vec2<f32>,
     @location(2) base_color: vec4<f32>,
     @location(3) stripe_color: vec4<f32>,
-    @location(4) style: vec4<f32>,
+    @location(4) style: vec2<f32>,
 ) -> CapOut {
     var out: CapOut;
     out.position = frame.view_projection * vec4<f32>(position, 1.0);

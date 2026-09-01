@@ -14,6 +14,56 @@ The package has no compatibility commitments before its first stable release.
   preserves the requested rectilinear field of view, and may translate its
   optical axis while preserving `direction`; `margin` is a minimum contained
   border rather than an exact fill promise.
+
+  To preserve an old `(phi, theta, up)` view, convert degrees to radians as
+  `p = phi * Math.PI / 180` and `t = theta * Math.PI / 180`, then use the
+  matching former up-axis formula:
+
+  ```typescript
+  const direction =
+    up === 'x'
+      ? [Math.cos(p), Math.sin(p) * Math.cos(t), Math.sin(p) * Math.sin(t)]
+      : up === 'z'
+        ? [Math.sin(p) * Math.cos(t), Math.sin(p) * Math.sin(t), Math.cos(p)]
+        : [Math.sin(p) * Math.cos(t), Math.cos(p), -Math.sin(p) * Math.sin(t)];
+  ```
+
+  The last branch is the old default `up: 'y'`. Put `direction` and the
+  corresponding Cartesian screen-up vector inside `camera: { framing: 'fit',
+... }`.
+
+- The default fitted camera is measured in the declared caller world rather
+  than fixed to one vector: 45 degrees of azimuth from `world.forward` and 30
+  degrees of elevation above the world horizontal plane, with screen `up` the
+  declared `world.up`. A request that declares a `world` other than the glTF
+  default and omits `camera.direction` therefore renders from a different
+  viewpoint; a +Z-up caller was framed from about 37.8 degrees of elevation.
+  Pass `direction: [0.6123724357, 0.5, 0.6123724357]` to keep the old vector,
+  and re-record byte-locked snapshots of default-camera renders in those
+  worlds. Renders in the glTF default world are unchanged, byte for byte.
+
+  The `directionFromOrbit` and `orbitFromDirection` exports use the
+  same angles. Their azimuth is zero on `world.forward` and positive toward the
+  viewer's right, which is not the convention of the removed `phi` and `theta`
+  options; the formulas above remain the migration path for those.
+
+- `RenderTimings` changes from `{ parse, setup, views }` to the following
+  required shape:
+
+  ```typescript
+  {
+    parse, setup, capBuild, upload,
+    peakReadbackBytes, glbParses, adapterDeviceRequests, pipelineSets,
+    presentationBuilds, sceneUploads, targetAllocations,
+    views: [{ id, render, overlay, encode }],
+  }
+  ```
+
+  `setup` is now the inclusive renderer-acquisition, presentation, cap-build,
+  and upload interval; `capBuild` and `upload` expose two included stages.
+  Exact snapshots and consumers enumerating timing keys must add the resource
+  counters and the two stage fields.
+
 - WebP `quality` values below `1` encode lossy instead of being ignored. A
   request that passed an explicit `quality` under a lossless-only release now
   produces a lossy file; drop the option or pass `1` to keep lossless output.

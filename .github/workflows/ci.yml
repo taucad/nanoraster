@@ -383,6 +383,10 @@ jobs:
       - run: pnpm run check:size
       - name: Build the bench-enabled wasm sibling for the conformance gate
         run: pnpm run build:wasm:bench
+      # The size ratchet above cannot see a build flag that trades speed for
+      # bytes, which is how a 2.4x encode regression shipped once already.
+      - name: Gate the wasm render speed
+        run: node scripts/check-wasm-speed.mjs
       - name: Generate the sixteen platform directories
         run: pnpm exec napi create-npm-dirs --npm-dir npm
       - name: Collect the native addons

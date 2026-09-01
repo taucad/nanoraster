@@ -230,6 +230,16 @@ pub async fn bench_codecs(glb: Vec<u8>, width: u32, height: u32) -> Result<Strin
     Ok(report.to_string())
 }
 
+/// Codec timings over a procedural frame — no adapter, no GLB. The wasm speed
+/// gate's probe: `scripts/check-wasm-speed.mjs` runs it in Node.
+#[cfg(feature = "bench")]
+#[wasm_bindgen]
+pub fn bench_fixture_encodes(width: u32, height: u32) -> Result<String, JsError> {
+    render_core::bench_fixture_encodes(width, height, &js_sys::Date::now)
+        .map(|report| report.to_string())
+        .map_err(|error| JsError::new(&error.to_string()))
+}
+
 /// Compare six singular calls with one six-view batch.
 #[cfg(feature = "bench")]
 #[wasm_bindgen]

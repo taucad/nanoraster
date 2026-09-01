@@ -1,3 +1,4 @@
+import { demoModelDiagonal } from './demo-model';
 import { createDemoDescriptor } from './demo-source';
 
 type Attribute = { type: 'mdxJsxAttribute'; name: string; value?: unknown };
@@ -26,6 +27,10 @@ const inject = (node: Node): void => {
   if (node.type === 'mdxJsxFlowElement' && node.name === 'RenderDemo') {
     const code = firstCodeChild(node);
     if (code?.value !== undefined) {
+      // The demo's own model sizes its length controls, so the bounding box is
+      // measured here — where the file is on disk — rather than in the browser.
+      const model = node.attributes?.find(({ name }) => name === 'model')?.value;
+      const diagonal = demoModelDiagonal(typeof model === 'string' ? model : undefined);
       node.attributes ??= [];
       node.attributes.push(
         { type: 'mdxJsxAttribute', name: 'code', value: code.value },
@@ -33,7 +38,7 @@ const inject = (node: Node): void => {
         {
           type: 'mdxJsxAttribute',
           name: 'descriptorJson',
-          value: JSON.stringify(createDemoDescriptor(code.value)),
+          value: JSON.stringify(createDemoDescriptor(code.value, diagonal)),
         },
       );
     }

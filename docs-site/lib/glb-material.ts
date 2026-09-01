@@ -16,6 +16,20 @@ type Gltf = {
 
 const align = (value: number): number => Math.ceil(value / 4) * 4;
 
+/** The GLB's JSON chunk, with where it sits so the binary chunk can be copied past it. */
+export const glbJsonChunk = (
+  glb: Uint8Array,
+): { readonly json: string; readonly start: number; readonly length: number } => {
+  const view = new DataView(glb.buffer, glb.byteOffset, glb.byteLength);
+  if (view.getUint32(0, true) !== GLB_MAGIC) throw new Error('Not a GLB file');
+  const length = view.getUint32(HEADER_BYTES, true);
+  if (view.getUint32(HEADER_BYTES + 4, true) !== JSON_CHUNK) {
+    throw new Error('First GLB chunk is not JSON');
+  }
+  const start = HEADER_BYTES + CHUNK_HEADER_BYTES;
+  return { json: new TextDecoder().decode(glb.subarray(start, start + length)), start, length };
+};
+
 /**
  * Rewrite every material's metallic-roughness factors in a GLB.
  *
@@ -29,17 +43,9 @@ export const patchMaterialFactors = (
   glb: Uint8Array<ArrayBuffer>,
   factors: MaterialFactors,
 ): Uint8Array<ArrayBuffer> => {
-  const view = new DataView(glb.buffer, glb.byteOffset, glb.byteLength);
-  if (view.getUint32(0, true) !== GLB_MAGIC) throw new Error('Not a GLB file');
-
-  const jsonLength = view.getUint32(HEADER_BYTES, true);
-  if (view.getUint32(HEADER_BYTES + 4, true) !== JSON_CHUNK) {
-    throw new Error('First GLB chunk is not JSON');
-  }
-
-  const jsonStart = HEADER_BYTES + CHUNK_HEADER_BYTES;
+  const { json, start: jsonStart, length: jsonLength } = glbJsonChunk(glb);
   const rest = glb.subarray(jsonStart + jsonLength);
-  const gltf = JSON.parse(new TextDecoder().decode(glb.subarray(jsonStart, jsonStart + jsonLength))) as Gltf;
+  const gltf = JSON.parse(json) as Gltf;
 
   for (const material of gltf.materials ?? []) {
     material.pbrMetallicRoughness = { ...material.pbrMetallicRoughness, ...factors };
