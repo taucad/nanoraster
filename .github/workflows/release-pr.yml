@@ -92,9 +92,19 @@ jobs:
         run: |
           set -euo pipefail
           previous_version=$(node -p "require('./package.json').version")
+          # A plan states its bump under the project key or under nx's
+          # `__default__` wildcard, and both forms are in this repository's
+          # history. The list is read by nobody but the pull request body —
+          # `nx` reads the plans themselves — so a plan that states its bump
+          # some third way must not take the release down with it. Matching
+          # nothing exits `grep` non-zero, which under `pipefail` would abort
+          # this block between the delimiter above and the one below, and the
+          # step would fail reporting the unterminated delimiter rather than
+          # the plan it could not read.
           {
             echo 'plans<<PLANSEOF'
-            grep -H '^nanoraster:' .nx/version-plans/*.md | sed 's/^/- /'
+            grep -HE '^(nanoraster|__default__):' .nx/version-plans/*.md | sed 's/^/- /' ||
+              echo '- (no bump line matched; see the consumed plan files in this pull request)'
             echo 'PLANSEOF'
           } >> "$GITHUB_OUTPUT"
 
