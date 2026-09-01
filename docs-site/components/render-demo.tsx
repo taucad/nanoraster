@@ -139,7 +139,7 @@ export const RenderDemo = ({
   // reader dragged to is remembered here, so a handle at -180 stays put
   // instead of teleporting to the far end — and the rewritten example prints
   // the same end the slider shows.
-  const azimuthEndsRef = useRef<Record<string, number>>({});
+  const azimuthEndsRef = useRef(new Map<string, number>());
 
   const draw = useCallback(
     async (current: Record<string, DemoValue>): Promise<void> => {
@@ -334,7 +334,7 @@ export const RenderDemo = ({
   const orbitRows = (control: DemoControl): React.JSX.Element => {
     const orbit = demoOrbitFromDirection(vectorOf(control.key), declaredWorld);
     const canonical = Math.round(orbit.azimuth);
-    const azimuth = canonical === 180 && azimuthEndsRef.current[control.key] === -180 ? -180 : canonical;
+    const azimuth = canonical === 180 && azimuthEndsRef.current.get(control.key) === -180 ? -180 : canonical;
     const elevation = Math.round(orbit.elevation);
     // Exact at the pole: `orbitFromDirection` clamps its sine before `asin`,
     // so a direction on the world's up axis reports ±90 with no float dust.
@@ -371,8 +371,8 @@ export const RenderDemo = ({
             }
             onChange={(event) => {
               const next = Number(event.currentTarget.value);
-              if (next === -180) azimuthEndsRef.current[control.key] = -180;
-              else delete azimuthEndsRef.current[control.key];
+              if (next === -180) azimuthEndsRef.current.set(control.key, -180);
+              else azimuthEndsRef.current.delete(control.key);
               move({ azimuth: next, elevation });
             }}
             step={1}
@@ -742,7 +742,7 @@ export const RenderDemo = ({
             className={styles.reset}
             onClick={() => {
               setSelectedViewId(defaultViewId);
-              azimuthEndsRef.current = {};
+              azimuthEndsRef.current.clear();
               apply(readDemoOptions(parsedDescriptor));
             }}
             type="button"

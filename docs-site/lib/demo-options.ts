@@ -384,8 +384,7 @@ const formatValue = (value: DemoValue, authored: string): string => {
 const orbitCall = (
   value: readonly number[],
   declaredWorld: unknown,
-  worldArgument: string | undefined,
-  azimuthEnd?: number,
+  { azimuthEnd, worldArgument }: { readonly azimuthEnd?: number; readonly worldArgument?: string },
 ): string | undefined => {
   const orbit = demoOrbitFromDirection(value, declaredWorld);
   const canonical = Math.round(orbit.azimuth);
@@ -419,7 +418,7 @@ export const demoQuantize = (template: DemoControlTemplate | undefined, value: D
 export const substituteDemoValues = (
   descriptor: DemoDescriptor,
   values: Record<string, DemoValue>,
-  azimuthEnds?: Readonly<Record<string, number>>,
+  azimuthEnds?: ReadonlyMap<string, number>,
 ): string => {
   const edits = descriptor.bindings.flatMap((binding) => {
     const value = values[binding.key];
@@ -431,7 +430,10 @@ export const substituteDemoValues = (
     const call =
       binding.orbit === undefined || !isVector(value)
         ? undefined
-        : orbitCall(value, descriptor.request['world'], binding.orbit.world, azimuthEnds?.[binding.key]);
+        : orbitCall(value, descriptor.request['world'], {
+            azimuthEnd: azimuthEnds?.get(binding.key),
+            worldArgument: binding.orbit.world,
+          });
     return [{ ...binding.valueSpan, replacement: call ?? formatValue(value, authored) }];
   });
   return edits
