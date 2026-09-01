@@ -64,4 +64,4 @@ complete matching set.
 ## Repository operations
 
 Repository rules, secret scanning, push protection, and private vulnerability
-reporting are managed through the `cloud-infra` stack.
+reporting are managed through the `tau-cloud` stack.
