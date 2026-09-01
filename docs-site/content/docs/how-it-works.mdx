@@ -47,8 +47,9 @@ here are GPU-class.
 **Encode** compresses the read-back pixels. A request the encoder cannot
 represent, such as a transparent JPEG, fails as `encode`. The failure code
 names the stage that rejected the work, so the
-[retry decision](guides/handle-render-failures) is mechanical, not a guess. With `format: 'raw'` the renderer skips this stage and returns the frame
-as read back. See [Work with raw pixels](guides/work-with-raw-pixels).
+[retry decision](guides/handle-render-failures) is mechanical, not a guess.
+With `format: 'raw'` the renderer skips this stage and returns the frame as
+read back. See [Work with raw pixels](guides/work-with-raw-pixels).
 
 [`renderImages`](api#renderimages) parses and uploads once, then fits,
 rasterises, and encodes once per view. [`RenderTimings`](api#rendertimings)

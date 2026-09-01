@@ -5,8 +5,8 @@ description: Choose a fitted camera direction, screen-up vector, projection, and
 
 With a fitted camera, you choose an orientation. nanoraster solves the
 optical target, distance, and clip planes from indexed geometry that can be
-drawn. Use it for thumbnails, contact sheets, and any capture
-that must keep the whole subject in frame.
+drawn. Use it for thumbnails, contact sheets, and any capture that must keep
+the whole subject in frame.
 
 ## Set direction and screen up
 
@@ -16,8 +16,9 @@ world. The renderer ignores their magnitudes. Fitting may translate the camera
 and optical target together without changing orientation.
 
 Omit `up` on a fit camera and it becomes the declared `world.up`. Supply `up`
-to roll the camera. A plan view's `direction` runs along that same axis and names no roll.
-Screen-up comes from `world.forward` instead, so a plan view needs no `up`.
+to roll the camera. A plan view's `direction` runs along that same axis and
+names no roll. Screen-up comes from `world.forward` instead, so a plan view
+needs no `up`.
 
 <RenderDemo>
 
@@ -59,7 +60,8 @@ const { azimuth, elevation } = orbitFromDirection([0.61, -0.61, 0.5], world);
 ```
 
 Azimuth is the angle in the world horizontal plane. It is zero on
-`world.forward` and positive toward the viewer's right. Elevation is the angle above it. This convention is the pair's own, not the one the removed
+`world.forward` and positive toward the viewer's right. Elevation is the angle
+above it. This convention is the pair's own, not the one the removed
 `phi`/`theta` options carried. The wire stays Cartesian: a turntable is a
 sequence of azimuths.
 

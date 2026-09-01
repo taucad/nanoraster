@@ -54,8 +54,8 @@ const image = await renderImage(glb, {
 The default background is transparent. PNG, WebP and `raw` can represent
 transparency; JPEG cannot. A JPEG request without an opaque background fails
 with an [`encode` failure](handle-render-failures); the renderer does not
-silently flatten onto an arbitrary colour. Backgrounds accept `#RRGGBB`, `#RRGGBBAA`,
-or normalised straight-alpha RGBA such as `[0.05, 0.06, 0.08, 1]`.
+silently flatten onto an arbitrary colour. Backgrounds accept `#RRGGBB`,
+`#RRGGBBAA`, or normalised straight-alpha RGBA such as `[0.05, 0.06, 0.08, 1]`.
 
 ### 3. Tune quality per format
 
@@ -112,8 +112,8 @@ fitted camera but never change a fixed camera.
 ### 5. Set authored-edge thickness
 
 `lineWidth` controls glTF `LINES` primitives in output pixels, from `0.25` to
-`16`. The default is `3`. The width does not grow with image height: a 1 px line stays 1 px at
-2048×2048. Meshes and lines use 4× MSAA.
+`16`. The default is `3`. The width does not grow with image height: a 1 px line
+stays 1 px at 2048×2048. Meshes and lines use 4× MSAA.
 
 ```typescript
 const image = await renderImage(glb, { format: 'png', lineWidth: 1 });

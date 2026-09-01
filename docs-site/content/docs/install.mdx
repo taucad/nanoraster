@@ -55,10 +55,11 @@ machine.
 The Android packages are experimental: their binaries are built and inspected,
 and no job renders on an Android device. The armv7 and Windows x86 packages run
 on the Node.js 22 line. Node.js 24 and 26 do not publish binaries for those
-platforms. Platform packages are optional, so an install on an unlisted
-platform succeeds and then fails at render time. Check your host against
-the [compatibility matrix](https://github.com/taucad/nanoraster/blob/main/compatibility.md)
-before deploying.
+platforms. Platform packages are optional, so an install on an unlisted platform
+succeeds and then fails at render time. Check your host against the
+[compatibility
+matrix](https://github.com/taucad/nanoraster/blob/main/compatibility.md) before
+deploying.
 
 ## Node.js, browsers and bundlers
 
@@ -82,8 +83,8 @@ export default { ssr: { external: ['nanoraster'] } };
 ## Installing for another platform
 
 An image for a platform other than the install host needs that platform's
-package instead of the host's. Examples: a Linux container assembled on macOS, or an arm64 image built on x64. pnpm and Yarn Berry accept the set to
-install:
+package instead of the host's. Examples: a Linux container assembled on macOS,
+or an arm64 image built on x64. pnpm and Yarn Berry accept the set to install:
 
 ```yaml title="pnpm-workspace.yaml"
 supportedArchitectures:

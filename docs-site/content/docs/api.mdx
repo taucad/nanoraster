@@ -460,7 +460,8 @@ channel is within `renderImageLightColorRange`.
 ### `RenderedImageFile`
 
 [`renderImage`](#renderimage) returns this type, and every batch entry carries
-it as `file`. `width` and `height` are the resolved request dimensions. With `format: 'raw'`, `bytes` is the frame itself: straight-alpha sRGB
+it as `file`. `width` and `height` are the resolved request dimensions. With
+`format: 'raw'`, `bytes` is the frame itself: straight-alpha sRGB
 RGBA8, `width * height * 4` bytes, top row first. Its `mimeType` is then
 `application/octet-stream`. [Work with raw pixels](guides/work-with-raw-pixels)
 has the layout in full.
