@@ -1,7 +1,10 @@
 import ts from 'typescript';
 
 import {
-  demoControlCatalogue,
+  demoBoundsViolation,
+  demoControlNames,
+  demoControlTemplates,
+  demoControls,
   type DemoBinding,
   type DemoDescriptor,
   type DemoLight,
@@ -100,6 +103,7 @@ const pushBinding = (
     readonly offset: number;
     readonly path: readonly DemoPathPart[];
     readonly scope?: DemoScope;
+    readonly title?: string;
     readonly view?: string;
   },
 ): void => {
@@ -124,8 +128,23 @@ const pushBinding = (
     value,
     valueSpan: span(found.initializer, options.offset),
     ...(name === 'label' ? { deleteSpan: deleteSpan(object, found, options.offset) } : {}),
+    ...(options.title === undefined ? {} : { title: options.title }),
     ...(options.view === undefined ? {} : { view: options.view }),
   });
+};
+
+/**
+ * What a row is called, and what its tooltip spells out.
+ *
+ * The composed API paths are the labels most at risk of being ellipsed and
+ * the least self-explanatory, so the row carries the short name and the path
+ * stays one hover away.
+ */
+const shortLabels: Readonly<Record<string, string>> = {
+  verticalFieldOfView: 'field of view',
+  verticalSpan: 'vertical span',
+  near: 'near clip',
+  far: 'far clip',
 };
 
 const cameraBindings = (
@@ -156,10 +175,11 @@ const cameraBindings = (
     for (const name of names) {
       pushBinding(bindings, nested, {
         key: `${options.prefix}${container}.${name}`,
-        label: `${container}.${name}`,
+        label: shortLabels[name] ?? name,
         name,
         offset: options.offset,
         path: [...options.path, container, name],
+        title: `${container}.${name}`,
         ...(options.view === undefined ? {} : { view: options.view }),
       });
     }
@@ -201,15 +221,47 @@ const asObject = (value: Literal | undefined): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 
-/** Parse one authored demo once during the docs build. */
-export const createDemoDescriptor = (code: string): DemoDescriptor => {
+/**
+ * Every authored literal a control cannot express, as one message.
+ *
+ * A demo whose example sets a value its own control cannot reach shows the
+ * reader one request and renders another. Running at parse time makes that a
+ * failed docs build rather than a defect a reader has to notice.
+ */
+const boundsFailures = (descriptor: DemoDescriptor): readonly string[] => {
+  const values = Object.fromEntries(descriptor.bindings.map(({ key, value }) => [key, value]));
+  const viewIds = [undefined, ...descriptor.views.map(({ id }) => id)];
+  const seen = new Set<string>();
+  const templates = demoControlTemplates(descriptor.diagonal);
+  return viewIds.flatMap((viewId) =>
+    demoControls(descriptor, viewId).flatMap((control) => {
+      if (seen.has(control.key)) return [];
+      seen.add(control.key);
+      const binding = descriptor.bindings.find(({ key }) => key === control.key);
+      const violation =
+        binding === undefined
+          ? undefined
+          : demoBoundsViolation(templates[binding.control], values[control.key]);
+      return violation === undefined ? [] : [`${control.key}: ${violation}`];
+    }),
+  );
+};
+
+/**
+ * Parse one authored demo once during the docs build.
+ *
+ * `diagonal` is the rendered model's bounding-box diagonal: every length
+ * control is scaled by it, so the demo's model has to be known here rather
+ * than after it lands in the browser.
+ */
+export const createDemoDescriptor = (code: string, diagonal: number): DemoDescriptor => {
   const source = ts.createSourceFile('demo.ts', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const options = renderCallOptions(source);
   const bindings: DemoBinding[] = [];
   const request = options === undefined ? {} : asObject(literal(options));
 
   if (options !== undefined) {
-    for (const name of Object.keys(demoControlCatalogue)) {
+    for (const name of demoControlNames) {
       pushBinding(bindings, options, { key: name, label: name, name, offset: 0, path: [name] });
     }
     const camera = objectExpression(property(options, 'camera')?.initializer);
@@ -225,6 +277,26 @@ export const createDemoDescriptor = (code: string): DemoDescriptor => {
           offset: 0,
           path: ['lighting', name],
         });
+      }
+      // Without these the lighting guide has no control over its own subject:
+      // `space` swaps the frame the light directions are read in, with no
+      // light direction on the panel to watch it move.
+      const lightList = property(lighting, 'lights')?.initializer;
+      const lights = lightList === undefined ? undefined : unwrap(lightList);
+      if (lights !== undefined && ts.isArrayLiteralExpression(lights)) {
+        for (const [index, item] of lights.elements.entries()) {
+          const light = objectExpression(item);
+          if (light === undefined) continue;
+          for (const name of ['direction', 'color']) {
+            pushBinding(bindings, light, {
+              key: `lighting.lights.${index}.${name}`,
+              label: `light ${index + 1} ${name}`,
+              name,
+              offset: 0,
+              path: ['lighting', 'lights', index, name],
+            });
+          }
+        }
       }
     }
     const sections = objectExpression(property(options, 'sections')?.initializer);
@@ -247,10 +319,13 @@ export const createDemoDescriptor = (code: string): DemoDescriptor => {
           for (const name of ['point', 'normal']) {
             pushBinding(bindings, plane, {
               key: `sections.planes.${index}.${name}`,
-              label: `plane ${index + 1} ${name}`,
+              // The point is driven as a signed distance along the plane's own
+              // normal, which is the only direction moving it can cut in.
+              label: `plane ${index + 1} ${name === 'point' ? 'offset' : name}`,
               name,
               offset: 0,
               path: ['sections', 'planes', index, name],
+              title: `sections.planes[${index}].${name}`,
             });
           }
         }
@@ -266,10 +341,13 @@ export const createDemoDescriptor = (code: string): DemoDescriptor => {
         if (entry === undefined || typeof idValue !== 'string') continue;
         pushBinding(bindings, entry, {
           key: `view.${idValue}.label`,
-          label: `label · ${idValue}`,
+          // Only the selected view's group is on the panel, so the row does
+          // not have to spell out which view it belongs to.
+          label: 'label',
           name: 'label',
           offset: 0,
           path: ['views', index, 'label'],
+          title: `views[${index}].label`,
           view: idValue,
         });
         const camera = objectExpression(property(entry, 'camera')?.initializer);
@@ -305,13 +383,20 @@ export const createDemoDescriptor = (code: string): DemoDescriptor => {
   const views = Array.isArray(request['views']) ? (request['views'] as unknown as readonly DemoView[]) : [];
   const lighting = asObject(request['lighting'] as Literal | undefined);
   const lights = Array.isArray(lighting['lights']) ? (lighting['lights'] as readonly DemoLight[]) : undefined;
-  return {
+  const descriptor: DemoDescriptor = {
     bindings,
     code,
+    diagonal,
     ...(lights === undefined ? {} : { lights }),
     material: materialValues,
     raw: request['format'] === 'raw',
     request,
     views,
   };
+
+  const failures = boundsFailures(descriptor);
+  if (failures.length > 0) {
+    throw new Error(`demo literals outside their control's range — ${failures.join('; ')}`);
+  }
+  return descriptor;
 };

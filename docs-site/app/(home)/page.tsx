@@ -3,6 +3,7 @@ import Link from 'next/link';
 
 import { RenderDemo } from '@/components/render-demo';
 import { SizeStrip } from '@/components/size-strip';
+import { demoModelDiagonal } from '@/lib/demo-model';
 import { createDemoDescriptor } from '@/lib/demo-source';
 
 import styles from './page.module.css';
@@ -21,7 +22,7 @@ const image = await renderImage(glb, {
   background: '#101418',
 });`;
 
-const heroDescriptor = createDemoDescriptor(heroExample);
+const heroDescriptor = createDemoDescriptor(heroExample, demoModelDiagonal());
 
 /** Render the nanoraster homepage and its live demo. */
 const Page = (): React.JSX.Element => (

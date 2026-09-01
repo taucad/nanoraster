@@ -34,6 +34,10 @@
 .stage {
   display: grid;
   min-height: 240px;
+
+  /* The render's own aspect, so the first paint lands in the space already
+     reserved for it instead of reflowing the panel. */
+  aspect-ratio: 4 / 3;
   place-items: center;
   overflow: hidden;
 
@@ -123,17 +127,50 @@
   text-align: center;
 }
 
+/* One grid for the whole panel: every label shares a track, so the rows line
+   up and the widest label sets the column instead of penalising its own row.
+   The inputs keep a floor no label can push them under. */
 .controls {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(8rem, 1fr);
   gap: 10px;
+  align-items: center;
+  align-content: start;
   min-width: 0;
 }
 
-.spherical {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* A group of rows still contributes its cells to the panel grid. */
+.group {
+  display: contents;
+}
+
+.reset {
+  grid-column: 1 / -1;
+  justify-self: start;
+  padding: 3px 8px;
+  color: var(--color-fd-muted-foreground);
+  background: var(--color-fd-background);
+  border: 1px solid var(--color-fd-border);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.action {
+  padding: 3px 8px;
+  justify-self: start;
+  color: var(--color-fd-muted-foreground);
+  background: var(--color-fd-background);
+  border: 1px solid var(--color-fd-border);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.advanced {
+  grid-column: 1 / -1;
 }
 
 .advanced summary {
@@ -144,6 +181,13 @@
   cursor: pointer;
 }
 
+/* The example is the thing being copied, so it wraps rather than scrolling
+   sideways under an overlay scrollbar that shows nothing is hidden. */
+.demo :global(pre) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .code {
   grid-area: code;
   min-width: 0;
@@ -152,21 +196,25 @@
   border-radius: 6px;
 }
 
+/* Rows place their two cells directly in the panel grid above. */
 .control {
-  display: grid;
-  grid-template-columns: minmax(5.5rem, max-content) minmax(0, 1fr);
-  gap: 10px;
-  align-items: center;
+  display: contents;
   font-size: 0.78rem;
 }
 
+/* Labels wrap rather than ellipse: the composed ones are the least
+   self-explanatory, so `label · three-quar…` is the worst thing to show. */
 .control > span {
-  overflow: hidden;
-  white-space: nowrap;
   color: var(--color-fd-muted-foreground);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.72rem;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
+/* Three sliders for one point, stacked so each keeps the full input width. */
+.stack {
+  display: grid;
+  gap: 4px;
 }
 
 .control input[type='range'] {
@@ -233,17 +281,6 @@
 .status {
   grid-column: 3;
   justify-self: end;
-}
-
-/* A panel with the whole option surface on it (the homepage) runs past the
-   image as one column, so wide viewports split it in two. */
-@media (min-width: 1024px) {
-  .controls[data-columns='two'] {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px 16px;
-    align-content: start;
-  }
 }
 
 @media (max-width: 760px) {
