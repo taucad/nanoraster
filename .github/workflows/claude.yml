@@ -46,7 +46,7 @@ jobs:
 
             **Maintainers:** To approve this request, comment:
             \`\`\`
-            /approve-claude
+            /approve-claude Execute the external request quoted in the latest Claude Assistance Requested comment above.
             \`\`\``;
 
             await github.rest.issues.createComment({
@@ -72,28 +72,10 @@ jobs:
       id-token: write
       actions: read
     steps:
-      - name: Resolve checkout ref
-        id: checkout-ref
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
-        with:
-          script: |
-            const pullNumber = context.payload.pull_request?.number ??
-              (context.payload.issue?.pull_request ? context.payload.issue.number : undefined);
-
-            const ref = pullNumber
-              ? `refs/pull/${pullNumber}/head`
-              : context.payload.repository.default_branch;
-
-            core.info(`Checking out ${ref}`);
-            core.setOutput('ref', ref);
-
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ steps.checkout-ref.outputs.ref }}
           fetch-depth: 20
-          # Untrusted PR head is checked out and PR-authored tooling runs here;
-          # don't persist the workflow token into .git/config for later steps.
           persist-credentials: false
 
       - name: Run Claude Code
@@ -101,6 +83,7 @@ jobs:
         uses: anthropics/claude-code-action@833fb0f8c9f6686b33d963a8bae0a94f4936ab2a # v1.0.211
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          trigger_phrase: /approve-claude
 
           # Additional permissions for Claude to read CI results on PRs
           additional_permissions: |
@@ -140,28 +123,10 @@ jobs:
       id-token: write
       actions: read
     steps:
-      - name: Resolve checkout ref
-        id: checkout-ref
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
-        with:
-          script: |
-            const pullNumber = context.payload.pull_request?.number ??
-              (context.payload.issue?.pull_request ? context.payload.issue.number : undefined);
-
-            const ref = pullNumber
-              ? `refs/pull/${pullNumber}/head`
-              : context.payload.repository.default_branch;
-
-            core.info(`Checking out ${ref}`);
-            core.setOutput('ref', ref);
-
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ steps.checkout-ref.outputs.ref }}
           fetch-depth: 20
-          # Untrusted PR head is checked out and PR-authored tooling runs here;
-          # don't persist the workflow token into .git/config for later steps.
           persist-credentials: false
 
       - name: Run Claude Code
