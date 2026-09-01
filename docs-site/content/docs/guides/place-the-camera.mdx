@@ -66,6 +66,20 @@ const planCamera = {
 } as const satisfies RenderCamera;
 ```
 
+### Very narrow perspective
+
+A tiny field of view is the wrong way to reach a parallel look. Framing
+distance grows as `1 / tan(fov / 2)`, so a subject one height tall sits 57
+heights away at 1 degree and 573 at 0.1, collapsing depth precision and making
+clipping brittle. Ask for `{ kind: 'orthographic' }`, which has no distance in
+it.
+
+To hand a shot between the two without a visible jump, measure rather than
+guess. Render the view at both projections and compare the frame corners, where
+perspective diverges most. Take the largest field of view whose worst-corner
+displacement from the orthographic projection stays under half a pixel, then
+switch: under half a pixel the two images differ by less than one sample.
+
 ## Clipping
 
 Omit `clipping` to derive safe positive planes from subject bounds. Supply it
@@ -132,8 +146,9 @@ const request = {
 const image = await renderImage(glb, request);
 ```
 
-For Three.js, map `camera.position`, the controls target, `camera.up`, vertical
-`camera.fov`, and `camera.zoom` into those fields. For an orthographic camera,
-derive `verticalSpan` from `(top - bottom)` before zoom. Do that mapping in the
-consumer adapter; nanoraster's request contains no Three.js class, matrix, or
-serialization rule.
+For Three.js, map `camera.position`, the controls target, vertical `camera.fov`,
+and `camera.zoom` into those fields. Screen `up` comes from the camera's world
+quaternion, not from `camera.up`, which is the hint `lookAt` solves against and
+holds no roll. For an orthographic camera, derive `verticalSpan` from
+`(top - bottom)` before zoom. Do that mapping in the consumer adapter;
+nanoraster's request contains no Three.js class, matrix, or serialization rule.

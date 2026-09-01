@@ -111,3 +111,23 @@ All notable changes to nanoraster are recorded here.
   instead of returning an empty cap.
 - Build browser artifacts with Rust 1.98, wasm-pack 0.15, and exact-pinned
   Binaryen 132.
+- Export `renderDirectionFromOrbit` and `renderOrbitFromDirection` beside the
+  `RenderOrbit` angle type. The pair converts between a fitted camera's
+  Cartesian `direction` and azimuth and elevation in degrees, resolving its
+  axes from the world the request declares, and each inverts the other exactly.
+  Azimuth is zero on `world.forward` and positive toward the viewer's right;
+  elevation is measured above the world horizontal plane, and at its poles
+  azimuth is reported as zero.
+- Measure the default fitted camera in the declared caller world: 45 degrees of
+  azimuth and 30 degrees of elevation in every world, with the default screen
+  `up` the declared `world.up`. The fixed vector it replaces was those angles
+  only for a +Y-up caller; a +Z-up caller was framed from about 37.8 degrees of
+  elevation instead. Renders in the glTF default world are byte-identical.
+- Raise the section-plane limit from six to eight. `renderImageMaxSections` is
+  `8`, and a request carrying seven or eight planes renders instead of failing
+  validation.
+- Build the WebAssembly render core at full optimization. The size override it
+  carried cost about 6.4 ms of render time; dropping it recovers that time for
+  about 54 KB more brotli-compressed wasm, with byte-identical output at either
+  optimization level. A render-time gate in continuous integration holds the
+  recovered speed.

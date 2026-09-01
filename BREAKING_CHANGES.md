@@ -32,6 +32,21 @@ The package has no compatibility commitments before its first stable release.
   corresponding Cartesian screen-up vector inside `camera: { framing: 'fit',
 ... }`.
 
+- The default fitted camera is measured in the declared caller world rather
+  than fixed to one vector: 45 degrees of azimuth from `world.forward` and 30
+  degrees of elevation above the world horizontal plane, with screen `up` the
+  declared `world.up`. A request that declares a `world` other than the glTF
+  default and omits `camera.direction` therefore renders from a different
+  viewpoint; a +Z-up caller was framed from about 37.8 degrees of elevation.
+  Pass `direction: [0.6123724357, 0.5, 0.6123724357]` to keep the old vector,
+  and re-record byte-locked snapshots of default-camera renders in those
+  worlds. Renders in the glTF default world are unchanged, byte for byte.
+
+  The `renderDirectionFromOrbit` and `renderOrbitFromDirection` exports use the
+  same angles. Their azimuth is zero on `world.forward` and positive toward the
+  viewer's right, which is not the convention of the removed `phi` and `theta`
+  options; the formulas above remain the migration path for those.
+
 - `RenderTimings` changes from `{ parse, setup, views }` to the following
   required shape:
 

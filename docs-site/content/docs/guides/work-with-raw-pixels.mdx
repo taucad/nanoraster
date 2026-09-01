@@ -55,22 +55,28 @@ two buffers when you want a diff image.
 ### 3. Render a turntable as one plan
 
 ```typescript
-import { renderImages } from 'nanoraster';
+import { renderDirectionFromOrbit, renderImages } from 'nanoraster';
 
 const frames = await renderImages(glb, {
   format: 'raw',
   width: 480,
   height: 360,
-  views: Array.from({ length: 36 }, (_, step) => {
-    const angle = ((step * 10 - 180) * Math.PI) / 180;
-    return { id: `f${step}`, camera: { framing: 'fit', direction: [Math.cos(angle), 0.5, Math.sin(angle)] } };
-  }),
+  views: Array.from({ length: 36 }, (_, step) => ({
+    id: `f${step}`,
+    camera: {
+      framing: 'fit',
+      direction: renderDirectionFromOrbit({ azimuth: step * 10, elevation: 25 }),
+    },
+  })),
 });
 
 for (const { file } of frames) encoder.stdin.write(file.bytes);
 ```
 
-One [`renderImages`](../api#renderimages) call uploads the GLB once and
+The turn is around the caller world's up axis, so pass that world as
+[`renderDirectionFromOrbit`](../api#renderdirectionfromorbit)'s second argument
+whenever the request declares one. One
+[`renderImages`](../api#renderimages) call uploads the GLB once and
 pipelines the views, which a loop of single renders cannot. Pipe the frames, in
 order, into a video encoder that reads raw RGBA:
 

@@ -26,7 +26,7 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // API and site ceilings account only for that new public surface.
 // Caller-world coordinates add the axis and world contracts to that API page.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 2_920,
+  'api.mdx': 3_190,
   'guides/choose-visible-geometry.mdx': 340,
   'guides/render-section-views.mdx': 340,
   'guides/format-and-annotate.mdx': 830,
@@ -35,7 +35,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'guides/light-the-subject.mdx': 650,
   'guides/place-the-camera.mdx': 730,
   'guides/render-for-llms.mdx': 500,
-  'guides/render-in-the-browser.mdx': 700,
+  'guides/render-in-the-browser.mdx': 740,
   'guides/render-multiple-views.mdx': 660,
   'guides/reuse-the-renderer.mdx': 650,
   'guides/work-with-raw-pixels.mdx': 730,
@@ -44,7 +44,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'install.mdx': 740,
   'tutorial.mdx': 690,
 };
-const siteCeiling = 12_690;
+const siteCeiling = 13_170;
 
 const pages = globSync('**/*.mdx', { cwd: docsDir })
   .toSorted()

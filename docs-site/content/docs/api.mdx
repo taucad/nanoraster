@@ -299,13 +299,64 @@ export type RenderCamera =
     };
 ```
 
-Defaults are fit direction `[0.6123724357, 0.5, 0.6123724357]`, up `[0, 1, 0]`,
-minimum margin `0.1`, and perspective field of view `45` with zoom `1`.
-`direction` fixes orientation from the subject toward the camera; fitting may
-translate the optical axis to balance the projected geometry. A fixed camera
-requires non-coincident position/target and a non-collinear up vector. Omitted
-clipping derives safe planes from referenced geometry. Explicit range outside
-the referenced subject is tightened without changing visible geometry.
+The default fit camera looks from 45 degrees of azimuth and 30 degrees of
+elevation in the declared world, with `up` the declared `world.up`; in glTF
+world that direction is `[0.6123724357, 0.5, 0.6123724357]` and that up is
+`[0, 1, 0]`. Minimum margin defaults to `0.1`, perspective field of view to
+`45`, and zoom to `1`. `direction` fixes orientation from the subject toward the
+camera; fitting may translate the optical axis to balance the projected
+geometry. A fixed camera requires non-coincident position/target and a
+non-collinear up vector. Omitted clipping derives safe planes from referenced
+geometry. Explicit range outside the referenced subject is tightened without
+changing visible geometry.
+
+### `RenderOrbit`
+
+```typescript
+export type RenderOrbit = {
+  readonly elevation: number;
+  readonly azimuth: number;
+};
+```
+
+A viewing direction as two angles in degrees around the caller world.
+`elevation` is the angle above the world horizontal plane, from `-90` to `90`.
+`azimuth` is the angle in that plane, zero on `world.forward` and positive
+toward the viewer's right.
+
+### `renderDirectionFromOrbit`
+
+```typescript
+export declare const renderDirectionFromOrbit: (orbit: RenderOrbit, world?: RenderWorld) => RenderVector3;
+```
+
+- **Parameters:** orbit angles, and the world they are measured in — the same
+  `world` the request declares, or omitted for the glTF default.
+- **Returns:** the unit `direction` a fitted camera takes.
+- **Throws:** `TypeError` for a non-finite azimuth, an elevation outside
+  `-90` to `90`, or an invalid world.
+
+```typescript
+import { renderDirectionFromOrbit } from 'nanoraster';
+
+const world = { up: '+z', forward: '-y' } as const;
+const direction = renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }, world);
+```
+
+### `renderOrbitFromDirection`
+
+```typescript
+export declare const renderOrbitFromDirection: (direction: RenderVector3, world?: RenderWorld) => RenderOrbit;
+```
+
+- **Parameters:** any finite non-zero direction, and the world it is expressed
+  in. Magnitude is ignored.
+- **Returns:** the orbit angles that reproduce it, exactly inverting
+  [`renderDirectionFromOrbit`](#renderdirectionfromorbit) in the same world.
+  Azimuth comes back above `-180` and up to `180`, and at the poles, elevation
+  `-90` or `90`, it is undefined and reported as `0`.
+- **Throws:** `TypeError` for a zero or non-finite direction, or an invalid
+  world.
 
 ### `RenderImageOptions`
 
@@ -578,7 +629,7 @@ import them rather than restating them, so caller-side checks cannot drift.
 | `renderImageViewIdPattern`            | `/^[\dA-Za-z][\w-]{0,63}$/u`              | identifier syntax           | `id`                        |
 | `renderImageBackgroundPattern`        | `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`   | hexadecimal colour          | `background`                |
 | `renderImageMaxLights`                | `8`                                       | lights per rig              | `lighting.lights`           |
-| `renderImageMaxSections`              | `6`                                       | planes per request          | `sections.planes`           |
+| `renderImageMaxSections`              | `8`                                       | planes per request          | `sections.planes`           |
 | `renderImageLightColorRange`          | `readonly [0, 32]`                        | linear radiance per channel | `lighting.lights[].color`   |
 | `renderImageAmbientRange`             | `readonly [0, 4]`                         | diffuse multiplier          | `lighting.ambient`          |
 | `renderImageExposureRange`            | `readonly [0.01, 16]`                     | linear multiplier           | `lighting.exposure`         |

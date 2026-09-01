@@ -53,7 +53,6 @@ const image = await renderImage(glb, {
   camera: {
     framing: 'fit',
     direction: [1, 1, 1],
-    up: [0, 0, 1],
   },
   lineWidth: 3,
 });

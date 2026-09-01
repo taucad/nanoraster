@@ -255,7 +255,7 @@ describe('static agent documentation', () => {
     }
 
     const apiHtml = resolve(output, 'docs/api.html');
-    expect(statSync(apiHtml).size).toBeLessThan(750_000);
+    expect(statSync(apiHtml).size).toBeLessThan(800_000);
 
     const optionsHtml = readFileSync(apiHtml, 'utf8');
     expect(optionsHtml).toContain('aria-label="RenderImageOptions properties"');

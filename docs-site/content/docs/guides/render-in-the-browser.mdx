@@ -114,15 +114,21 @@ of readback and encode competing with input.
 
 **Capturing a live viewer's camera.** Freeze the viewer's numeric pose before
 rendering. Keep the pose in the same caller world passed to nanoraster; never
-pre-convert it to GLB space. Match the viewer's output aspect.
+pre-convert it to GLB space. Match the viewer's output aspect. `up` is screen
+up; a three.js `camera.up` is not, being the hint `lookAt` solves against, so
+derive it from the camera's world quaternion or a rolled view arrives upright.
 
 ```typescript
+const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(
+  viewer.camera.getWorldQuaternion(new THREE.Quaternion()),
+);
+
 const world = { up: '+z', forward: '-y', unit: 'meter' } as const;
 const camera = {
   framing: 'fixed',
   position: [eye.x, eye.y, eye.z],
   target: [target.x, target.y, target.z],
-  up: [viewer.up.x, viewer.up.y, viewer.up.z],
+  up: [screenUp.x, screenUp.y, screenUp.z],
   projection: {
     kind: 'perspective',
     verticalFieldOfView: viewer.fov,

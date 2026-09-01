@@ -15,6 +15,10 @@ vertical and preserves roll. Both are Cartesian vectors in the declared caller
 world; their magnitudes are ignored, and they must not be collinear. Fitting may
 translate the camera and optical target together without changing orientation.
 
+Omit `up` on a fit camera and it becomes the declared `world.up`. Supply it to
+roll the camera, or to break collinearity when `direction` runs along that same
+axis, as a plan view does.
+
 <RenderDemo>
 
 ```typescript
@@ -26,7 +30,6 @@ const image = await renderImage(glb, {
   camera: {
     framing: 'fit',
     direction: [0.6123724357, -0.6123724357, 0.5],
-    up: [0, 0, 1],
   },
 });
 ```
@@ -34,27 +37,37 @@ const image = await renderImage(glb, {
 </RenderDemo>
 
 This worked request authors a three-quarter view in Z-up metres; nanoraster
-converts it once to the GLB frame. The live φ/θ controls derive the Cartesian
-`direction` shown in the copyable code. Expand **advanced · direction XYZ** for
-raw vector entry.
+converts it once to the GLB frame. The live azimuth and elevation controls
+derive the Cartesian `direction` shown in the copyable code. Expand
+**advanced · direction XYZ** for raw vector entry.
 
 ## Turn angles into directions
 
-For a default +Y-up, +Z-forward caller world, φ is the polar angle from up and
-θ is azimuth. This helper preserves the former angle convention for turntables:
+[`renderDirectionFromOrbit`](../api#renderdirectionfromorbit) converts orbit
+angles to the Cartesian `direction` a fitted camera takes, and
+[`renderOrbitFromDirection`](../api#renderorbitfromdirection) inverts it. Both
+resolve their axes from the world you pass, so pass the same `world` the request
+declares:
 
 ```typescript
-import type { RenderVector3 } from 'nanoraster';
+import { renderDirectionFromOrbit, renderImage } from 'nanoraster';
 
-const directionFromAngles = (phiDegrees: number, thetaDegrees: number): RenderVector3 => {
-  const phi = (phiDegrees * Math.PI) / 180;
-  const theta = (thetaDegrees * Math.PI) / 180;
-  return [Math.sin(phi) * Math.cos(theta), Math.cos(phi), -Math.sin(phi) * Math.sin(theta)];
-};
+const world = { up: '+z', forward: '-y', unit: 'meter' } as const;
+
+const image = await renderImage(glb, {
+  format: 'webp',
+  world,
+  camera: {
+    framing: 'fit',
+    direction: renderDirectionFromOrbit({ azimuth: 45, elevation: 30 }, world),
+  },
+});
 ```
 
-Pass each result as a fitted camera's `direction`; the renderer API remains
-Cartesian.
+Azimuth is the angle in the world horizontal plane, zero on `world.forward` and
+positive toward the viewer's right; elevation is the angle above it. This
+convention is the pair's own, not the one the removed `phi`/`theta` options
+carried. The wire stays Cartesian: a turntable is a sequence of azimuths.
 
 ## Choose the fitted projection
 
