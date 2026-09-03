@@ -1,3 +1,87 @@
+## 0.5.0 (2026-09-03)
+
+### 🚀 Features
+
+- BREAKING: The default fitted camera is now measured in the declared caller ([#61](https://github.com/taucad/nanoraster/pull/61))
+  world — 45° azimuth from `world.forward` toward the caller's right and 30°
+  elevation above the horizontal plane, with `up` defaulting to `world.up`.
+  Renders that declared a non-default `world` and omitted `camera.direction`
+  change framing (0.4.x framed a +Z-up caller at ~37.8° elevation); renders in
+  the default world stay byte-identical. To keep the 0.4.x framing, pass
+  `direction: [0.6123724357, 0.5, 0.6123724357]` explicitly.
+
+  Resolve a camera `up` that is collinear with its view direction against the
+  declared caller world instead of rejecting the request. Such a pair leaves
+  screen-up undefined — `cross(up, direction)` is zero — so screen-up takes the
+  first declared world axis that names a roll: `world.forward`, or `world.up`
+  for a view running along `world.forward`.
+
+  A fitted camera at ±90° of elevation renders without spelling an `up` out, and
+  so does a fixed camera whose `up` runs along its own view direction. Only
+  requests that raised
+  `direction and up must not be collinear` change: every request that renders
+  keeps its bytes. Non-finite or zero-length vectors, and a `position` equal to
+  its `target`, are rejected as before.
+
+  Add `directionFromOrbit` and `orbitFromDirection` with the
+  `RenderOrbit` type: world-aware conversion between orbit angles and Cartesian
+  `direction`, azimuth zero on `world.forward`. This convention is the pair's
+  own, not the removed `phi`/`theta` one.
+
+  Raise the section-plane limit from six to eight simultaneous planes.
+
+  Build the wasm artifact at full optimization again: the hero render drops
+  from ~13 ms to ~7 ms (lossless WebP encode 2.6x faster) for ~54 KB more
+  brotli transfer, with byte-identical output. A CI encode-speed ratchet now
+  guards the regression class that shipped the slowdown.
+
+- BREAKING: Replace top-level `phi`, `theta`, `up`, `projection`, and `margin` ([#55](https://github.com/taucad/nanoraster/pull/55))
+  with a Cartesian `camera` whose `framing` is `fit` or `fixed`. Fitted cameras
+  take `direction` and `up`; fixed cameras take `position`, `target`, and `up`
+  with an explicit perspective or orthographic projection.
+
+  To preserve an old `(phi, theta, up)` fitted view, convert the angles from
+  degrees to `p` and `t` radians and use the matching `direction`:
+
+  - X-up: `[cos(p), sin(p) * cos(t), sin(p) * sin(t)]`
+  - Y-up: `[sin(p) * cos(t), cos(p), -sin(p) * sin(t)]`
+  - Z-up: `[sin(p) * cos(t), sin(p) * sin(t), cos(p)]`
+
+  Use the corresponding positive unit axis as camera `up`. At or near a pole
+  (`abs(dot(direction, up)) >= 0.999`), use positive Z for legacy Y-up and
+  positive Y for legacy X-up or Z-up. Batch views now carry an optional complete
+  `camera`.
+
+  `lineWidth` is public, measured in output pixels, and defaults to a flat `3`
+  at every image size rather than scaling with image height.
+
+- BREAKING: Add a shared `world` declaration for camera, section, world-light, ([#56](https://github.com/taucad/nanoraster/pull/56))
+  axes, and scale-bar values. Spatial request values are interpreted in that
+  caller coordinate system; omitting `world` preserves glTF +Y-up, +Z-forward,
+  metre semantics. Submitted GLB bytes are not rewritten.
+
+  BREAKING: Expand `RenderTimings` from `{ parse, setup, views }` to stage and
+  resource evidence: `parse`, `setup`, `capBuild`, `upload`,
+  `peakReadbackBytes`, `glbParses`, `adapterDeviceRequests`, `pipelineSets`,
+  `presentationBuilds`, `sceneUploads`, `targetAllocations`, and `views`.
+  `setup` now covers renderer acquisition plus presentation and upload work.
+
+  Also add renderer-neutral surface and authored-line switches, exact glTF
+  primitive selection, and deterministic multi-plane section views with striped
+  caps.
+
+- Consume validated `EXT_mesh_manifold` topology for deterministic section caps. ([#61](https://github.com/taucad/nanoraster/pull/61))
+
+### 🩹 Fixes
+
+- Build browser artifacts with Rust 1.98, wasm-pack 0.15, and exact-pinned Binaryen 132. ([#58](https://github.com/taucad/nanoraster/pull/58))
+- Close valid section cuts through paired halfedges, including Racing Drone symmetry planes. ([#60](https://github.com/taucad/nanoraster/pull/60))
+
+### ❤️ Thank You
+
+- OpenAI Codex @oai-codex
+- Richard Fontein @rifont
+
 ## 0.4.1 (2026-08-23)
 
 ### 🩹 Fixes
