@@ -36,8 +36,10 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // `world.up` along forward. `api.mdx` and `place-the-camera.mdx` each state it
 // in one sentence, in place of the shorter clause that named only the
 // constraint. `frame-the-model.mdx` states it and stays well inside its row.
+// The standalone RGBA encoder adds its callable contract and four-field
+// options table to `api.mdx`; no separate guide is needed.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 3_193,
+  'api.mdx': 3_252,
   'guides/choose-visible-geometry.mdx': 340,
   'guides/render-section-views.mdx': 360,
   'guides/format-and-annotate.mdx': 830,
@@ -55,7 +57,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'install.mdx': 740,
   'tutorial.mdx': 696,
 };
-const siteCeiling = 13_264;
+const siteCeiling = 13_329;
 
 const pages = globSync('**/*.mdx', { cwd: docsDir })
   .toSorted()

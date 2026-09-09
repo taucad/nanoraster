@@ -150,15 +150,13 @@ pub fn encode_rgba_webp(
     };
     validate_rendered(&rendered)?;
     if premultiplied {
-        for pixel in rendered.rgba.chunks_exact_mut(4) {
+        for pixel in rendered.rgba.as_chunks_mut::<4>().0 {
             let alpha = u16::from(pixel[3]);
-            if alpha == 0 {
-                pixel[..3].fill(0);
-            } else {
-                for channel in &mut pixel[..3] {
-                    let straight = (u16::from(*channel) * 255 + alpha / 2) / alpha;
-                    *channel = straight.min(255) as u8;
-                }
+            for channel in &mut pixel[..3] {
+                let straight = (u16::from(*channel) * 255 + alpha / 2)
+                    .checked_div(alpha)
+                    .unwrap_or(0);
+                *channel = straight.min(255) as u8;
             }
         }
     }

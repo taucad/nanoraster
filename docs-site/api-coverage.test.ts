@@ -36,6 +36,7 @@ const tableNames = [
   'RenderLightingRig',
   'RenderLight',
   'CreateRendererOptions',
+  'EncodeRgbaWebpOptions',
   'AdapterInfo',
   'RenderTimings',
   'RenderViewTimings',
@@ -83,6 +84,7 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
   RenderLightingRig: ['lights', 'ambient', 'environment', 'space', 'exposure'],
   RenderLight: ['direction', 'color'],
   CreateRendererOptions: ['powerPreference'],
+  EncodeRgbaWebpOptions: ['width', 'height', 'quality', 'alpha'],
   AdapterInfo: ['backend', 'name', 'deviceType'],
   RenderTimings: [
     'parse',

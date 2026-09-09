@@ -125,7 +125,9 @@ const sizes = {
 // (`world.forward`, or `world.up` for a view along it) in place of the parse
 // error that rejected the pair. Two comparisons and a rotate of the declared
 // basis; the compressed figures land inside their 0.5% compressor allowance.
-const ceilings = { raw: 1_516_438, gzip9: 569_364, brotli11: 431_345 };
+// Standalone RGBA WebP encoder: 1,518,148 raw — +1,710 for exposing the
+// existing WebP codec without renderer initialization.
+const ceilings = { raw: 1_518_148, gzip9: 569_364, brotli11: 431_345 };
 
 // `raw` is the artifact and is byte-reproducible, so it is enforced exactly.
 // The compressed figures are not properties of the artifact alone: they are

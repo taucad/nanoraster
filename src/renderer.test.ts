@@ -91,7 +91,8 @@ describe('renderer binding selection', () => {
       encodeRgbaWebp: vi.fn(async () => new Uint8Array([33])),
     };
     const load = vi.fn(async () => native);
-    const { createRendererRaw, describeAdapterRaw, installNativeBackend } = await import('#renderer.js');
+    const { createRendererRaw, describeAdapterRaw, encodeRgbaWebpRaw, installNativeBackend } =
+      await import('#renderer.js');
     installNativeBackend(load);
     const glb = new Uint8Array([9]);
 
@@ -99,6 +100,12 @@ describe('renderer binding selection', () => {
       '{"backend":"metal","name":"Test","deviceType":"integrated-gpu"}',
     );
     expect(native.describeAdapter).toHaveBeenCalledWith('{"powerPreference":"low-power"}');
+
+    const rgba = new Uint8Array([64, 32, 16, 128]);
+    await expect(
+      encodeRgbaWebpRaw(rgba, { width: 1, height: 1, quality: 100, premultiplied: true }),
+    ).resolves.toEqual(new Uint8Array([33]));
+    expect(native.encodeRgbaWebp).toHaveBeenCalledWith(rgba, 1, 1, 100, true);
 
     const handle = await createRendererRaw('{"powerPreference":"low-power"}');
     expect(native.createRenderer).toHaveBeenCalledWith('{"powerPreference":"low-power"}');
