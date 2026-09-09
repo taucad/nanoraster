@@ -201,6 +201,19 @@ pub async fn render_images(glb: Vec<u8>, options_json: String) -> Result<JsValue
     images_result(images, timings)
 }
 
+/// Encode RGBA pixels as WebP without creating a GPU renderer.
+#[wasm_bindgen]
+pub async fn encode_rgba_webp(
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    quality: u8,
+    premultiplied: bool,
+) -> Result<Vec<u8>, JsError> {
+    render_core::encode_rgba_webp(rgba, width, height, quality, premultiplied)
+        .map_err(|error| JsError::new(&error.to_string()))
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const FREE_FUNCTION_TYPES: &str = r#"
 /** Render ordered identified views through one batch-scoped plan call. */

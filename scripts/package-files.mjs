@@ -6,8 +6,9 @@ import path from 'node:path';
 // `format: 'raw'` folded the raw-pixels module into the image paths.
 // 2026-08-22: +4 for the Node entry point behind the `node` export condition
 // (index.node.mjs, its declarations, native-backend.mjs) and the generated
-// NAPI-RS loader it imports (native/index.js).
-const PACKAGE_FILE_COUNT_CEILING = 34;
+// NAPI-RS loader it imports (native/index.js). 2026-09-06: +2 for the public
+// GPU-independent RGBA-to-WebP encoder module and its declarations.
+const PACKAGE_FILE_COUNT_CEILING = 36;
 
 export const PACKAGE_FILES = [
   'BREAKING_CHANGES.md',
@@ -21,6 +22,8 @@ export const PACKAGE_FILES = [
   'dist/create-renderer.mjs',
   'dist/describe-adapter.d.mts',
   'dist/describe-adapter.mjs',
+  'dist/encode-rgba.d.mts',
+  'dist/encode-rgba.mjs',
   'dist/image-file.d.mts',
   'dist/image-file.mjs',
   'dist/index.d.mts',

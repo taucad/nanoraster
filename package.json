@@ -49,6 +49,11 @@
       },
       "default": "./dist/index.mjs"
     },
+    "./options": {
+      "types": "./dist/options.d.mts",
+      "import": "./dist/options.mjs",
+      "default": "./dist/options.mjs"
+    },
     "./wasm": {
       "default": "./dist/wasm/render_wasm_bg.wasm"
     },

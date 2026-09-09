@@ -9,6 +9,8 @@
  */
 
 export { renderImage } from '#render-image.js';
+export { encodeRgbaWebp } from '#encode-rgba.js';
+export type { EncodeRgbaWebpOptions } from '#encode-rgba.js';
 export { renderImages } from '#render-images.js';
 export { createRenderer } from '#create-renderer.js';
 export type { CreateRendererOptions, Renderer } from '#create-renderer.js';

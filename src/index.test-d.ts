@@ -1,7 +1,7 @@
 import { expectTypeOf } from 'vitest';
 import * as renderModule from '#index.js';
 
-const { renderImage, renderImages } = renderModule;
+const { encodeRgbaWebp, renderImage, renderImages } = renderModule;
 // `as const satisfies` replaces the deleted option-identity helpers: it keeps
 // literal view IDs and formats while still rejecting misspelled or misplaced
 // keys, and it costs no runtime call.
@@ -17,6 +17,7 @@ expectTypeOf<keyof RenderModule>().toEqualTypeOf<
   | 'RenderError'
   | 'createRenderer'
   | 'describeAdapter'
+  | 'encodeRgbaWebp'
   | 'imageMimeTypes'
   | 'directionFromOrbit'
   | 'renderImage'
@@ -41,6 +42,12 @@ expectTypeOf<keyof RenderModule>().toEqualTypeOf<
 >();
 
 const glb = new Uint8Array([1, 2, 3]);
+void encodeRgbaWebp(new Uint8Array([128, 64, 32, 128]), {
+  width: 1,
+  height: 1,
+  quality: 1,
+  alpha: 'straight',
+});
 
 const vector: renderModule.RenderVector3 = [1, 2, 3];
 expectTypeOf(vector).toEqualTypeOf<readonly [number, number, number]>();

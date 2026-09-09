@@ -32,7 +32,11 @@ describe('native backend installation', () => {
 
     expect(usesNativeBackend()).toBe(false);
 
-    installNativeBackend(async () => ({ createRenderer: vi.fn(), describeAdapter: vi.fn() }));
+    installNativeBackend(async () => ({
+      createRenderer: vi.fn(),
+      describeAdapter: vi.fn(),
+      encodeRgbaWebp: vi.fn(),
+    }));
     expect(usesNativeBackend()).toBe(true);
 
     exposeWebGpu();
@@ -54,6 +58,26 @@ describe('native backend installation', () => {
 });
 
 describe('renderer binding selection', () => {
+  it('should encode through WASM without creating a GPU renderer', async () => {
+    exposeWebGpu();
+    const initialize = vi.fn(() => Promise.resolve(undefined));
+    const create = vi.fn();
+    const encode = vi.fn(async () => new Uint8Array([82, 73, 70, 70]));
+    vi.doMock('./wasm/render_wasm.js', () => ({
+      default: initialize,
+      Renderer: { create },
+      encode_rgba_webp: encode,
+    }));
+    const { encodeRgbaWebpRaw } = await import('#renderer.js');
+    const rgba = new Uint8Array([64, 32, 16, 128]);
+
+    await expect(
+      encodeRgbaWebpRaw(rgba, { width: 1, height: 1, quality: 100, premultiplied: true }),
+    ).resolves.toEqual(new Uint8Array([82, 73, 70, 70]));
+    expect(encode).toHaveBeenCalledWith(rgba, 1, 1, 100, true);
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('should load and cache the installed addon in Node', async () => {
     const nativeRenderer = {
       renderImage: vi.fn(() => Promise.resolve(new Uint8Array([21]))),
@@ -64,6 +88,7 @@ describe('renderer binding selection', () => {
     const native = {
       createRenderer: vi.fn(() => Promise.resolve(nativeRenderer)),
       describeAdapter: vi.fn(async () => '{"backend":"metal","name":"Test","deviceType":"integrated-gpu"}'),
+      encodeRgbaWebp: vi.fn(async () => new Uint8Array([33])),
     };
     const load = vi.fn(async () => native);
     const { createRendererRaw, describeAdapterRaw, installNativeBackend } = await import('#renderer.js');
@@ -102,12 +127,17 @@ describe('renderer binding selection', () => {
     vi.doMock('./wasm/render_wasm.js', () => ({
       default: initialize,
       Renderer: { create },
+      encode_rgba_webp: vi.fn(async () => new Uint8Array([33])),
     }));
     const { createRendererRaw, installNativeBackend, renderManyRaw, renderRaw, usesNativeBackend } =
       await import('#renderer.js');
     // An installed addon loses to `navigator.gpu`, so a WebGPU-capable Node
     // runtime keeps the same artifact a browser gets.
-    const load = vi.fn(async () => ({ createRenderer: vi.fn(), describeAdapter: vi.fn() }));
+    const load = vi.fn(async () => ({
+      createRenderer: vi.fn(),
+      describeAdapter: vi.fn(),
+      encodeRgbaWebp: vi.fn(),
+    }));
     installNativeBackend(load);
     const glb = new Uint8Array([9]);
 
@@ -159,6 +189,7 @@ describe('renderer binding selection', () => {
     const native = {
       createRenderer: vi.fn(() => Promise.resolve(nativeRenderer)),
       describeAdapter: vi.fn(async () => 'Metal / Test (IntegratedGpu)'),
+      encodeRgbaWebp: vi.fn(),
     };
     const { installNativeBackend, renderManyRaw, renderRaw } = await import('#renderer.js');
     installNativeBackend(async () => native);
@@ -196,7 +227,7 @@ describe('renderer binding selection', () => {
       .mockRejectedValueOnce(new Error('gpu: request_device failed'))
       .mockResolvedValueOnce(nativeRenderer);
     const { installNativeBackend, renderRaw } = await import('#renderer.js');
-    installNativeBackend(async () => ({ createRenderer, describeAdapter: vi.fn() }));
+    installNativeBackend(async () => ({ createRenderer, describeAdapter: vi.fn(), encodeRgbaWebp: vi.fn() }));
     const glb = new Uint8Array([9]);
 
     await expect(renderRaw(glb, '{}')).rejects.toThrow('gpu: request_device failed');

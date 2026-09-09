@@ -44,6 +44,7 @@ type WasmModule = {
   Renderer: {
     create: (optionsJson?: string) => Promise<WasmRenderer>;
   };
+  encode_rgba_webp: (...args: EncodeRgbaWebpBindingArguments) => Promise<Uint8Array<ArrayBuffer>>;
 };
 
 type NapiImagesResult = {
@@ -65,6 +66,22 @@ type NapiRenderer = {
 export type NapiModule = {
   createRenderer: (optionsJson?: string) => Promise<NapiRenderer>;
   describeAdapter: (optionsJson?: string) => Promise<string | null>;
+  encodeRgbaWebp: (...args: EncodeRgbaWebpBindingArguments) => Promise<Uint8Array<ArrayBuffer>>;
+};
+
+type EncodeRgbaWebpBindingArguments = readonly [
+  rgba: Uint8Array<ArrayBuffer>,
+  width: number,
+  height: number,
+  quality: number,
+  premultiplied: boolean,
+];
+
+type EncodeRgbaWebpRawOptions = {
+  readonly width: number;
+  readonly height: number;
+  readonly quality: number;
+  readonly premultiplied: boolean;
 };
 
 /** Loads the addon the `node` export condition resolves. @internal */
@@ -73,6 +90,16 @@ export type NativeAddonLoader = () => Promise<NapiModule>;
 let nativeAddon: NativeAddonLoader | undefined;
 let cachedBindings: Promise<RendererBindings> | undefined;
 let cachedNative: Promise<NapiModule> | undefined;
+let cachedWasm: Promise<WasmModule> | undefined;
+
+const wasmModule = async (): Promise<WasmModule> => {
+  cachedWasm ??= (async () => {
+    const wasm = (await import('./wasm/render_wasm.js')) as unknown as WasmModule;
+    await wasm.default({ module_or_path: new URL('wasm/render_wasm_bg.wasm', import.meta.url) });
+    return wasm;
+  })();
+  return cachedWasm;
+};
 
 /**
  * Register the addon loader the Node entry point owns. The universal entry
@@ -104,8 +131,7 @@ const normalizeImagesResult = (result: {
 });
 
 const loadWasmBindings = async (): Promise<RendererBindings> => {
-  const wasm = (await import('./wasm/render_wasm.js')) as unknown as WasmModule;
-  await wasm.default({ module_or_path: new URL('wasm/render_wasm_bg.wasm', import.meta.url) });
+  const wasm = await wasmModule();
   return {
     createRenderer: async (optionsJson) => {
       const renderer = await wasm.Renderer.create(optionsJson);
@@ -213,3 +239,24 @@ export const createRendererRaw = async (optionsJson: string | undefined): Promis
  */
 export const describeAdapterRaw = async (optionsJson: string | undefined): Promise<string | null> =>
   (await nativeModule()).describeAdapter(optionsJson);
+
+/** GPU-independent RGBA-to-WebP binding dispatch. @internal */
+export const encodeRgbaWebpRaw = async (
+  rgba: Uint8Array<ArrayBuffer>,
+  options: EncodeRgbaWebpRawOptions,
+): Promise<Uint8Array<ArrayBuffer>> =>
+  usesNativeBackend()
+    ? (await nativeModule()).encodeRgbaWebp(
+        rgba,
+        options.width,
+        options.height,
+        options.quality,
+        options.premultiplied,
+      )
+    : (await wasmModule()).encode_rgba_webp(
+        rgba,
+        options.width,
+        options.height,
+        options.quality,
+        options.premultiplied,
+      );

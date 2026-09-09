@@ -22,7 +22,7 @@ use glb::parse_glb;
 
 #[cfg(feature = "bench")]
 pub use bench::{bench_encodes, bench_fixture_encodes, bench_multi_view, codec_conformance};
-pub use encode::{ImageFormat, encode, encode_jpeg, encode_png, encode_webp};
+pub use encode::{ImageFormat, encode, encode_jpeg, encode_png, encode_rgba_webp, encode_webp};
 pub use options::{
     CameraRequest, CreateRendererRequest, LightRequest, LightingRequest, LightingRigRequest,
     RenderImagesRequest, RenderRequest, RenderView, WorldRequest,

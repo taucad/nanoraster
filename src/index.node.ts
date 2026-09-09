@@ -10,6 +10,7 @@
 import {
   createRenderer as createRendererUniversal,
   describeAdapter as describeAdapterUniversal,
+  encodeRgbaWebp as encodeRgbaWebpUniversal,
   renderImage as renderImageUniversal,
   renderImages as renderImagesUniversal,
 } from '#index.js';
@@ -36,5 +37,8 @@ export const createRenderer = withNativeAddon(createRendererUniversal);
 
 /** Describe the adapter the addon would bind on this host. */
 export const describeAdapter = withNativeAddon(describeAdapterUniversal);
+
+/** Encode RGBA pixels as WebP through the addon, without creating a renderer. */
+export const encodeRgbaWebp = withNativeAddon(encodeRgbaWebpUniversal);
 
 export * from '#index.js';

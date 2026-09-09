@@ -126,6 +126,45 @@ pub fn encode_webp(rendered: &Rendered, quality: u8) -> Result<Vec<u8>, RenderEr
     Ok(out)
 }
 
+/// Encode caller-owned RGBA pixels as WebP without initializing a renderer.
+///
+/// Premultiplied input is converted to the straight-alpha representation the
+/// WebP encoder consumes. Validation happens before conversion so malformed
+/// buffers never enter the pixel loop.
+pub fn encode_rgba_webp(
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    quality: u8,
+    premultiplied: bool,
+) -> Result<Vec<u8>, RenderError> {
+    if quality > 100 {
+        return Err(RenderError::Encode(format!(
+            "WebP quality {quality} is outside 0..=100"
+        )));
+    }
+    let mut rendered = Rendered {
+        rgba,
+        width,
+        height,
+    };
+    validate_rendered(&rendered)?;
+    if premultiplied {
+        for pixel in rendered.rgba.chunks_exact_mut(4) {
+            let alpha = u16::from(pixel[3]);
+            if alpha == 0 {
+                pixel[..3].fill(0);
+            } else {
+                for channel in &mut pixel[..3] {
+                    let straight = (u16::from(*channel) * 255 + alpha / 2) / alpha;
+                    *channel = straight.min(255) as u8;
+                }
+            }
+        }
+    }
+    encode_webp(&rendered, quality)
+}
+
 fn write_jpeg(
     rendered: &Rendered,
     quality: u8,
@@ -201,6 +240,24 @@ mod tests {
             width,
             height,
         }
+    }
+
+    #[test]
+    fn rgba_webp_unpremultiplies_partial_alpha() {
+        let bytes = encode_rgba_webp(vec![64, 32, 16, 128, 0, 0, 0, 0], 2, 1, 100, true)
+            .expect("encode premultiplied pixels");
+        let mut decoder =
+            image_webp::WebPDecoder::new(std::io::Cursor::new(bytes)).expect("decoder");
+        let mut pixels = vec![0u8; decoder.output_buffer_size().expect("size")];
+        decoder.read_image(&mut pixels).expect("decode");
+        assert_eq!(pixels, vec![128, 64, 32, 128, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn rgba_webp_rejects_invalid_input() {
+        assert!(encode_rgba_webp(vec![0; 3], 1, 1, 100, false).is_err());
+        assert!(encode_rgba_webp(vec![], 0, 1, 100, false).is_err());
+        assert!(encode_rgba_webp(vec![0; 4], 1, 1, 101, false).is_err());
     }
 
     /// A larger high-entropy roundtrip: dense residuals stress the arithmetic
