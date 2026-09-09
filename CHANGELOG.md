@@ -1,3 +1,13 @@
+## 0.5.1 (2026-09-09)
+
+### 🩹 Fixes
+
+- Restore the standalone RGBA-to-WebP encoder and backend-free options entry point expected by 0.5.0 consumers. ([#77](https://github.com/taucad/nanoraster/pull/77))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.5.0 (2026-09-09)
 
 ### 🚀 Features
