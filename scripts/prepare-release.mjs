@@ -32,7 +32,7 @@ const THANK_YOU = '### ❤️ Thank You';
  * itself, Dependabot, and the coding assistants whose `Co-Authored-By` trailer
  * nx reads as an author.
  */
-const NON_HUMAN_AUTHOR = /^- (?:claude\b|.*\[bot\])/iu;
+const NON_HUMAN_AUTHOR = /^- (?:claude\b|openai codex\b|.*\[bot\])/iu;
 
 /**
  * Drop non-human authors from the newest changelog entry's Thank You list.
@@ -151,6 +151,7 @@ const prepare = async ({ dryRun, requestedVersion }) => {
     version,
   });
   writeFileSync(CHANGELOG_PATH, withoutNonHumanAuthors(readFileSync(CHANGELOG_PATH, 'utf8')));
+  execFileSync('pnpm', ['exec', 'oxfmt', '--write', fileURLToPath(CHANGELOG_PATH)]);
   assert(packageVersion() === version, `release preparation did not leave ${PROJECT} at ${version}`);
   return version;
 };
