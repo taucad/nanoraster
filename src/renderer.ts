@@ -97,7 +97,11 @@ const wasmModule = async (): Promise<WasmModule> => {
     const wasm = (await import('./wasm/render_wasm.js')) as unknown as WasmModule;
     await wasm.default({ module_or_path: new URL('wasm/render_wasm_bg.wasm', import.meta.url) });
     return wasm;
-  })();
+  })().catch((error: unknown) => {
+    cachedWasm = undefined;
+    cachedBindings = undefined;
+    throw error;
+  });
   return cachedWasm;
 };
 

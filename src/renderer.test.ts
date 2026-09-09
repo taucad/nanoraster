@@ -78,6 +78,41 @@ describe('renderer binding selection', () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it('should retry WASM initialization for both encoder and renderer calls', async () => {
+    exposeWebGpu();
+    const initialize = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('failed to fetch wasm'))
+      .mockResolvedValue(undefined);
+    const renderer = {
+      render_image: vi.fn(),
+      render_images: vi.fn(),
+      trim_targets: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const create = vi.fn(async () => renderer);
+    const encode = vi.fn(async () => new Uint8Array([82, 73, 70, 70]));
+    vi.doMock('./wasm/render_wasm.js', () => ({
+      default: initialize,
+      Renderer: { create },
+      encode_rgba_webp: encode,
+    }));
+    const { createRendererRaw, encodeRgbaWebpRaw } = await import('#renderer.js');
+
+    await expect(createRendererRaw(undefined)).rejects.toThrow('failed to fetch wasm');
+    await expect(
+      encodeRgbaWebpRaw(new Uint8Array(4), {
+        width: 1,
+        height: 1,
+        quality: 100,
+        premultiplied: false,
+      }),
+    ).resolves.toEqual(new Uint8Array([82, 73, 70, 70]));
+    await expect(createRendererRaw(undefined)).resolves.toBeDefined();
+    expect(initialize).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledOnce();
+  });
+
   it('should load and cache the installed addon in Node', async () => {
     const nativeRenderer = {
       renderImage: vi.fn(() => Promise.resolve(new Uint8Array([21]))),

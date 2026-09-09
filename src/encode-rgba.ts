@@ -1,6 +1,7 @@
 import { RenderError } from '#render-error.js';
 import { encodeRgbaWebpRaw } from '#renderer.js';
 
+/** Options for encoding caller-owned RGBA8 pixels as WebP. */
 export type EncodeRgbaWebpOptions = {
   /** Output width in pixels. */
   readonly width: number;
