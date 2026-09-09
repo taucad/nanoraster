@@ -354,6 +354,28 @@ describe('CI workflow policy', () => {
   });
 
   describe('publication', () => {
+    it('should publish one complete preview graph only for trusted pull requests', () => {
+      const body = job('preview');
+      assert(
+        body.includes(
+          "if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository",
+        ),
+      );
+      for (const dependency of ['preflight', 'assemble', 'smoke', 'browser', 'security']) {
+        assert(needsOf('preview').includes(dependency), `preview must need ${dependency}`);
+      }
+      assert(
+        body.includes('node scripts/pack-test-tarballs.mjs --extract-from tarballs --out preview-packages'),
+      );
+      assert.equal(occurrences(body, 'pnpm exec pkg-pr-new publish'), 1);
+      for (const flag of ['--previewVersion', '--comment=update', '--commentWithSha', '--no-template']) {
+        assert(body.includes(flag), `preview must use ${flag}`);
+      }
+      assert(body.includes("'./preview-packages/*'"));
+      assert.equal(packageJson.devDependencies['pkg-pr-new'], '0.0.88');
+      assert(!body.includes('id-token: write'));
+    });
+
     it('should grant OIDC only to the publish job', () => {
       assert.equal(occurrences(workflow, 'id-token: write'), 1);
       assert(job('publish').includes('id-token: write'));
@@ -502,16 +524,16 @@ describe('CI workflow policy', () => {
       const consumers = [...jobs].filter(([, body]) => body.includes('download-verified-artifact'));
       assert.deepEqual(
         consumers.map(([name]) => name).sort((left, right) => left.localeCompare(right)),
-        ['assemble', 'browser', 'publish', 'registry-verify', 'smoke'],
+        ['assemble', 'browser', 'preview', 'publish', 'registry-verify', 'smoke'],
         'every artifact-consuming job must use the verified download',
       );
-      assert.equal(occurrences(workflow, 'uses: ./.github/actions/download-verified-artifact'), 6);
+      assert.equal(occurrences(workflow, 'uses: ./.github/actions/download-verified-artifact'), 7);
     });
 
     it('should name the file each frozen artifact must land', () => {
       assert.equal(
         occurrences(workflow, 'expect: test-tarballs.json'),
-        3,
+        4,
         'every test-tarballs consumer must demand the manifest',
       );
       assert(
@@ -667,6 +689,7 @@ describe('CI workflow policy', () => {
         assert(body.includes(`'${required}'`), `ci-gate must require ${required}`);
       }
       assert(body.includes("'publish', 'registry-verify', 'registry-smoke', 'registry-release'"));
+      assert(body.includes("if (process.env.PREVIEW === 'true') required.push('preview')"));
       assert(body.includes("['success', 'skipped'].includes(needs.benchmark?.result)"));
     });
   });

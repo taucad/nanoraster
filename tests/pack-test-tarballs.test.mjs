@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
 import { readNapiTargets } from '../scripts/lib/napi-targets.mjs';
-import { npmPack, packTestTarballs } from '../scripts/pack-test-tarballs.mjs';
+import { extractPreviewPackages, npmPack, packTestTarballs } from '../scripts/pack-test-tarballs.mjs';
 
 const { manifest, packages } = readNapiTargets(new URL('../package.json', import.meta.url));
 const written = [];
@@ -128,5 +128,48 @@ describe('frozen test tarball manifest', () => {
     const bytes = readFileSync(join(destination, packed.filename));
     assert.deepEqual([...bytes.subarray(0, 2)], [0x1f, 0x8b], 'the packed file is a gzip stream');
     assert(bytes.length > 2);
+  });
+
+  it('should expand only the packages named by the frozen manifest', () => {
+    const source = temporaryDirectory('nanoraster-preview-source-');
+    const destination = temporaryDirectory('nanoraster-preview-parent-');
+    const output = join(destination, 'packages');
+    const packagesToPack = [
+      { name: 'nanoraster', version: '9.9.9' },
+      { name: 'nanoraster-darwin-arm64', version: '9.9.9' },
+    ];
+    const entries = {};
+
+    for (const manifest of packagesToPack) {
+      const directory = join(source, manifest.name);
+      mkdirSync(directory);
+      writeFileSync(join(directory, 'package.json'), `${JSON.stringify(manifest)}\n`);
+      writeFileSync(join(directory, 'README.md'), `${manifest.name} preview\n`);
+      const packed = npmPack(directory, source);
+      entries[manifest.name] = packed;
+    }
+    writeFileSync(join(source, 'test-tarballs.json'), `${JSON.stringify({ packages: entries })}\n`);
+
+    const directories = extractPreviewPackages({ from: source, out: output });
+
+    assert.equal(directories.length, 2);
+    assert.deepEqual(
+      directories.map((directory) => JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'))),
+      packagesToPack,
+    );
+    assert.equal(readFileSync(join(directories[0], 'README.md'), 'utf8'), 'nanoraster preview\n');
+  });
+
+  it('should reject a tarball path outside the frozen directory', () => {
+    const source = temporaryDirectory('nanoraster-preview-unsafe-');
+    writeFileSync(
+      join(source, 'test-tarballs.json'),
+      `${JSON.stringify({ packages: { nanoraster: { filename: '../nanoraster.tgz', version: '1.0.0' } } })}\n`,
+    );
+
+    assert.throws(
+      () => extractPreviewPackages({ from: source, out: join(source, 'out') }),
+      /unsafe tarball filename/u,
+    );
   });
 });

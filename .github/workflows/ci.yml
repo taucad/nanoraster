@@ -652,6 +652,36 @@ jobs:
           rust-version: 1.88.0
       - run: pnpm audit --audit-level high
 
+  preview:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: [preflight, assemble, smoke, browser, security]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '26'
+      - uses: ./.github/actions/download-verified-artifact
+        with:
+          name: test-tarballs
+          path: tarballs
+          expect: test-tarballs.json
+      - name: Expand the tested packages for preview version rewriting
+        run: node scripts/pack-test-tarballs.mjs --extract-from tarballs --out preview-packages
+      - id: publish
+        name: Publish the preview package graph
+        run: >-
+          pnpm exec pkg-pr-new publish
+          --previewVersion
+          --comment=update
+          --commentWithSha
+          --no-template
+          './preview-packages/*'
+
   publish:
     if: needs.preflight.outputs.npm-publish == 'true'
     needs: [preflight, assemble, smoke, browser, security]
@@ -845,6 +875,7 @@ jobs:
         browser,
         benchmark,
         security,
+        preview,
         publish,
         registry-verify,
         registry-smoke,
@@ -856,6 +887,7 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
           PUBLISH: ${{ needs.preflight.outputs.npm-publish }}
+          PREVIEW: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           node <<'NODE'
           const needs = JSON.parse(process.env.RESULTS);
@@ -863,6 +895,7 @@ jobs:
           if (needs.preflight?.result === 'success' && process.env.PUBLISH === 'true') {
             required.push('publish', 'registry-verify', 'registry-smoke', 'registry-release');
           }
+          if (process.env.PREVIEW === 'true') required.push('preview');
           const failures = required.filter((name) => needs[name]?.result !== 'success');
           if (!['success', 'skipped'].includes(needs.benchmark?.result)) failures.push('benchmark');
           if (failures.length) throw new Error(`required jobs did not pass: ${failures.join(', ')}`);

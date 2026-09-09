@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -71,16 +71,71 @@ export const packTestTarballs = ({ npmDir = 'npm', out, pack = npmPack, root }) 
   return output;
 };
 
+const extractTarball = (tarball, destination) => {
+  execFileSync('tar', ['-xzf', tarball, '--strip-components=1', '-C', destination]);
+};
+
+/**
+ * Expand a frozen tarball set into publish-shaped package directories.
+ *
+ * pkg.pr.new cannot rewrite versions or sibling dependencies in prebuilt
+ * tarballs. Expanding the already-tested tarballs lets it repack the same file
+ * payload while rewriting the complete package graph in one invocation.
+ */
+export const extractPreviewPackages = ({ extract = extractTarball, from, out }) => {
+  const sourceDirectory = resolve(from);
+  const outDirectory = resolve(out);
+  const manifest = JSON.parse(readFileSync(join(sourceDirectory, MANIFEST), 'utf8'));
+  const entries = Array.isArray(manifest.packages)
+    ? manifest.packages
+    : Object.entries(manifest.packages ?? {}).map(([name, entry]) => ({ name, ...entry }));
+  if (entries.length === 0) throw new Error(`${MANIFEST} names no packages`);
+  if (existsSync(outDirectory) && readdirSync(outDirectory).length > 0) {
+    throw new Error(`${outDirectory} must be empty`);
+  }
+  mkdirSync(outDirectory, { recursive: true });
+
+  const names = new Set();
+  return entries.map(({ filename, name, version }, index) => {
+    if (typeof name !== 'string' || name.length === 0 || names.has(name)) {
+      throw new Error(`invalid or duplicate package name: ${name}`);
+    }
+    names.add(name);
+    if (typeof filename !== 'string' || basename(filename) !== filename || !filename.endsWith('.tgz')) {
+      throw new Error(`unsafe tarball filename for ${name}: ${filename}`);
+    }
+    const tarball = join(sourceDirectory, filename);
+    if (!existsSync(tarball)) throw new Error(`missing tarball for ${name}: ${filename}`);
+
+    const destination = join(outDirectory, String(index).padStart(2, '0'));
+    mkdirSync(destination);
+    extract(tarball, destination);
+    const extracted = JSON.parse(readFileSync(join(destination, 'package.json'), 'utf8'));
+    if (extracted.name !== name || extracted.version !== version) {
+      throw new Error(
+        `${filename} extracted ${extracted.name}@${extracted.version}, expected ${name}@${version}`,
+      );
+    }
+    return destination;
+  });
+};
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const { values } = parseArgs({
     options: {
       'npm-dir': { default: 'npm', type: 'string' },
+      'extract-from': { type: 'string' },
       out: { type: 'string' },
       root: { default: '.', type: 'string' },
     },
   });
   try {
     if (!values.out) throw new Error('expected --out <directory>');
+    if (values['extract-from']) {
+      const directories = extractPreviewPackages({ from: values['extract-from'], out: values.out });
+      process.stdout.write(`${directories.join('\n')}\n`);
+      process.exit(0);
+    }
     const output = packTestTarballs({
       npmDir: values['npm-dir'],
       out: values.out,
