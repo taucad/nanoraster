@@ -111,3 +111,5 @@ registry signatures with `npm audit signatures`.
 Apache-2.0. See [license](license) and [NOTICE](NOTICE) for bundled materials.
 
 Part of the [Tau ecosystem](https://tau.new).
+
+<!-- pkg-pr-new-canary-2026-09-10 -->
