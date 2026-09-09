@@ -267,11 +267,11 @@ describe('changelog thank you section', () => {
   const published = ['## 0.3.0 (2026-08-19)', '', '### ❤️ Thank You', '', '- Claude Fable 5', ''].join('\n');
 
   it('should keep people and drop assistants and bots', () => {
-    const changelog = `${entry(['- Claude Fable 5', '- Richard Fontein @rifont', '- dependabot[bot]'])}\n${published}`;
+    const changelog = `${entry(['- Claude Fable 5', '- OpenAI Codex @oai-codex', '- Richard Fontein @rifont', '- dependabot[bot]'])}\n${published}`;
     const rendered = withoutNonHumanAuthors(changelog);
 
     assert.match(rendered, /### ❤️ Thank You\n\n- Richard Fontein @rifont\n/u);
-    assert.doesNotMatch(rendered.split('## 0.3.0')[0], /Claude|\[bot\]/u);
+    assert.doesNotMatch(rendered.split('## 0.3.0')[0], /Claude|OpenAI Codex|\[bot\]/u);
   });
 
   it('should leave published entries untouched', () => {
@@ -331,5 +331,12 @@ describe('release preparation quality gate', () => {
     // child's stderr, so every gate that reports on stdout — knip and oxfmt
     // among them — failed the release with no findings printed at all.
     assert.match(script, /execFileSync\([\s\S]*?:quality[\s\S]*?stdio: 'inherit'/u);
+  });
+
+  it('should format the changelog generated after the gate', () => {
+    assert.match(
+      script,
+      /execFileSync\('pnpm', \['exec', 'oxfmt', '--write', fileURLToPath\(CHANGELOG_PATH\)\]\)/u,
+    );
   });
 });
