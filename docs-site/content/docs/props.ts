@@ -2,6 +2,7 @@ export { RenderError } from 'nanoraster';
 export type {
   AdapterInfo,
   CreateRendererOptions,
+  EncodeRgbaWebpOptions,
   RenderedImageFile,
   RenderTimings,
   RenderViewTimings,

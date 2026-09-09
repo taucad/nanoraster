@@ -141,6 +141,20 @@ const dist =
     : describe.skip;
 
 dist('built universal entry point', () => {
+  it('should expose options without loading either rendering backend', async () => {
+    const manifest = JSON.parse(readFileSync(path.resolve(root, 'package.json'), 'utf8'));
+    expect(manifest.exports['./options']).toEqual({
+      types: './dist/options.d.mts',
+      import: './dist/options.mjs',
+      default: './dist/options.mjs',
+    });
+    const options = await import('nanoraster/options');
+    expect(options.renderImageZoomRange).toEqual([0.01, 100]);
+    const { files, specifiers } = walkOutput(manifest.exports['./options'].import);
+    expect(files.map((file) => path.relative(root, file))).toEqual(['dist/options.mjs']);
+    expect(specifiers.filter((specifier) => isBuiltin(specifier))).toEqual([]);
+  });
+
   it('should ship no Node builtin and no generated loader in dist/index.mjs', () => {
     const { files, specifiers } = walkOutput('dist/index.mjs');
 

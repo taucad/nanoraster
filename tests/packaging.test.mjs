@@ -30,6 +30,11 @@ describe('npm package file contract', () => {
     expect(PACKAGE_FILES).not.toContain('dist/native/index.d.ts');
   });
 
+  it('should ship the GPU-independent RGBA encoder surface', () => {
+    expect(PACKAGE_FILES).toContain('dist/encode-rgba.mjs');
+    expect(PACKAGE_FILES).toContain('dist/encode-rgba.d.mts');
+  });
+
   it('should reject missing, extra, and source files', () => {
     expect(() => validatePackageFiles(PACKAGE_FILES.slice(1))).toThrow('missing=[');
     expect(() => validatePackageFiles([...PACKAGE_FILES, 'dist/accidental.txt'])).toThrow('extra=[');

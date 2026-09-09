@@ -36,6 +36,7 @@ const tableNames = [
   'RenderLightingRig',
   'RenderLight',
   'CreateRendererOptions',
+  'EncodeRgbaWebpOptions',
   'AdapterInfo',
   'RenderTimings',
   'RenderViewTimings',
@@ -83,6 +84,7 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
   RenderLightingRig: ['lights', 'ambient', 'environment', 'space', 'exposure'],
   RenderLight: ['direction', 'color'],
   CreateRendererOptions: ['powerPreference'],
+  EncodeRgbaWebpOptions: ['width', 'height', 'quality', 'alpha'],
   AdapterInfo: ['backend', 'name', 'deviceType'],
   RenderTimings: [
     'parse',
@@ -255,7 +257,7 @@ describe('static agent documentation', () => {
     }
 
     const apiHtml = resolve(output, 'docs/api.html');
-    expect(statSync(apiHtml).size).toBeLessThan(800_000);
+    expect(statSync(apiHtml).size).toBeLessThan(810_000);
 
     const optionsHtml = readFileSync(apiHtml, 'utf8');
     expect(optionsHtml).toContain('aria-label="RenderImageOptions properties"');

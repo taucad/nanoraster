@@ -89,6 +89,27 @@ const [iso, front] = await renderImages(glb, {
 });
 ```
 
+## Encode pixels
+
+### `encodeRgbaWebp`
+
+Encode tightly packed RGBA8 pixels as WebP without creating a GPU renderer.
+
+```typescript
+export declare const encodeRgbaWebp: (
+  rgba: Uint8Array<ArrayBuffer>,
+  options: EncodeRgbaWebpOptions,
+) => Promise<Uint8Array<ArrayBuffer>>;
+```
+
+The input is top-row-first sRGB. Set `alpha` to describe whether its RGB
+channels are straight or premultiplied; the encoder snapshots the input before
+starting asynchronous work.
+
+### `EncodeRgbaWebpOptions`
+
+<auto-type-table path="./props.ts" name="EncodeRgbaWebpOptions" caption="EncodeRgbaWebpOptions properties" />
+
 ## Renderer reuse
 
 The one-shot functions share one renderer per process. The first call creates

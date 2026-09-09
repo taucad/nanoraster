@@ -137,6 +137,34 @@ pub struct RenderImagesTask {
     options_json: String,
 }
 
+pub struct EncodeRgbaWebpTask {
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    quality: u8,
+    premultiplied: bool,
+}
+
+impl Task for EncodeRgbaWebpTask {
+    type Output = Vec<u8>;
+    type JsValue = Buffer;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        render_core::encode_rgba_webp(
+            std::mem::take(&mut self.rgba),
+            self.width,
+            self.height,
+            self.quality,
+            self.premultiplied,
+        )
+        .map_err(map_error)
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(output.into())
+    }
+}
+
 impl Task for RenderImagesTask {
     type Output = (Vec<Vec<u8>>, Option<render_core::RenderBatchTimings>);
     type JsValue = RenderImagesResult;
@@ -290,6 +318,24 @@ pub fn render_images(glb: Uint8Array, options_json: String) -> AsyncTask<RenderI
         renderer: None,
         glb,
         options_json,
+    })
+}
+
+/// Encode RGBA pixels as WebP without creating a GPU renderer.
+#[napi]
+pub fn encode_rgba_webp(
+    rgba: Uint8Array,
+    width: u32,
+    height: u32,
+    quality: u8,
+    premultiplied: bool,
+) -> AsyncTask<EncodeRgbaWebpTask> {
+    AsyncTask::new(EncodeRgbaWebpTask {
+        rgba: rgba.to_vec(),
+        width,
+        height,
+        quality,
+        premultiplied,
     })
 }
 
