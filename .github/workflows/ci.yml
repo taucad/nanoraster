@@ -149,6 +149,7 @@ jobs:
           tests/check-prepared-release.test.mjs
           tests/napi-targets.test.mjs
           tests/pack-test-tarballs.test.mjs
+          tests/verify-preview-install.test.mjs
           tests/registry-wait.test.mjs
       - name: Require a Version Plan for release-affecting changes
         if: needs.preflight.outputs.kind != 'release-pull-request' && needs.preflight.outputs.kind != 'release'
@@ -656,6 +657,8 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     needs: [preflight, assemble, smoke, browser, security]
     runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.publish.outputs.sha }}
     permissions:
       contents: read
     steps:
@@ -679,8 +682,47 @@ jobs:
           --previewVersion
           --comment=update
           --commentWithSha
+          --json preview.json
           --no-template
           './preview-packages/*'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pkg-pr-new-preview
+          path: preview.json
+          if-no-files-found: error
+
+  # Publishing a preview proves nothing about installing one. 0.5.0 passed
+  # every producer gate and still shipped natives pinned to npm, so the hosted
+  # graph is installed here from a clean directory before the PR can merge.
+  preview-consumer:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: [assemble, preview]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '26'
+      - uses: ./.github/actions/download-verified-artifact
+        with:
+          name: test-tarballs
+          path: tarballs
+          expect: test-tarballs.json
+      - uses: ./.github/actions/download-verified-artifact
+        with:
+          name: pkg-pr-new-preview
+          path: preview
+          expect: preview.json
+      - run: node scripts/pack-test-tarballs.mjs --extract-from tarballs --out preview-packages
+      - run: >-
+          node scripts/verify-preview-install.mjs
+          --from preview-packages
+          --metadata preview/preview.json
+          --sha '${{ needs.preview.outputs.sha }}'
 
   publish:
     if: needs.preflight.outputs.npm-publish == 'true'
@@ -876,6 +918,7 @@ jobs:
         benchmark,
         security,
         preview,
+        preview-consumer,
         publish,
         registry-verify,
         registry-smoke,
@@ -895,7 +938,7 @@ jobs:
           if (needs.preflight?.result === 'success' && process.env.PUBLISH === 'true') {
             required.push('publish', 'registry-verify', 'registry-smoke', 'registry-release');
           }
-          if (process.env.PREVIEW === 'true') required.push('preview');
+          if (process.env.PREVIEW === 'true') required.push('preview', 'preview-consumer');
           const failures = required.filter((name) => needs[name]?.result !== 'success');
           if (!['success', 'skipped'].includes(needs.benchmark?.result)) failures.push('benchmark');
           if (failures.length) throw new Error(`required jobs did not pass: ${failures.join(', ')}`);
