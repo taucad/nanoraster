@@ -368,11 +368,43 @@ describe('CI workflow policy', () => {
         body.includes('node scripts/pack-test-tarballs.mjs --extract-from tarballs --out preview-packages'),
       );
       assert.equal(occurrences(body, 'pnpm exec pkg-pr-new publish'), 1);
-      for (const flag of ['--previewVersion', '--comment=update', '--commentWithSha', '--no-template']) {
+      for (const flag of [
+        '--previewVersion',
+        '--comment=update',
+        '--commentWithSha',
+        '--json preview.json',
+        '--no-template',
+      ]) {
         assert(body.includes(flag), `preview must use ${flag}`);
       }
       assert(body.includes("'./preview-packages/*'"));
+      assert(body.includes('name: pkg-pr-new-preview'), 'the preview must publish its URL metadata');
+      assert(body.includes('sha: ${{ steps.publish.outputs.sha }}'), 'the consumer needs the published sha');
       assert.equal(packageJson.devDependencies['pkg-pr-new'], '0.0.88');
+      assert(!body.includes('id-token: write'));
+    });
+
+    // 0.5.0 was green here and still broken for consumers: producer CI only
+    // ever tested the API NanoRaster declared, never the graph it published.
+    it('should install the published preview graph before the pull request can merge', () => {
+      const body = job('preview-consumer');
+      assert(
+        body.includes(
+          "if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository",
+        ),
+      );
+      for (const dependency of ['assemble', 'preview']) {
+        assert(needsOf('preview-consumer').includes(dependency), `preview-consumer must need ${dependency}`);
+      }
+      assert(body.includes('expect: preview.json'), 'the preview metadata must land before it is trusted');
+      assert(
+        body.includes('node scripts/verify-preview-install.mjs'),
+        'the consumer must install the hosted graph',
+      );
+      assert(
+        body.includes("--sha '${{ needs.preview.outputs.sha }}'"),
+        'the consumer must pin verification to the published sha',
+      );
       assert(!body.includes('id-token: write'));
     });
 
@@ -524,16 +556,16 @@ describe('CI workflow policy', () => {
       const consumers = [...jobs].filter(([, body]) => body.includes('download-verified-artifact'));
       assert.deepEqual(
         consumers.map(([name]) => name).sort((left, right) => left.localeCompare(right)),
-        ['assemble', 'browser', 'preview', 'publish', 'registry-verify', 'smoke'],
+        ['assemble', 'browser', 'preview', 'preview-consumer', 'publish', 'registry-verify', 'smoke'],
         'every artifact-consuming job must use the verified download',
       );
-      assert.equal(occurrences(workflow, 'uses: ./.github/actions/download-verified-artifact'), 7);
+      assert.equal(occurrences(workflow, 'uses: ./.github/actions/download-verified-artifact'), 9);
     });
 
     it('should name the file each frozen artifact must land', () => {
       assert.equal(
         occurrences(workflow, 'expect: test-tarballs.json'),
-        4,
+        5,
         'every test-tarballs consumer must demand the manifest',
       );
       assert(
@@ -689,7 +721,9 @@ describe('CI workflow policy', () => {
         assert(body.includes(`'${required}'`), `ci-gate must require ${required}`);
       }
       assert(body.includes("'publish', 'registry-verify', 'registry-smoke', 'registry-release'"));
-      assert(body.includes("if (process.env.PREVIEW === 'true') required.push('preview')"));
+      assert(
+        body.includes("if (process.env.PREVIEW === 'true') required.push('preview', 'preview-consumer')"),
+      );
       assert(body.includes("['success', 'skipped'].includes(needs.benchmark?.result)"));
     });
   });
