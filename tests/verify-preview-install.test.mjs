@@ -51,6 +51,11 @@ describe('hosted preview consumer', () => {
       sha,
       install(command, args, options) {
         calls.push([command, args]);
+        if (args[0] === 'pack') {
+          const [, url] = args;
+          const name = url.slice('https://pkg.pr.new/'.length, url.lastIndexOf('@'));
+          return `${JSON.stringify([{ name, version: '0.0.0-preview-abc1234' }])}\n`;
+        }
         if (args[0] !== 'install') return;
         const modules = join(options.cwd, 'node_modules');
         mkdirSync(join(modules, 'nanoraster'), { recursive: true });
@@ -72,7 +77,7 @@ describe('hosted preview consumer', () => {
       },
     });
 
-    assert.deepEqual(result, { installed: 2, roots: ['nanoraster'] });
+    assert.deepEqual(result, { installed: 2, published: 2, roots: ['nanoraster'] });
     assert.deepEqual(calls[1][1], ['install', '--ignore-scripts', `https://pkg.pr.new/nanoraster@${sha}`]);
   });
 
@@ -108,6 +113,11 @@ describe('hosted preview consumer', () => {
           metadata,
           sha,
           install(command, args, options) {
+            if (args[0] === 'pack') {
+              const [, url] = args;
+              const name = url.slice('https://pkg.pr.new/'.length, url.lastIndexOf('@'));
+              return `${JSON.stringify([{ name, version: '0.0.0-preview-abc1234' }])}\n`;
+            }
             if (args[0] !== 'install') return;
             const modules = join(options.cwd, 'node_modules');
             mkdirSync(join(modules, 'nanoraster'), { recursive: true });
@@ -127,6 +137,68 @@ describe('hosted preview consumer', () => {
           },
         }),
       /keeps an unpublished optionalDependencies reference to nanoraster-linux-x64-gnu/u,
+    );
+  });
+
+  // A native this runner cannot install is invisible to the root install, so
+  // only the published-manifest audit can catch one pkg.pr.new left at its npm
+  // version. Fifteen of NanoRaster's seventeen packages are in that position.
+  it('should reject a published sibling the platform filter hid from the install', () => {
+    const sha = 'abc1234abc1234abc1234abc1234abc1234abc12';
+    const source = temporaryDirectory();
+    const root = join(source, '00');
+    const native = join(source, '01');
+    const metadata = join(source, 'preview.json');
+    mkdirSync(root);
+    mkdirSync(native);
+    writeFileSync(
+      join(root, 'package.json'),
+      `${JSON.stringify({ name: 'nanoraster', optionalDependencies: { 'nanoraster-linux-s390x-gnu': '1.0.0' } })}\n`,
+    );
+    writeFileSync(
+      join(native, 'package.json'),
+      `${JSON.stringify({ name: 'nanoraster-linux-s390x-gnu' })}\n`,
+    );
+    writeFileSync(
+      metadata,
+      `${JSON.stringify({
+        packages: [
+          { name: 'nanoraster', url: `https://pkg.pr.new/nanoraster@${sha}` },
+          { name: 'nanoraster-linux-s390x-gnu', url: `https://pkg.pr.new/nanoraster-linux-s390x-gnu@${sha}` },
+        ],
+      })}\n`,
+    );
+
+    assert.throws(
+      () =>
+        verifyPreviewInstall({
+          from: source,
+          metadata,
+          sha,
+          install(command, args, options) {
+            if (args[0] === 'pack') {
+              const [, url] = args;
+              const name = url.slice('https://pkg.pr.new/'.length, url.lastIndexOf('@'));
+              // The hidden native never got a preview version.
+              const version = name === 'nanoraster' ? '0.0.0-preview-abc1234' : '0.5.1';
+              return `${JSON.stringify([{ name, version }])}\n`;
+            }
+            if (args[0] !== 'install') return;
+            const modules = join(options.cwd, 'node_modules');
+            mkdirSync(join(modules, 'nanoraster'), { recursive: true });
+            writeFileSync(
+              join(modules, 'nanoraster', 'package.json'),
+              `${JSON.stringify({
+                name: 'nanoraster',
+                version: '0.0.0-preview-abc1234',
+                optionalDependencies: {
+                  'nanoraster-linux-s390x-gnu': `https://pkg.pr.new/nanoraster-linux-s390x-gnu@${sha}`,
+                },
+              })}\n`,
+            );
+          },
+        }),
+      /nanoraster-linux-s390x-gnu published 0\.5\.1, expected 0\.0\.0-preview-abc1234/u,
     );
   });
 
