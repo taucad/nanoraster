@@ -1,3 +1,13 @@
+## 0.5.2 (2026-09-11)
+
+### 🩹 Fixes
+
+- Publish installable preview package graphs from trusted pull requests after the release-shaped tarballs pass CI. ([#79](https://github.com/taucad/nanoraster/pull/79))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.5.1 (2026-09-09)
 
 ### 🩹 Fixes
