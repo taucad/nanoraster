@@ -334,6 +334,9 @@ pub(crate) async fn request_adapter(
     // Surface-less by construction: no display handle, ever.
     let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
     instance_descriptor.backends = backends;
+    // Compile production-quality GPU code in every Rust profile. On DX12 the
+    // DEBUG flag also disables FXC optimization; validation is a separate flag.
+    instance_descriptor.flags.remove(wgpu::InstanceFlags::DEBUG);
     let instance = wgpu::Instance::new(instance_descriptor);
     instance
         .request_adapter(&wgpu::RequestAdapterOptions {
