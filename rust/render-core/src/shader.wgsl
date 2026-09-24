@@ -279,6 +279,8 @@ fn fs_screen(in: ScreenOut) -> @location(0) vec4<f32> {
     let display = tone_map_aces(color.rgb / max(color.a, 0.000001), frame.exposure);
     let alpha = color.a + frame.background.a * (1.0 - color.a);
     let premultiplied = display * color.a + frame.background.rgb * frame.background.a * (1.0 - color.a);
+    // Cap/edge blending and MSAA still need premultiplied-linear RGB. Readback
+    // unpremultiplies the resolved result for the public straight-alpha API.
     return vec4<f32>(premultiplied, alpha);
 }
 

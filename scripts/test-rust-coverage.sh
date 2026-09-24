@@ -36,8 +36,8 @@ IGNORE_PATHS='vendor/image-webp|vendor/wgpu-hal|render-wasm|render-napi'
 cd "$REPO_ROOT"
 # --all-features keeps the default-off `bench` surface measured rather than
 # silently uncompiled: its code counts, and its tests run.
-# Tests share the CI GPU. Serialize separate test cases to avoid WARP device
-# resets under simultaneous shader compilation; concurrency inside tests remains.
+# Tests share the CI GPU. Bound simultaneous shader compilation by serializing
+# separate cases; explicit concurrency inside individual tests remains.
 cargo llvm-cov \
   --manifest-path rust/Cargo.toml \
   --workspace \

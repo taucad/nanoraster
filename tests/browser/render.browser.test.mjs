@@ -411,10 +411,7 @@ test('physical material layers survive the public WebGPU facade and repeat exact
   const bytes = physicalMaterialGlb(physicalMaterial);
   const first = await renderImage(bytes, options);
   expect(first.bytes).toEqual((await renderImage(bytes, options)).bytes);
-  const plain = await renderImage(
-    physicalMaterialGlb({ pbrMetallicRoughness: physicalMaterial.pbrMetallicRoughness }),
-    options,
-  );
+  const plain = await renderImage(physicalMaterialGlb({ ...physicalMaterial, extensions: {} }), options);
   expect(first.bytes).not.toEqual(plain.bytes);
   const unlit = await renderImage(
     physicalMaterialGlb({
@@ -425,6 +422,17 @@ test('physical material layers survive the public WebGPU facade and repeat exact
   );
   const center = (64 * 128 + 64) * 4;
   expect(unlit.bytes.slice(center, center + 4)).toEqual(new Uint8Array([118, 170, 218, 255]));
+  const translucent = await renderImage(
+    physicalMaterialGlb({
+      pbrMetallicRoughness: { baseColorFactor: [0.18, 0.4, 0.7, 0.5] },
+      alphaMode: 'BLEND',
+      extensions: { KHR_materials_unlit: {} },
+    }),
+    { ...options, background: undefined },
+  );
+  for (const [channel, expected] of [118, 170, 218, 128].entries()) {
+    expect(Math.abs(translucent.bytes[center + channel] - expected)).toBeLessThanOrEqual(2);
+  }
   await expect(
     renderImage(
       physicalMaterialGlb({ extensions: { KHR_materials_anisotropy: { anisotropyStrength: 2 } } }),

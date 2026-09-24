@@ -244,8 +244,17 @@ pub(crate) struct ViewTimings {
 }
 
 /// An explicit destroy() is the caller's own teardown, not a loss.
-fn note_device_lost(lost: &AtomicBool, reason: wgpu::DeviceLostReason) {
+fn note_device_lost(
+    lost: &AtomicBool,
+    captured: &Mutex<Option<String>>,
+    reason: wgpu::DeviceLostReason,
+    message: &str,
+) {
     if !matches!(reason, wgpu::DeviceLostReason::Destroyed) {
+        captured
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_or_insert_with(|| format!("device lost ({reason:?}): {message}"));
         lost.store(true, Ordering::Release);
     }
 }
@@ -352,8 +361,8 @@ fn poll_error(error: wgpu::PollError) -> RenderError {
     gpu_error("poll", error)
 }
 
-fn map_error(error: wgpu::BufferAsyncError) -> RenderError {
-    gpu_error("map_async", error)
+fn map_error(error: wgpu::BufferAsyncError, captured: Option<RenderError>) -> RenderError {
+    captured.unwrap_or_else(|| gpu_error("map_async", error))
 }
 
 fn mapped_range_error(error: wgpu::MapRangeError) -> RenderError {
@@ -1052,7 +1061,8 @@ impl DeviceState {
 
         device.set_device_lost_callback({
             let lost = lost.clone();
-            move |reason, _message| note_device_lost(&lost, reason)
+            let captured = uncaptured.clone();
+            move |reason, message| note_device_lost(&lost, &captured, reason, &message)
         });
         // Without a handler, native wgpu panics on uncaptured validation errors
         // and browsers only log them; storing the first message gives every
@@ -1305,6 +1315,8 @@ impl Renderer {
         if !self.lost.swap(false, Ordering::Acquire) {
             return Ok(());
         }
+        // The replacement device must not inherit the retired device's error.
+        let _ = self.take_uncaptured();
         self.state = DeviceState::new(self.power, &self.lost, &self.uncaptured).await?;
         self.generation += 1;
         self.counters.device_requests += 1;
@@ -2041,6 +2053,20 @@ impl Renderer {
         }
         view.buffer.unmap();
         self.take_uncaptured()?;
+        // The sRGB target stores encoded premultiplied-linear RGB. Convert to
+        // the public straight-alpha contract after every cap/edge blend and MSAA
+        // resolve, rather than unpremultiplying the surface pass prematurely.
+        for pixel in rgba.as_chunks_mut::<4>().0 {
+            let alpha = pixel[3];
+            if alpha > 0 && alpha < 255 {
+                for channel in &mut pixel[..3] {
+                    *channel = crate::texture::encoded(
+                        crate::texture::linear(*channel, true) * 255.0 / f32::from(alpha),
+                        true,
+                    );
+                }
+            }
+        }
         Ok(Rendered {
             rgba,
             width: view.unpadded_bytes_per_row / 4,
@@ -2071,7 +2097,7 @@ impl Renderer {
             .ok()
             .flatten()
             .ok_or(RenderError::Gpu("map_async: callback dropped".into()))?
-            .map_err(map_error)?;
+            .map_err(|error| map_error(error, self.take_uncaptured().err()))?;
         self.read_back(&view)
     }
 
@@ -2082,7 +2108,7 @@ impl Renderer {
         (&mut view.receiver)
             .await
             .map_err(|_| RenderError::Gpu("map_async: callback dropped".into()))?
-            .map_err(map_error)?;
+            .map_err(|error| map_error(error, self.take_uncaptured().err()))?;
         self.read_back(&view)
     }
 
@@ -2552,8 +2578,9 @@ mod tests {
             .prepare_presentation(&scene.parsed, &entry.options)
             .expect("presentation");
         let buffers = renderer.ensure_uploaded(&mut scene).expect("line upload");
+        let context = format!("test render (texture_mask={:#x})", buffers.texture_mask);
         pollster::block_on(renderer.render_entry_to_rgba(buffers, &presentation, &entry))
-            .expect("line render")
+            .expect(&context)
     }
 
     fn physical_sphere(material: Material) -> glb::Scene {
@@ -2944,6 +2971,63 @@ mod tests {
         renderer
             .take_uncaptured()
             .expect("no GPU validation errors");
+    }
+
+    #[test]
+    fn transparent_output_retains_straight_color_for_surfaces_edges_and_lines() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let mut material = Material {
+            base_color: [0.18, 0.4, 0.7, 1.0],
+            ..Material::default()
+        };
+        material.anisotropy[3] = 1.0;
+        let mut options = physical_options();
+        options.background = None;
+        let opaque = render_test_scene(
+            &mut renderer,
+            physical_sphere(material.clone()),
+            options.clone(),
+        );
+        material.alpha_mode = 2.0;
+        material.base_color[3] = 0.5;
+        let blended = render_test_scene(
+            &mut renderer,
+            physical_sphere(material.clone()),
+            options.clone(),
+        );
+        let mut line = cube_scene();
+        line.meshes[0].primitives[0] = glb::Primitive {
+            source_index: 0,
+            mode: glb::MODE_LINES,
+            positions: vec![-0.8, 0.0, 0.0, 0.8, 0.0, 0.0],
+            indices: vec![0, 1],
+            normals: Vec::new(),
+            surface_attributes: Vec::new(),
+            material,
+        };
+        options.lines = true;
+        options.line_width = 4.0;
+        let line = render_test_scene(&mut renderer, line, options);
+        let center = (48 * 96 + 48) * 4;
+        assert!(blended.rgba[center + 3].abs_diff(128) <= 1);
+        for image in [opaque, blended, line] {
+            let mut partial = 0;
+            for pixel in image.rgba.as_chunks::<4>().0 {
+                if pixel[3] == 0 {
+                    assert_eq!(&pixel[..3], &[0; 3]);
+                } else if pixel[3] < 255 {
+                    partial += 1;
+                    for (channel, expected) in [118u8, 170, 218].into_iter().enumerate() {
+                        assert!(pixel[channel].abs_diff(expected) <= 3, "{pixel:?}");
+                    }
+                }
+            }
+            assert!(
+                partial > 50,
+                "exercise partial coverage, not just opaque pixels"
+            );
+        }
     }
 
     #[test]
@@ -4034,7 +4118,7 @@ mod tests {
                 .starts_with("gpu: poll:")
         );
         assert!(
-            map_error(wgpu::BufferAsyncError)
+            map_error(wgpu::BufferAsyncError, None)
                 .to_string()
                 .starts_with("gpu: map_async:")
         );
@@ -4077,10 +4161,29 @@ mod tests {
     #[test]
     fn device_loss_notes_every_reason_except_explicit_destroy() {
         let lost = AtomicBool::new(false);
-        note_device_lost(&lost, wgpu::DeviceLostReason::Destroyed);
+        let captured = Mutex::new(None);
+        note_device_lost(
+            &lost,
+            &captured,
+            wgpu::DeviceLostReason::Destroyed,
+            "disposed",
+        );
         assert!(!lost.load(Ordering::Acquire));
-        note_device_lost(&lost, wgpu::DeviceLostReason::Unknown);
+        assert!(captured.lock().unwrap().is_none());
+        note_device_lost(
+            &lost,
+            &captured,
+            wgpu::DeviceLostReason::Unknown,
+            "driver cause",
+        );
         assert!(lost.load(Ordering::Acquire));
+        let message = captured.lock().unwrap().take().unwrap();
+        assert!(message.contains("driver cause"));
+        assert!(
+            map_error(wgpu::BufferAsyncError, Some(RenderError::Gpu(message)))
+                .to_string()
+                .contains("driver cause")
+        );
     }
 
     #[test]
@@ -4098,11 +4201,50 @@ mod tests {
 
         // A recreated device invalidates the buffers: the same handle
         // re-uploads lazily on next use.
-        renderer.lost.store(true, Ordering::Release);
+        note_device_lost(
+            &renderer.lost,
+            &renderer.uncaptured,
+            wgpu::DeviceLostReason::Unknown,
+            "retired device",
+        );
         pollster::block_on(renderer.recover_if_lost()).expect("recreate");
+        assert!(renderer.take_uncaptured().is_ok());
         renderer.ensure_uploaded(&mut handle).expect("re-upload");
         assert_eq!(renderer.counters.scene_uploads, 2);
         renderer.destroy();
+    }
+
+    #[test]
+    fn finish_view_retains_the_device_cause_of_a_mapping_failure() {
+        let renderer = pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+            .expect("renderer");
+        for cause in [None, Some("driver removed the device")] {
+            *renderer.uncaptured.lock().unwrap() = cause.map(str::to_owned);
+            let (sender, receiver) = futures_channel::oneshot::channel();
+            sender.send(Err(wgpu::BufferAsyncError)).unwrap();
+            let view = InFlightView {
+                buffer: renderer
+                    .state
+                    .device
+                    .create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("failed map"),
+                        size: 256,
+                        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    }),
+                receiver,
+                submission: renderer.state.queue.submit([]),
+                height: 1,
+                unpadded_bytes_per_row: 256,
+                padded_bytes_per_row: 256,
+            };
+            let error = renderer
+                .finish_view_blocking(view)
+                .err()
+                .expect("mapping failed");
+            assert!(error.to_string().contains(cause.unwrap_or("map_async")));
+            assert!(renderer.take_uncaptured().is_ok());
+        }
     }
 
     #[test]

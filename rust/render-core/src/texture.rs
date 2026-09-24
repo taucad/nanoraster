@@ -133,7 +133,7 @@ fn decode(bytes: &[u8], mime: &str) -> Result<(u32, u32, Vec<u8>), String> {
     }
 }
 
-fn linear(value: u8, srgb: bool) -> f32 {
+pub(crate) fn linear(value: u8, srgb: bool) -> f32 {
     let v = f32::from(value) / 255.0;
     if !srgb {
         v
@@ -143,7 +143,7 @@ fn linear(value: u8, srgb: bool) -> f32 {
         ((v + 0.055) / 1.055).powf(2.4)
     }
 }
-fn encoded(value: f32, srgb: bool) -> u8 {
+pub(crate) fn encoded(value: f32, srgb: bool) -> u8 {
     let v = if !srgb {
         value
     } else if value <= 0.0031308 {
