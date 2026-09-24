@@ -399,19 +399,18 @@ fn validate_options(options: &RenderOptions) -> Result<(), RenderError> {
             "lineWidth must be between 0.25 and 16".into(),
         ));
     }
-    if let Some(ao) = options.ao {
-        if ao
+    if let Some(ao) = options.ao
+        && (ao
             .radius_pixels
             .is_some_and(|radius| !radius.is_finite() || !(1.0..=128.0).contains(&radius))
             || !ao.intensity.is_finite()
             || !(0.0..=8.0).contains(&ao.intensity)
             || !ao.distance_falloff.is_finite()
-            || !(0.01..=1.0).contains(&ao.distance_falloff)
-        {
-            return Err(RenderError::Parse(
-                "ao values outside supported ranges".into(),
-            ));
-        }
+            || !(0.01..=1.0).contains(&ao.distance_falloff))
+    {
+        return Err(RenderError::Parse(
+            "ao values outside supported ranges".into(),
+        ));
     }
     if let Some(primitives) = &options.visible_primitives {
         let mut seen = std::collections::HashSet::with_capacity(primitives.len());
