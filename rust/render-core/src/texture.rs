@@ -45,6 +45,16 @@ fn image_size(width: u32, height: u32) -> Result<usize, String> {
     Ok(pixels as usize)
 }
 
+fn png_pixel(pixel: &[u8], color: png::ColorType) -> Result<[u8; 4], String> {
+    Ok(match color {
+        png::ColorType::Grayscale => [pixel[0], pixel[0], pixel[0], 255],
+        png::ColorType::GrayscaleAlpha => [pixel[0], pixel[0], pixel[0], pixel[1]],
+        png::ColorType::Rgb => [pixel[0], pixel[1], pixel[2], 255],
+        png::ColorType::Rgba => [pixel[0], pixel[1], pixel[2], pixel[3]],
+        png::ColorType::Indexed => return Err("PNG palette expansion failed".into()),
+    })
+}
+
 fn decode(bytes: &[u8], mime: &str) -> Result<(u32, u32, Vec<u8>), String> {
     match mime {
         "image/png" => {
@@ -71,14 +81,7 @@ fn decode(bytes: &[u8], mime: &str) -> Result<(u32, u32, Vec<u8>), String> {
             data.truncate(info.buffer_size());
             let mut rgba = Vec::with_capacity(count * 4);
             for pixel in data.chunks_exact(info.color_type.samples()) {
-                let color = match info.color_type {
-                    png::ColorType::Grayscale => [pixel[0], pixel[0], pixel[0], 255],
-                    png::ColorType::GrayscaleAlpha => [pixel[0], pixel[0], pixel[0], pixel[1]],
-                    png::ColorType::Rgb => [pixel[0], pixel[1], pixel[2], 255],
-                    png::ColorType::Rgba => [pixel[0], pixel[1], pixel[2], pixel[3]],
-                    png::ColorType::Indexed => return Err("PNG palette expansion failed".into()),
-                };
-                rgba.extend_from_slice(&color);
+                rgba.extend_from_slice(&png_pixel(pixel, info.color_type)?);
             }
             Ok((info.width, info.height, rgba))
         }
@@ -253,49 +256,23 @@ impl<'a> TextureStore<'a> {
             .ok_or("textureInfo.index must be a nonnegative integer")?;
         let texture = self
             .document
-            .as_json()
-            .textures
-            .get(index)
+            .textures()
+            .nth(index)
             .ok_or_else(|| format!("missing texture {index}"))?;
-        let raw = serde_json::to_value(texture).expect("glTF texture JSON");
+        let raw = serde_json::to_value(&self.document.as_json().textures[index])
+            .expect("glTF texture JSON");
         let source = raw["extensions"]["EXT_texture_webp"]["source"]
             .as_u64()
             .or_else(|| raw["source"].as_u64())
             .and_then(|v| usize::try_from(v).ok())
             .ok_or("texture requires an image source")?;
         let image = self.image(source, srgb)?;
-        let sampler = match raw.get("sampler") {
-            Some(index) => {
-                let index = index
-                    .as_u64()
-                    .and_then(|v| usize::try_from(v).ok())
-                    .ok_or("sampler must be an integer")?;
-                serde_json::to_value(
-                    self.document
-                        .as_json()
-                        .samplers
-                        .get(index)
-                        .ok_or("missing sampler")?,
-                )
-                .expect("sampler JSON")
-            }
-            None => Value::Null,
-        };
-        let enum_value = |key: &str, default: u32, choices: &[u32]| -> Result<u32, String> {
-            let value = sampler.get(key).map_or(Ok(default), |v| {
-                v.as_u64()
-                    .and_then(|v| u32::try_from(v).ok())
-                    .ok_or_else(|| format!("invalid {key}"))
-            })?;
-            if !choices.contains(&value) {
-                return Err(format!("invalid {key}: {value}"));
-            }
-            Ok(value)
-        };
-        let wrap_s = enum_value("wrapS", 10497, &[10497, 33071, 33648])?;
-        let wrap_t = enum_value("wrapT", 10497, &[10497, 33071, 33648])?;
-        let mag = enum_value("magFilter", 9729, &[9728, 9729])?;
-        let min = enum_value("minFilter", 9987, &[9728, 9729, 9984, 9985, 9986, 9987])?;
+        // Document::from_json already validates sampler references and enums.
+        let sampler = texture.sampler();
+        let wrap_s = sampler.wrap_s().as_gl_enum();
+        let wrap_t = sampler.wrap_t().as_gl_enum();
+        let mag = sampler.mag_filter().map_or(9729, |v| v.as_gl_enum());
+        let min = sampler.min_filter().map_or(9987, |v| v.as_gl_enum());
         let transform = &info["extensions"]["KHR_texture_transform"];
         if !transform.is_null() && !transform.is_object() {
             return Err("KHR_texture_transform must be an object".into());
@@ -358,6 +335,23 @@ mod tests {
                 );
             }
             assert!(decode(&bytes[..8], mime).is_err());
+            if mime == "image/jpeg" {
+                let mut missing_table = bytes.clone();
+                let scan = bytes.windows(2).position(|v| v == [0xff, 0xda]).unwrap();
+                // First scan component selects absent DC/AC tables 3; the JPEG
+                // header is readable but the compressed payload is not decodable.
+                missing_table[scan + 6] = 0x33;
+                assert!(decode(&missing_table, mime).unwrap_err().contains("table"));
+            }
+            // Sweep cuts through both headers and compressed payloads; PNG may
+            // legitimately finish its pixels before the trailing IEND chunk.
+            let failures = (8..bytes.len())
+                .filter(|&end| decode(&bytes[..end], mime).is_err())
+                .count();
+            assert!(
+                failures > bytes.len() / 2,
+                "{mime}: truncated payloads must fail"
+            );
         }
         assert!(decode(&[], "image/svg+xml").is_err());
         for dimensions in [
@@ -372,6 +366,91 @@ mod tests {
     }
 
     #[test]
+    fn png_channel_expansion_and_palette_alpha_are_preserved() {
+        for (color, input, expected) in [
+            (png::ColorType::Grayscale, vec![17], [17, 17, 17, 255]),
+            (
+                png::ColorType::GrayscaleAlpha,
+                vec![17, 128],
+                [17, 17, 17, 128],
+            ),
+            (png::ColorType::Rgb, vec![17, 34, 51], [17, 34, 51, 255]),
+            (
+                png::ColorType::Rgba,
+                vec![17, 34, 51, 128],
+                [17, 34, 51, 128],
+            ),
+            (png::ColorType::Indexed, vec![0], [17, 34, 51, 128]),
+        ] {
+            let mut bytes = Vec::new();
+            let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
+            encoder.set_color(color);
+            encoder.set_depth(png::BitDepth::Eight);
+            if color == png::ColorType::Indexed {
+                encoder.set_palette(vec![17, 34, 51]);
+                encoder.set_trns(vec![128]);
+            }
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&input).unwrap();
+            writer.finish().unwrap();
+            assert_eq!(decode(&bytes, "image/png").unwrap().2, expected);
+        }
+        assert!(
+            png_pixel(&[0], png::ColorType::Indexed)
+                .unwrap_err()
+                .contains("palette expansion")
+        );
+        assert_eq!(linear(8, true), (8.0 / 255.0) / 12.92);
+        assert_eq!(encoded((8.0 / 255.0) / 12.92, true), 8);
+    }
+
+    #[test]
+    fn rgb_webp_expands_alpha_and_animated_images_are_rejected() {
+        let mut webp = Vec::new();
+        image_webp::WebPEncoder::new(&mut webp)
+            .encode(&[17, 34, 51], 1, 1, image_webp::ColorType::Rgb8)
+            .unwrap();
+        assert_eq!(decode(&webp, "image/webp").unwrap().2, [17, 34, 51, 255]);
+        let mut png = Vec::new();
+        let mut encoder = png::Encoder::new(&mut png, 1, 1);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_animated(1, 0).unwrap();
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&[17, 34, 51, 255]).unwrap();
+        writer.finish().unwrap();
+        assert!(
+            decode(&png, "image/png")
+                .unwrap_err()
+                .contains("animated textures")
+        );
+        // A one-frame animated RIFF wraps the exact static lossless frame above.
+        let mut body = b"WEBP".to_vec();
+        let chunk = |out: &mut Vec<u8>, name: &[u8; 4], data: &[u8]| {
+            out.extend_from_slice(name);
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(data);
+            if !data.len().is_multiple_of(2) {
+                out.push(0);
+            }
+        };
+        chunk(&mut body, b"VP8X", &[2, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        chunk(&mut body, b"ANIM", &[0; 6]);
+        chunk(&mut body, b"JUNK", &[0]); // Unknown odd-sized chunks retain RIFF padding.
+        let mut frame = vec![0; 16];
+        frame.extend_from_slice(&webp[12..]);
+        chunk(&mut body, b"ANMF", &frame);
+        let mut animated = b"RIFF".to_vec();
+        animated.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        animated.extend_from_slice(&body);
+        assert!(
+            decode(&animated, "image/webp")
+                .unwrap_err()
+                .contains("animated textures")
+        );
+    }
+
+    #[test]
     fn mip_reduction_uses_linear_light_for_color_maps_and_retains_alpha() {
         let image = Rendered {
             width: 2,
@@ -383,12 +462,20 @@ mod tests {
             serde_json::from_value(serde_json::json!({
                 "asset": {"version":"2.0"}, "buffers":[{"byteLength":bytes.len()}],
                 "bufferViews":[{"buffer":0,"byteLength":bytes.len()}],
-                "images":[{"bufferView":0,"mimeType":"image/png"}], "textures":[{"source":0}]
+                "images":[{"bufferView":0,"mimeType":"image/png"}],
+                "textures":[{"source":0},{"source":0,"sampler":0}],
+                "samplers":[{"wrapS":33071,"wrapT":33648,"magFilter":9728,"minFilter":9984}]
             }))
             .unwrap(),
         )
         .unwrap();
         let mut store = TextureStore::new(&document, &bytes);
+        assert!(
+            store
+                .image(9, false)
+                .unwrap_err()
+                .contains("missing image 9")
+        );
         let color = store.slot(&serde_json::json!({"index":0}), true).unwrap();
         let data = store.slot(&serde_json::json!({"index":0}), false).unwrap();
         assert_eq!(
@@ -404,12 +491,20 @@ mod tests {
             color
         );
         assert_eq!(store.pixels.len(), 7, "one mip chain per image/color space");
+        let sampled = store.slot(&serde_json::json!({"index":1,"texCoord":1,"extensions":{"KHR_texture_transform":{"texCoord":2}}}),true).unwrap();
+        assert_eq!(sampled.uv_set(), 2);
+        assert_eq!(sampled.data[5].to_bits(), 33071);
+        assert_eq!(sampled.data[6].to_bits(), 33648);
+        assert_eq!(sampled.data[7].to_bits(), (9984 << 1) | (1 << 16));
         for info in [
             serde_json::json!({"index":9}),
             serde_json::json!({"index":-1}),
             serde_json::json!({"index":0,"texCoord":4}),
             serde_json::json!({"index":0,"texCoord":4294967296u64}),
             serde_json::json!({"index":0,"extensions":{"KHR_texture_transform":{"scale":[1]}}}),
+            serde_json::json!({"index":0,"extensions":{"KHR_texture_transform":[]}}),
+            serde_json::json!({"index":0,"extensions":{"KHR_texture_transform":{"offset":["bad",0]}}}),
+            serde_json::json!({"index":0,"extensions":{"KHR_texture_transform":{"texCoord":-1}}}),
         ] {
             assert!(store.slot(&info, true).is_err(), "{info}");
         }

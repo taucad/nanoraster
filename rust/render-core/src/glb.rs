@@ -1998,10 +1998,20 @@ mod tests {
             json!({"extensions":{"KHR_materials_unlit":{},"KHR_materials_anisotropy":{}}}),
             json!({"extensions":{"KHR_materials_specular":{"specularColorFactor":[1,2,3]}}}),
             json!({"extensions":{"KHR_materials_transmission":{"transmissionFactor":"yes"}}}),
+            json!({"extensions":{"KHR_materials_clearcoat":[]}}),
+            json!({"extensions":{"KHR_materials_emissive_strength":{"emissiveStrength":1e100}}}),
+            json!({"extensions":{"KHR_materials_dispersion":{"dispersion":-1}}}),
+            json!({"extensions":{"KHR_materials_clearcoat":{"clearcoatNormalTexture":{"scale":1e100}}}}),
+            json!({"extensions":{"KHR_materials_volume":{"attenuationColor":[0,0,"bad"]}}}),
+            json!({"extensions":{"KHR_materials_specular":{"specularColorFactor":[0,0,1e100]}}}),
         ] {
             let (json, bin) = physical_fixture(material.clone(), None);
             assert!(parse_glb(&glb(json, bin)).is_err(), "{material}");
         }
+        let (json, bin) = physical_fixture(json!({"alphaMode":"MASK","alphaCutoff":0.4}), None);
+        let scene = parse_glb(&glb(json, bin)).unwrap();
+        assert_eq!(scene.meshes[0].primitives[0].material.alpha_mode, 1.0);
+        assert_eq!(scene.meshes[0].primitives[0].material.alpha_cutoff, 0.4);
         let (mut json, bin) = physical_fixture(
             json!({"extensions":{"KHR_materials_anisotropy":{"anisotropyStrength":1}}}),
             None,
@@ -2015,6 +2025,103 @@ mod tests {
                 .unwrap_err()
                 .contains("requires TANGENT")
         );
+    }
+
+    #[test]
+    fn physical_vertex_attributes_validate_cardinality_domains_and_texture_references() {
+        let (base, bin) = physical_fixture(json!({}), None);
+        let mut implicit = base.clone();
+        implicit["meshes"][0]["primitives"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("material");
+        let document =
+            gltf::Document::from_json(serde_json::from_value(implicit).unwrap()).unwrap();
+        let material = document
+            .meshes()
+            .next()
+            .unwrap()
+            .primitives()
+            .next()
+            .unwrap()
+            .material();
+        assert_eq!(
+            Material::parse(&material, &mut TextureStore::new(&document, &bin)).unwrap(),
+            Material::default()
+        );
+        let attributes = &base["meshes"][0]["primitives"][0]["attributes"];
+        let tangent = attributes["TANGENT"].as_u64().unwrap() as usize;
+        let uv = attributes["TEXCOORD_0"].as_u64().unwrap() as usize;
+        let rejects = |json: Value, bytes: Vec<u8>, message: &str| {
+            let error = parse_glb(&glb(json, bytes)).unwrap_err();
+            assert!(error.contains(message), "{message}: {error}");
+        };
+        let mut json = base.clone();
+        json["meshes"][0]["primitives"][0]["targets"] = json!([{"POSITION":0}]);
+        rejects(json, bin.clone(), "morph targets");
+        let mut json = base.clone();
+        json["meshes"][0]["primitives"][0]["attributes"]["TEXCOORD_4"] = json!(uv);
+        rejects(json, bin.clone(), "unsupported vertex attribute");
+        let mut json = base.clone();
+        json["accessors"][tangent]["count"] = json!(2);
+        rejects(json, bin.clone(), "TANGENT must be");
+        let mut json = base.clone();
+        json["accessors"][uv]["componentType"] = json!(5123);
+        rejects(json, bin.clone(), "normalized unsigned VEC2");
+        json = base.clone();
+        json["accessors"][uv]["componentType"] = json!(5123);
+        json["accessors"][uv]["normalized"] = json!(true);
+        assert!(parse_glb(&glb(json, bin.clone())).is_ok());
+        for (accessor, value, message) in [
+            (tangent, f32::NAN, "TANGENT must contain"),
+            (tangent, 2.0, "TANGENT must contain"),
+            (uv, f32::NAN, "TEXCOORD values must be finite"),
+        ] {
+            let view = base["accessors"][accessor]["bufferView"].as_u64().unwrap() as usize;
+            let offset = base["bufferViews"][view]["byteOffset"].as_u64().unwrap() as usize;
+            let mut bytes = bin.clone();
+            bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+            rejects(base.clone(), bytes, message);
+        }
+        let mut colored = base.clone();
+        colored["meshes"][0]["primitives"][0]["attributes"]["COLOR_0"] = json!(tangent);
+        let scene = parse_glb(&glb(colored.clone(), bin.clone())).unwrap();
+        assert_eq!(
+            &scene.meshes[0].primitives[0].surface_attributes[0][12..],
+            &[1.0, 0.0, 0.0, 1.0]
+        );
+        colored["meshes"][0]["primitives"][0]["attributes"]
+            .as_object_mut()
+            .unwrap()
+            .remove("TANGENT");
+        let view = base["accessors"][tangent]["bufferView"].as_u64().unwrap() as usize;
+        let offset = base["bufferViews"][view]["byteOffset"].as_u64().unwrap() as usize;
+        let mut bytes = bin.clone();
+        bytes[offset..offset + 4].copy_from_slice(&2.0f32.to_le_bytes());
+        rejects(
+            colored.clone(),
+            bytes,
+            "COLOR_0 values must be finite in [0, 1]",
+        );
+        colored["accessors"][tangent]["componentType"] = json!(5123);
+        rejects(
+            colored.clone(),
+            bin.clone(),
+            "normalized unsigned VEC3/VEC4",
+        );
+        colored["accessors"][tangent]["normalized"] = json!(true);
+        assert!(parse_glb(&glb(colored, bin)).is_ok());
+        let png = crate::encode_png(&crate::Rendered {
+            width: 1,
+            height: 1,
+            rgba: vec![255; 4],
+        })
+        .unwrap();
+        let (json, bin) = physical_fixture(
+            json!({"pbrMetallicRoughness":{"baseColorTexture":{"index":0,"texCoord":3}}}),
+            Some(("image/png", png)),
+        );
+        rejects(json, bin, "material references missing TEXCOORD_3");
     }
 
     #[test]

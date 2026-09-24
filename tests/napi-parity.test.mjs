@@ -27,7 +27,7 @@ test('physical material layers render through the native facade and repeat exact
     options,
   );
   const center = (64 * 128 + 64) * 4;
-  expect(unlit.bytes.slice(center, center + 4)).toEqual(new Uint8Array([118, 170, 218, 255]));
+  expect(Array.from(unlit.bytes.subarray(center, center + 4))).toEqual([118, 170, 218, 255]);
   await expect(
     renderImage(
       physicalMaterialGlb({ extensions: { KHR_materials_anisotropy: { anisotropyStrength: 2 } } }),

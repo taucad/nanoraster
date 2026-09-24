@@ -330,9 +330,6 @@ impl Material {
                 result.textures[slot] = store.slot(info, srgb)?;
             }
         }
-        if result.uniform()[..44].iter().any(|v| !v.is_finite()) {
-            return Err("material factors overflow float32".into());
-        }
         Ok(result)
     }
 }

@@ -2759,7 +2759,7 @@ mod tests {
     fn material_maps_match_factor_equivalents_in_their_declared_channels_and_color_spaces() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
-        let rgba = [64u8, 128, 192, 96];
+        let rgba = [8u8, 128, 192, 96];
         let linear = rgba.map(|v| f32::from(v) / 255.0);
         let srgb = linear.map(|v| {
             if v <= 0.04045 {
@@ -2835,8 +2835,7 @@ mod tests {
                     }
                 }
                 15 => expected.transmission[0] *= linear[0],
-                16 => expected.transmission[1] *= linear[1],
-                _ => unreachable!(),
+                _ => expected.transmission[1] *= linear[1], // Last listed slot: thickness (16).
             }
             let baseline = render_test_scene(
                 &mut renderer,
@@ -2923,6 +2922,10 @@ mod tests {
             normal_matrix: Mat4::IDENTITY,
         });
         let clear = render_test_scene(&mut renderer, scene.clone(), physical_options());
+        let mut constant = scene.clone();
+        constant.meshes[0].primitives[0].surface_attributes.clear();
+        let without_attributes = render_test_scene(&mut renderer, constant, physical_options());
+        assert_eq!(clear.rgba, without_attributes.rgba);
         let center = (48 * 96 + 48) * 4;
         assert!(
             clear.rgba[center + 1] > clear.rgba[center] + 40,
@@ -2965,6 +2968,12 @@ mod tests {
             normal_matrix: Mat4::IDENTITY,
         });
         let first = render_test_scene(&mut renderer, scene.clone(), physical_options());
+        let mut constant = scene.clone();
+        for mesh in &mut constant.meshes {
+            mesh.primitives[0].surface_attributes.clear();
+        }
+        let without_attributes = render_test_scene(&mut renderer, constant, physical_options());
+        assert_eq!(first.rgba, without_attributes.rgba);
         scene.instances.reverse();
         let reordered = render_test_scene(&mut renderer, scene.clone(), physical_options());
         assert_eq!(first.rgba, reordered.rgba);
