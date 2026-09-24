@@ -4,7 +4,7 @@
 
 use crate::material::{number, vector};
 use serde_json::Value;
-use std::{collections::BTreeMap, io::Cursor};
+use std::{collections::BTreeMap, io::Cursor, sync::OnceLock};
 
 pub(crate) const MAX_TEXTURE_PIXELS: usize = 16 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION: u32 = 8192;
@@ -134,13 +134,20 @@ fn decode(bytes: &[u8], mime: &str) -> Result<(u32, u32, Vec<u8>), String> {
 }
 
 pub(crate) fn linear(value: u8, srgb: bool) -> f32 {
-    let v = f32::from(value) / 255.0;
     if !srgb {
-        v
-    } else if v <= 0.04045 {
-        v / 12.92
+        f32::from(value) / 255.0
     } else {
-        ((v + 0.055) / 1.055).powf(2.4)
+        static SRGB_TO_LINEAR: OnceLock<[f32; 256]> = OnceLock::new();
+        SRGB_TO_LINEAR.get_or_init(|| {
+            std::array::from_fn(|index| {
+                let v = index as f32 / 255.0;
+                if v <= 0.04045 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            })
+        })[value as usize]
     }
 }
 pub(crate) fn encoded(value: f32, srgb: bool) -> u8 {
@@ -402,6 +409,20 @@ mod tests {
         );
         assert_eq!(linear(8, true), (8.0 / 255.0) / 12.92);
         assert_eq!(encoded((8.0 / 255.0) / 12.92, true), 8);
+    }
+
+    #[test]
+    fn cached_srgb_decode_matches_the_transfer_function_for_every_byte() {
+        for value in 0..=u8::MAX {
+            let v = f32::from(value) / 255.0;
+            let expected = if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            };
+            assert_eq!(linear(value, true).to_bits(), expected.to_bits());
+            assert_eq!(linear(value, false), v);
+        }
     }
 
     #[test]
