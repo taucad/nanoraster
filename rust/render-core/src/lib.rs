@@ -14,9 +14,11 @@ mod capture_overlay;
 mod driver;
 mod encode;
 mod glb;
+mod material;
 mod options;
 mod render;
 mod section;
+mod texture;
 
 use glb::parse_glb;
 

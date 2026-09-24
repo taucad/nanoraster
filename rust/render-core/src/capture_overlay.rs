@@ -1008,10 +1008,12 @@ mod tests {
                     positions,
                     normals: Vec::new(),
                     indices: (0..8).collect(),
+                    surface_attributes: Vec::new(),
                     material: crate::glb::Material {
                         base_color: [0.0, 0.0, 0.0, 1.0],
                         metallic: 0.0,
                         roughness: 1.0,
+                        ..crate::glb::Material::default()
                     },
                 }],
             }],
@@ -1022,6 +1024,7 @@ mod tests {
                 normal_matrix: Mat4::IDENTITY,
             }],
             topology_diagnostics: Vec::new(),
+            texture_pixels: vec![u32::MAX],
             bounds: Some((min, max)),
         }
     }
@@ -1463,10 +1466,12 @@ mod tests {
                 positions: vec![10_000.0, 10_000.0, 10_000.0, 10_001.0, 10_000.0, 10_000.0],
                 normals: Vec::new(),
                 indices: vec![0, 1],
+                surface_attributes: Vec::new(),
                 material: crate::glb::Material {
                     base_color: [0.0, 0.0, 0.0, 1.0],
                     metallic: 0.0,
                     roughness: 1.0,
+                    ..crate::glb::Material::default()
                 },
             });
         let options = RenderOptions {
@@ -1760,6 +1765,7 @@ mod tests {
             meshes: Vec::new(),
             instances: Vec::new(),
             topology_diagnostics: Vec::new(),
+            texture_pixels: vec![u32::MAX],
             bounds: None,
         };
         let options = RenderOptions::default();

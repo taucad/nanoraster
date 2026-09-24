@@ -262,3 +262,112 @@ export const closedCubeGlb = (copies = 1) => {
     binary,
   );
 };
+
+/** A smooth UV sphere with a glTF tangent frame for physical layer conformance. */
+export const physicalMaterialGlb = (material) => {
+  const positions = [],
+    normals = [],
+    tangents = [],
+    uvs = [],
+    indices = [];
+  const rings = 16,
+    segments = 32;
+  for (let ring = 0; ring <= rings; ring++) {
+    const latitude = (Math.PI * ring) / rings;
+    for (let segment = 0; segment <= segments; segment++) {
+      const longitude = (2 * Math.PI * segment) / segments;
+      const vertex = [
+        Math.sin(latitude) * Math.cos(longitude),
+        Math.cos(latitude),
+        Math.sin(latitude) * Math.sin(longitude),
+      ];
+      positions.push(...vertex);
+      normals.push(...vertex);
+      tangents.push(-Math.sin(longitude), 0, Math.cos(longitude), 1);
+      uvs.push(segment / segments, ring / rings);
+      if (ring < rings && segment < segments) {
+        const a = ring * (segments + 1) + segment,
+          b = a + segments + 1;
+        indices.push(a, a + 1, b, b, a + 1, b + 1);
+      }
+    }
+  }
+  const arrays = [
+    new Float32Array(positions),
+    new Float32Array(normals),
+    new Float32Array(tangents),
+    new Float32Array(uvs),
+    new Uint32Array(indices),
+  ];
+  const binary = new Uint8Array(arrays.reduce((sum, array) => sum + array.byteLength, 0));
+  let offset = 0;
+  const bufferViews = arrays.map((array) => {
+    const view = { buffer: 0, byteOffset: offset, byteLength: array.byteLength };
+    binary.set(new Uint8Array(array.buffer), offset);
+    offset += array.byteLength;
+    return view;
+  });
+  const extensions = Object.keys(material.extensions ?? {});
+  return glb(
+    {
+      asset: { version: '2.0' },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ mesh: 0 }],
+      buffers: [{ byteLength: binary.byteLength }],
+      bufferViews,
+      accessors: [
+        {
+          bufferView: 0,
+          componentType: 5126,
+          count: positions.length / 3,
+          type: 'VEC3',
+          min: [-1, -1, -1],
+          max: [1, 1, 1],
+        },
+        { bufferView: 1, componentType: 5126, count: normals.length / 3, type: 'VEC3' },
+        { bufferView: 2, componentType: 5126, count: tangents.length / 4, type: 'VEC4' },
+        { bufferView: 3, componentType: 5126, count: uvs.length / 2, type: 'VEC2' },
+        { bufferView: 4, componentType: 5125, count: indices.length, type: 'SCALAR' },
+      ],
+      materials: [material],
+      extensionsUsed: extensions,
+      extensionsRequired: extensions,
+      meshes: [
+        {
+          primitives: [
+            {
+              attributes: { POSITION: 0, NORMAL: 1, TANGENT: 2, TEXCOORD_0: 3 },
+              indices: 4,
+              material: 0,
+              mode: 4,
+            },
+          ],
+        },
+      ],
+    },
+    binary,
+  );
+};
+
+/** All ratified physical layers, with their glTF defaults made nontrivial. */
+export const physicalMaterial = {
+  pbrMetallicRoughness: {
+    baseColorFactor: [0.955, 0.638, 0.538, 1],
+    metallicFactor: 0.5,
+    roughnessFactor: 0.25,
+  },
+  emissiveFactor: [0.01, 0.02, 0.03],
+  extensions: {
+    KHR_materials_anisotropy: { anisotropyStrength: 0.8, anisotropyRotation: 0.3 },
+    KHR_materials_clearcoat: { clearcoatFactor: 0.4, clearcoatRoughnessFactor: 0.2 },
+    KHR_materials_dispersion: { dispersion: 0.5 },
+    KHR_materials_emissive_strength: { emissiveStrength: 2 },
+    KHR_materials_ior: { ior: 1.6 },
+    KHR_materials_iridescence: { iridescenceFactor: 0.4 },
+    KHR_materials_sheen: { sheenColorFactor: [0.1, 0.2, 0.3], sheenRoughnessFactor: 0.4 },
+    KHR_materials_specular: { specularFactor: 0.8, specularColorFactor: [0.7, 0.9, 1] },
+    KHR_materials_transmission: { transmissionFactor: 0.4 },
+    KHR_materials_volume: { thicknessFactor: 0.3, attenuationDistance: 0.8, attenuationColor: [0.8, 0.9, 1] },
+  },
+};

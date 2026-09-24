@@ -249,8 +249,7 @@ mod tests {
         let mut pixels = vec![0u8; decoder.output_buffer_size().expect("size")];
         decoder.read_image(&mut pixels).expect("decode");
         assert_eq!(pixels, vec![128, 64, 32, 128, 0, 0, 0, 0]);
-        encode_rgba_webp(vec![128, 64, 32, 128], 1, 1, 100, false)
-            .expect("encode straight pixels");
+        encode_rgba_webp(vec![128, 64, 32, 128], 1, 1, 100, false).expect("encode straight pixels");
     }
 
     #[test]

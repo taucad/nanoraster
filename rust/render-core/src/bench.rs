@@ -116,10 +116,12 @@ pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
                 positions: vec![-axis, 0.0, axis, axis, 0.0, -axis],
                 normals: Vec::new(),
                 indices: vec![0, 1],
+                surface_attributes: Vec::new(),
                 material: crate::glb::Material {
                     base_color: [0.0, 0.0, 0.0, 1.0],
                     metallic: 0.0,
                     roughness: 1.0,
+                    ..crate::glb::Material::default()
                 },
             }],
         }],
@@ -130,6 +132,7 @@ pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
             normal_matrix: glam::Mat4::IDENTITY,
         }],
         topology_diagnostics: Vec::new(),
+        texture_pixels: vec![u32::MAX],
         bounds: None,
     };
     let mut report = serde_json::json!({

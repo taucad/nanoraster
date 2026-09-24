@@ -5,7 +5,13 @@ import initBench, { codec_conformance, render_image as renderImageBench } from '
 import { createRenderer, RenderError, renderImage } from 'nanoraster';
 
 import { describeAdapter } from '../../src/describe-adapter.ts';
-import { countDefaultMaterialCapPixels, sparseManifoldCubeGlb, withPbrFactors } from '../pbr-fixture.mjs';
+import {
+  countDefaultMaterialCapPixels,
+  sparseManifoldCubeGlb,
+  withPbrFactors,
+  physicalMaterialGlb,
+  physicalMaterial,
+} from '../pbr-fixture.mjs';
 
 let glb;
 let cubeGlb;
@@ -398,4 +404,31 @@ test('should reject a malformed GLB with a parse error through the packed public
     expect(error.code).toBe('parse');
     expect(error.isGpuFault).toBe(false);
   }
+});
+
+test('physical material layers survive the public WebGPU facade and repeat exactly', async () => {
+  const options = { width: 128, height: 128, format: 'raw', background: '#FFFFFF', lines: false };
+  const bytes = physicalMaterialGlb(physicalMaterial);
+  const first = await renderImage(bytes, options);
+  expect(first.bytes).toEqual((await renderImage(bytes, options)).bytes);
+  const plain = await renderImage(
+    physicalMaterialGlb({ pbrMetallicRoughness: physicalMaterial.pbrMetallicRoughness }),
+    options,
+  );
+  expect(first.bytes).not.toEqual(plain.bytes);
+  const unlit = await renderImage(
+    physicalMaterialGlb({
+      pbrMetallicRoughness: { baseColorFactor: [0.18, 0.4, 0.7, 1] },
+      extensions: { KHR_materials_unlit: {} },
+    }),
+    options,
+  );
+  const center = (64 * 128 + 64) * 4;
+  expect(unlit.bytes.slice(center, center + 4)).toEqual(new Uint8Array([118, 170, 218, 255]));
+  await expect(
+    renderImage(
+      physicalMaterialGlb({ extensions: { KHR_materials_anisotropy: { anisotropyStrength: 2 } } }),
+      options,
+    ),
+  ).rejects.toThrow(/anisotropyStrength/);
 });

@@ -145,14 +145,51 @@ arm64 and armv7 hardware.
 
 ## Render profile
 
-| glTF 2.0 feature                                                   | Supported |
-| ------------------------------------------------------------------ | --------- |
-| Factor-only `baseColorFactor`, `metallicFactor`, `roughnessFactor` | Yes       |
-| Valid `EXT_mesh_manifold` topology                                 | Yes       |
-| All texture-backed PBR materials                                   | No        |
-| Surface-less WebGPU rendering                                      | Yes       |
+The renderer consumes standard glTF metallic-roughness materials, including
+embedded PNG, JPEG and WebP images. It supports the eleven ratified material
+extensions: `KHR_materials_anisotropy`, `KHR_materials_clearcoat`,
+`KHR_materials_dispersion`, `KHR_materials_emissive_strength`,
+`KHR_materials_ior`, `KHR_materials_iridescence`, `KHR_materials_sheen`,
+`KHR_materials_specular`, `KHR_materials_transmission`, `KHR_materials_unlit`
+and `KHR_materials_volume`.
 
-Factor-only metallic-roughness materials use deterministic analytic studio
-lighting. `EXT_mesh_manifold` supplies exact section topology while the base
-primitives remain authoritative for rendering. Texture-backed materials return
-a parse error.
+Core base-color, metallic-roughness, normal, occlusion and emissive maps and
+all maps belonging to those material extensions are sampled with their glTF
+channel and color-space rules. `KHR_texture_transform`, four UV sets, vertex
+colors, tangent frames, sampler wrapping/filtering and mipmaps are supported.
+Anisotropy requires a tangent frame or a normal map with suitable UVs.
+`OPAQUE`, `MASK`, `BLEND` and double-sided materials preserve their glTF
+semantics. Unknown required extensions and malformed material data fail with
+a parse error. Unknown optional extensions retain the glTF fallback behavior.
+
+`EXT_mesh_manifold` supplies exact section topology while base primitives
+remain authoritative for rendering. Authored line primitives remain the edge
+source; material shading does not replace them with image edge detection.
+
+### Limits
+
+- Images must be embedded in GLB buffer views. External image URLs, KTX2/Basis
+  and compressed mesh extensions are not decoded.
+- Decoded images are bounded to 8,192 pixels per dimension and the combined
+  mip storage to 16 million pixels (64 MB). Oversized inputs fail explicitly.
+- Refraction samples retained opaque scene color. It does not trace objects
+  outside the image, transparent layers behind transparent layers, multiple
+  internal bounces or caustics. Rough transmission uses nine filtered taps.
+- Lighting remains the deterministic analytic studio with ACES output. No
+  screen-space ambient occlusion or HDR environment-file loader is added.
+  Identical glTF materials therefore need not match a different viewer's
+  lighting, tone mapping or ambient occlusion pixel for pixel.
+- Draft material extensions, including diffuse transmission and subsurface
+  scattering, are outside this ratified extension set.
+
+Material factors, all 17 map slots, alpha/depth ordering, transmission,
+attenuation and repeated-render determinism are exercised by the Rust GPU
+suite. The native and browser suites additionally exercise the public API.
+
+### Physical-material size admission
+
+The production WASM measures 1,949,963 bytes raw, 728,947 gzip-9 and 554,048
+Brotli-11 with Rust 1.98.0, Binaryen 132 and Node 26.8.1. This is an explicit
+431,841-byte raw increase over the previous admission for image decoding,
+physical shading and the HDR transmission pass. `scripts/check-wasm-size.mjs`
+records the exact budget; benchmark entry points remain excluded.

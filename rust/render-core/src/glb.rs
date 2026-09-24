@@ -17,15 +17,11 @@ pub(crate) const MODE_LINES: u32 = 1;
 const MAX_ACCESSOR_VALUES: usize = 4_000_000;
 const MAX_TOTAL_ACCESSOR_VALUES: usize = 8_000_000;
 
-#[derive(Debug, PartialEq)]
-pub(crate) struct Material {
-    /// Linear-space straight-alpha base color.
-    pub(crate) base_color: [f32; 4],
-    pub(crate) metallic: f32,
-    pub(crate) roughness: f32,
-}
+pub(crate) use crate::material::Material;
+use crate::texture::{MAX_UV_SETS, TextureStore};
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct Primitive {
     pub(crate) source_index: usize,
     /// 4 = TRIANGLES, 1 = LINES.
@@ -33,11 +29,14 @@ pub(crate) struct Primitive {
     pub(crate) positions: Vec<f32>,
     /// Empty for LINES primitives without authored normals.
     pub(crate) normals: Vec<f32>,
+    /// Tangent, UV0/1, UV2/3 and vertex color, packed in four vec4s.
+    pub(crate) surface_attributes: Vec<[f32; 16]>,
     pub(crate) indices: Vec<u32>,
     pub(crate) material: Material,
 }
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct MeshAsset {
     pub(crate) source_index: usize,
     pub(crate) primitives: Vec<Primitive>,
@@ -45,12 +44,14 @@ pub(crate) struct MeshAsset {
 }
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct ManifoldTopology {
     pub(crate) indices: Vec<u32>,
     pub(crate) primitive_ranges: Vec<Range<usize>>,
 }
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct TopologyDiagnostic {
     pub(crate) code: &'static str,
     pub(crate) mesh_index: usize,
@@ -58,6 +59,7 @@ pub(crate) struct TopologyDiagnostic {
 }
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct MeshInstance {
     pub(crate) source_node_index: usize,
     pub(crate) mesh_index: usize,
@@ -66,10 +68,12 @@ pub(crate) struct MeshInstance {
 }
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct Scene {
     pub(crate) meshes: Vec<MeshAsset>,
     pub(crate) instances: Vec<MeshInstance>,
     pub(crate) topology_diagnostics: Vec<TopologyDiagnostic>,
+    pub(crate) texture_pixels: Vec<u32>,
     /// Exact world-space bounds over vertices referenced by draw indices.
     pub(crate) bounds: Option<([f32; 3], [f32; 3])>,
 }
@@ -273,23 +277,6 @@ fn validate_vec3(accessor: gltf::Accessor<'_>, semantic: &str) -> Result<(), Str
         return Err(format!("{semantic} must be a float32 VEC3 accessor"));
     }
     Ok(())
-}
-
-fn validate_material(material: &gltf::Material<'_>) -> Result<Material, String> {
-    let pbr = material.pbr_metallic_roughness();
-    if pbr.base_color_texture().is_some()
-        || pbr.metallic_roughness_texture().is_some()
-        || material.normal_texture().is_some()
-        || material.occlusion_texture().is_some()
-        || material.emissive_texture().is_some()
-    {
-        return Err("texture-backed materials are not supported".into());
-    }
-    Ok(Material {
-        base_color: pbr.base_color_factor(),
-        metallic: pbr.metallic_factor(),
-        roughness: pbr.roughness_factor(),
-    })
 }
 
 #[derive(Deserialize)]
@@ -546,6 +533,7 @@ fn decode_mesh(
     bin: &[u8],
     sections_requested: bool,
     manifold_required: bool,
+    materials: &[Material],
 ) -> Result<(MeshAsset, Option<TopologyDiagnostic>), String> {
     let source_index = mesh.index();
     let mut primitives = Vec::new();
@@ -559,7 +547,14 @@ fn decode_mesh(
             return Err("morph targets are not supported".into());
         }
         for (semantic, _) in primitive.attributes() {
-            if !matches!(semantic, Semantic::Positions | Semantic::Normals) {
+            if !matches!(
+                semantic,
+                Semantic::Positions
+                    | Semantic::Normals
+                    | Semantic::Tangents
+                    | Semantic::Colors(0)
+                    | Semantic::TexCoords(0..=3)
+            ) {
                 return Err(format!("unsupported vertex attribute {semantic:?}"));
             }
         }
@@ -605,6 +600,111 @@ fn decode_mesh(
         }
 
         let vertex_count = positions.len() / 3;
+        let has_surface_attributes = primitive.attributes().any(|(semantic, _)| {
+            matches!(
+                semantic,
+                Semantic::Tangents | Semantic::TexCoords(_) | Semantic::Colors(_)
+            )
+        });
+        let mut surface_attributes = vec![
+            [0.0; 16];
+            if has_surface_attributes {
+                vertex_count
+            } else {
+                0
+            }
+        ];
+        for attributes in &mut surface_attributes {
+            attributes[12..].fill(1.0);
+        }
+        if let Some(accessor) = primitive.get(&Semantic::Tangents) {
+            if accessor.data_type() != DataType::F32
+                || accessor.dimensions() != Dimensions::Vec4
+                || accessor.count() != vertex_count
+            {
+                return Err("TANGENT must be a float32 VEC4 matching POSITION count".into());
+            }
+            let tangents = reader.read_tangents().ok_or("TANGENT data exceeds BIN")?;
+            for (attributes, tangent) in surface_attributes.iter_mut().zip(tangents) {
+                let length = Vec3::from_slice(&tangent[..3]).length();
+                if tangent.iter().any(|v| !v.is_finite())
+                    || (length - 1.0).abs() > 0.001
+                    || tangent[3].abs() != 1.0
+                {
+                    return Err(
+                        "TANGENT must contain a unit direction and handedness of +1 or -1".into(),
+                    );
+                }
+                attributes[..4].copy_from_slice(&tangent);
+            }
+        }
+        let mut uv_present = [false; MAX_UV_SETS];
+        for (set, present) in uv_present.iter_mut().enumerate() {
+            if let Some(accessor) = primitive.get(&Semantic::TexCoords(set as u32)) {
+                if accessor.dimensions() != Dimensions::Vec2
+                    || accessor.count() != vertex_count
+                    || !(accessor.data_type() == DataType::F32
+                        || (accessor.normalized()
+                            && matches!(accessor.data_type(), DataType::U8 | DataType::U16)))
+                {
+                    return Err(format!(
+                        "TEXCOORD_{set} must be float32 or normalized unsigned VEC2 matching POSITION count"
+                    ));
+                }
+                let values = reader
+                    .read_tex_coords(set as u32)
+                    .ok_or("TEXCOORD data exceeds BIN")?
+                    .into_f32();
+                for (attributes, uv) in surface_attributes.iter_mut().zip(values) {
+                    if uv.iter().any(|v| !v.is_finite()) {
+                        return Err("TEXCOORD values must be finite".into());
+                    }
+                    attributes[4 + set * 2..6 + set * 2].copy_from_slice(&uv);
+                }
+                *present = true;
+            }
+        }
+        if let Some(accessor) = primitive.get(&Semantic::Colors(0)) {
+            if !matches!(accessor.dimensions(), Dimensions::Vec3 | Dimensions::Vec4)
+                || accessor.count() != vertex_count
+                || !(accessor.data_type() == DataType::F32
+                    || (accessor.normalized()
+                        && matches!(accessor.data_type(), DataType::U8 | DataType::U16)))
+            {
+                return Err("COLOR_0 must be float32 or normalized unsigned VEC3/VEC4 matching POSITION count".into());
+            }
+            let values = reader
+                .read_colors(0)
+                .ok_or("COLOR_0 data exceeds BIN")?
+                .into_rgba_f32();
+            for (attributes, color) in surface_attributes.iter_mut().zip(values) {
+                if color
+                    .iter()
+                    .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+                {
+                    return Err("COLOR_0 values must be finite in [0, 1]".into());
+                }
+                attributes[12..].copy_from_slice(&color);
+            }
+        }
+        let material = primitive
+            .material()
+            .index()
+            .map_or_else(Material::default, |index| materials[index].clone());
+        for texture in material.textures.iter().filter(|t| t.present()) {
+            if !uv_present[texture.uv_set()] {
+                return Err(format!(
+                    "material references missing TEXCOORD_{}",
+                    texture.uv_set()
+                ));
+            }
+        }
+        if material.anisotropy[0] > 0.0
+            && primitive.get(&Semantic::Tangents).is_none()
+            && !material.textures[2].present()
+        {
+            return Err("anisotropy requires TANGENT or a normal texture".into());
+        }
         let indices: Vec<u32> = reader.read_indices().map_or_else(
             || (0..vertex_count as u32).collect(),
             |values| values.into_u32().collect(),
@@ -629,7 +729,8 @@ fn decode_mesh(
             positions,
             normals,
             indices,
-            material: validate_material(&primitive.material())?,
+            material,
+            surface_attributes,
         });
     }
     let (manifold, diagnostic) = if sections_requested || manifold_required {
@@ -676,22 +777,26 @@ fn parse_glb_impl(bytes: &[u8], sections_requested: bool) -> Result<Scene, Strin
     let glb = gltf::binary::Glb::from_slice(bytes).map_err(|error| error.to_string())?;
     let mut json: gltf::json::Root = gltf::json::deserialize::from_slice(&glb.json)
         .map_err(|error| format!("glTF JSON: {error}"))?;
-    if let Some(extension) = json
-        .extensions_required
-        .iter()
-        .find(|extension| extension.as_str() != "EXT_mesh_manifold")
-    {
+    if let Some(extension) = json.extensions_required.iter().find(|extension| {
+        extension.as_str() != "EXT_mesh_manifold"
+            && !crate::material::MATERIAL_EXTENSIONS.contains(&extension.as_str())
+    }) {
         return Err(format!("unsupported required extension {extension}"));
     }
     let manifold_required = json
         .extensions_required
         .iter()
         .any(|extension| extension == "EXT_mesh_manifold");
-    json.extensions_required
-        .retain(|extension| extension != "EXT_mesh_manifold");
+    json.extensions_required.clear();
     let document = gltf::Document::from_json(json).map_err(|error| error.to_string())?;
     let bin = glb.bin.as_deref().unwrap_or_default();
     validate_document(&document, bin)?;
+    let mut texture_store = TextureStore::new(&document, bin);
+    let materials: Vec<Material> = document
+        .materials()
+        .map(|material| Material::parse(&material, &mut texture_store))
+        .collect::<Result<_, _>>()?;
+    let texture_pixels = texture_store.pixels;
 
     let Some(scene) = document
         .default_scene()
@@ -701,6 +806,7 @@ fn parse_glb_impl(bytes: &[u8], sections_requested: bool) -> Result<Scene, Strin
             meshes: Vec::new(),
             instances: Vec::new(),
             topology_diagnostics: Vec::new(),
+            texture_pixels,
             bounds: None,
         });
     };
@@ -736,8 +842,14 @@ fn parse_glb_impl(bytes: &[u8], sections_requested: bool) -> Result<Scene, Strin
                 Some(index) => index,
                 None => {
                     let index = meshes.len();
-                    let (mesh, diagnostic) =
-                        decode_mesh(mesh, &document, bin, sections_requested, manifold_required)?;
+                    let (mesh, diagnostic) = decode_mesh(
+                        mesh,
+                        &document,
+                        bin,
+                        sections_requested,
+                        manifold_required,
+                        &materials,
+                    )?;
                     meshes.push(mesh);
                     topology_diagnostics.extend(diagnostic);
                     mesh_map[source_index] = Some(index);
@@ -761,6 +873,7 @@ fn parse_glb_impl(bytes: &[u8], sections_requested: bool) -> Result<Scene, Strin
         meshes,
         instances,
         topology_diagnostics,
+        texture_pixels,
         bounds: None,
     };
     let mut bounds: Option<(Vec3, Vec3)> = None;
@@ -1784,6 +1897,177 @@ mod tests {
         assert!(scene.bounds.is_none());
     }
 
+    fn physical_fixture(material: Value, image: Option<(&str, Vec<u8>)>) -> (Value, Vec<u8>) {
+        let source = fixture(Layout::Packed, 5125, true);
+        let parsed = gltf::binary::Glb::from_slice(&source).unwrap();
+        let mut json: Value = serde_json::from_slice(&parsed.json).unwrap();
+        let mut bin = parsed.bin.unwrap().into_owned();
+        json["materials"][0] = material;
+        for (semantic, dimensions, values) in [
+            ("TANGENT", "VEC4", [1.0f32, 0.0, 0.0, 1.0].repeat(3)),
+            ("TEXCOORD_0", "VEC2", vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0]),
+            ("TEXCOORD_1", "VEC2", vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0]),
+        ] {
+            let range = append(&mut bin, bytemuck::cast_slice(&values));
+            let view = json["bufferViews"].as_array().unwrap().len();
+            json["bufferViews"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"buffer":0,"byteOffset":range.0,"byteLength":range.1}));
+            let accessor = json["accessors"].as_array().unwrap().len();
+            json["accessors"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"bufferView":view,"componentType":5126,"count":3,"type":dimensions}));
+            json["meshes"][0]["primitives"][0]["attributes"][semantic] = json!(accessor);
+        }
+        if let Some((mime, bytes)) = image {
+            let range = append(&mut bin, &bytes);
+            let view = json["bufferViews"].as_array().unwrap().len();
+            json["bufferViews"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"buffer":0,"byteOffset":range.0,"byteLength":range.1}));
+            json["images"] = json!([{"bufferView":view,"mimeType":mime}]);
+            json["textures"] = json!([{"source":0}]);
+        }
+        json["buffers"][0]["byteLength"] = json!(bin.len());
+        (json, bin)
+    }
+
+    #[test]
+    fn material_admission_preserves_factors_maps_uvs_and_tangents() {
+        let map = json!({"index":0,"texCoord":1,"extensions":{"KHR_texture_transform":{"offset":[0.1,0.2],"scale":[2,3],"rotation":0.4}}});
+        let material = json!({
+            "pbrMetallicRoughness":{"baseColorFactor":[0.8,0.4,0.1,0.7],"metallicFactor":0.6,"roughnessFactor":0.2,"baseColorTexture":map,"metallicRoughnessTexture":map},
+            "normalTexture":map,"occlusionTexture":map,"emissiveTexture":map,
+            "emissiveFactor":[0.2,0.3,0.4],"alphaMode":"BLEND","doubleSided":true,
+            "extensions":{
+                "KHR_materials_anisotropy":{"anisotropyStrength":0.9,"anisotropyRotation":0.6,"anisotropyTexture":map},
+                "KHR_materials_clearcoat":{"clearcoatFactor":0.5,"clearcoatRoughnessFactor":0.1,"clearcoatTexture":map,"clearcoatRoughnessTexture":map,"clearcoatNormalTexture":map},
+                "KHR_materials_sheen":{"sheenColorFactor":[0.1,0.2,0.3],"sheenRoughnessFactor":0.4,"sheenColorTexture":map,"sheenRoughnessTexture":map},
+                "KHR_materials_specular":{"specularFactor":0.7,"specularColorFactor":[0.4,0.5,0.6],"specularTexture":map,"specularColorTexture":map},
+                "KHR_materials_iridescence":{"iridescenceFactor":0.3,"iridescenceIor":1.6,"iridescenceThicknessMinimum":150,"iridescenceThicknessMaximum":450,"iridescenceTexture":map,"iridescenceThicknessTexture":map},
+                "KHR_materials_transmission":{"transmissionFactor":0.8,"transmissionTexture":map},
+                "KHR_materials_volume":{"thicknessFactor":0.003,"thicknessTexture":map,"attenuationColor":[0.8,0.9,1],"attenuationDistance":0.01},
+                "KHR_materials_ior":{"ior":1.7},"KHR_materials_dispersion":{"dispersion":0.2},"KHR_materials_emissive_strength":{"emissiveStrength":3}
+            }
+        });
+        let png = crate::encode_png(&crate::Rendered {
+            width: 1,
+            height: 1,
+            rgba: vec![128, 64, 32, 255],
+        })
+        .unwrap();
+        let (json, bin) = physical_fixture(material, Some(("image/png", png)));
+        let scene = parse_glb(&glb(json, bin)).unwrap();
+        let primitive = &scene.meshes[0].primitives[0];
+        let m = &primitive.material;
+        assert_eq!(m.base_color, [0.8, 0.4, 0.1, 0.7]);
+        assert_eq!(m.transmission, [0.8, 0.003, 1.7, 0.2]);
+        assert_eq!(m.attenuation, [0.8, 0.9, 1.0, 100.0]);
+        assert_eq!(m.coat, [0.5, 0.1, 1.0, 1.0]);
+        assert_eq!(m.iridescence, [0.3, 1.6, 150.0, 450.0]);
+        assert_eq!(m.sheen, [0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(m.specular, [0.4, 0.5, 0.6, 0.7]);
+        assert!((m.emissive[1] - 0.9).abs() < 0.00001);
+        assert!(
+            m.textures
+                .iter()
+                .all(|texture| texture.present() && texture.uv_set() == 1)
+        );
+        assert_eq!(
+            &primitive.surface_attributes[0][..8],
+            &[1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0]
+        );
+        assert_eq!(
+            scene.texture_pixels.len(),
+            3,
+            "color and data maps share two image copies"
+        );
+    }
+
+    #[test]
+    fn physical_materials_fail_closed_on_invalid_factors_or_missing_attributes() {
+        for material in [
+            json!({"extensions":{"KHR_materials_ior":{"ior":0.5}}}),
+            json!({"extensions":{"KHR_materials_volume":{"attenuationDistance":0}}}),
+            json!({"extensions":{"KHR_materials_anisotropy":{"anisotropyStrength":1.1}}}),
+            json!({"extensions":{"KHR_materials_clearcoat":{"clearcoatFactor":-0.1}}}),
+            json!({"extensions":{"KHR_materials_iridescence":{"iridescenceThicknessMinimum":500}}}),
+            json!({"extensions":{"KHR_materials_unlit":{},"KHR_materials_anisotropy":{}}}),
+            json!({"extensions":{"KHR_materials_specular":{"specularColorFactor":[1,2,3]}}}),
+            json!({"extensions":{"KHR_materials_transmission":{"transmissionFactor":"yes"}}}),
+        ] {
+            let (json, bin) = physical_fixture(material.clone(), None);
+            assert!(parse_glb(&glb(json, bin)).is_err(), "{material}");
+        }
+        let (mut json, bin) = physical_fixture(
+            json!({"extensions":{"KHR_materials_anisotropy":{"anisotropyStrength":1}}}),
+            None,
+        );
+        json["meshes"][0]["primitives"][0]["attributes"]
+            .as_object_mut()
+            .unwrap()
+            .remove("TANGENT");
+        assert!(
+            parse_glb(&glb(json, bin))
+                .unwrap_err()
+                .contains("requires TANGENT")
+        );
+    }
+
+    #[test]
+    fn required_webp_texture_without_a_png_fallback_is_admitted() {
+        let image = crate::encode_webp(
+            &crate::Rendered {
+                width: 1,
+                height: 1,
+                rgba: vec![20, 40, 60, 255],
+            },
+            100,
+        )
+        .unwrap();
+        let (mut json, bin) = physical_fixture(
+            json!({"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}),
+            Some(("image/webp", image)),
+        );
+        json["textures"] = json!([{"extensions":{"EXT_texture_webp":{"source":0}}}]);
+        json["extensionsUsed"] = json!(["EXT_texture_webp"]);
+        json["extensionsRequired"] = json!(["EXT_texture_webp"]);
+        assert!(parse_glb(&glb(json, bin)).is_ok());
+    }
+
+    #[test]
+    fn admits_required_standard_physical_materials() {
+        let source = fixture(Layout::Packed, 5125, true);
+        let parsed = gltf::binary::Glb::from_slice(&source).expect("fixture");
+        let base: Value = serde_json::from_slice(&parsed.json).expect("json");
+        let bin = parsed.bin.expect("bin").into_owned();
+        for extension in [
+            "KHR_materials_anisotropy",
+            "KHR_materials_clearcoat",
+            "KHR_materials_dispersion",
+            "KHR_materials_emissive_strength",
+            "KHR_materials_ior",
+            "KHR_materials_iridescence",
+            "KHR_materials_sheen",
+            "KHR_materials_specular",
+            "KHR_materials_transmission",
+            "KHR_materials_unlit",
+            "KHR_materials_volume",
+        ] {
+            let mut json = base.clone();
+            json["extensionsUsed"] = json!([extension]);
+            json["extensionsRequired"] = json!([extension]);
+            json["materials"][0]["extensions"] = json!({extension: {}});
+            assert!(
+                parse_glb(&glb(json, bin.clone())).is_ok(),
+                "must support {extension}"
+            );
+        }
+    }
+
     #[test]
     fn unsupported_profile_features_fail_deterministically() {
         let source = fixture(Layout::Packed, 5125, true);
@@ -1838,7 +2122,7 @@ mod tests {
         texture["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"] = json!({"index": 0});
         assert_eq!(
             parse_glb(&glb(texture, bin.clone())).unwrap_err(),
-            "texture-backed materials are not supported"
+            "textures must use embedded image bufferViews"
         );
 
         let mut morph = base.clone();
@@ -1941,11 +2225,7 @@ mod tests {
 
         let mut unsupported_attribute = base.clone();
         unsupported_attribute["meshes"][0]["primitives"][0]["attributes"]["TEXCOORD_0"] = json!(0);
-        cases.push((
-            unsupported_attribute,
-            bin.clone(),
-            "unsupported vertex attribute",
-        ));
+        cases.push((unsupported_attribute, bin.clone(), "TEXCOORD_0 must be"));
 
         let mut wrong_indices = base.clone();
         wrong_indices["accessors"][2]["type"] = json!("VEC2");
@@ -2036,10 +2316,12 @@ mod tests {
                     positions: vec![2.0, 0.0, 0.0],
                     normals: vec![1.0, 0.0, 0.0],
                     indices: vec![0],
+                    surface_attributes: Vec::new(),
                     material: Material {
                         base_color: [1.0; 4],
                         metallic: 1.0,
                         roughness: 1.0,
+                        ..Material::default()
                     },
                 }],
             }],
@@ -2050,6 +2332,7 @@ mod tests {
                 normal_matrix: Mat4::IDENTITY,
             }],
             topology_diagnostics: Vec::new(),
+            texture_pixels: vec![u32::MAX],
             bounds: None,
         };
         assert!(scene.for_each_draw_position(&mut drop).is_err());

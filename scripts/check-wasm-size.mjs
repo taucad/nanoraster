@@ -127,7 +127,14 @@ const sizes = {
 // basis; the compressed figures land inside their 0.5% compressor allowance.
 // Standalone RGBA WebP encoder: 1,518,122 raw — +1,684 for exposing the
 // existing WebP codec without renderer initialization.
-const ceilings = { raw: 1_518_122, gzip9: 569_364, brotli11: 431_345 };
+// Physical-material build: 1,949,963 / 728,947 / 554,048 on Rust 1.98.0,
+// Binaryen 132 and Node 26.8.1 — +431,841 raw (+28.4%), +159,583 gzip-9
+// (+28.0%), +122,703 brotli-11 (+28.4%) over the preceding admission.
+// This explicitly admits embedded PNG/JPEG decoding, bounded texture mip
+// storage, the eleven ratified material extensions, HDR transmission and
+// the final tone-map pass. Unused texture paths specialize out at pipeline
+// creation; production WASM still excludes the benchmark surface.
+const ceilings = { raw: 1_949_963, gzip9: 728_947, brotli11: 554_048 };
 
 // `raw` is the artifact and is byte-reproducible, so it is enforced exactly.
 // The compressed figures are not properties of the artifact alone: they are
