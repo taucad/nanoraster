@@ -93,12 +93,14 @@ fn tangent_frame(in: MeshOut, n: vec3<f32>, uv: vec2<f32>) -> mat3x3<f32> {
 }
 
 fn mapped_normal(in: MeshOut, normal: vec3<f32>, index: u32, strength: f32) -> vec3<f32> {
-    // Evaluate the derivative frame before selecting the optional map. This
-    // function serves both base and clearcoat normals in the same fragment.
+    // Eliminate absent scene maps before evaluating their frame. For maps in
+    // use, evaluate derivatives before the per-material presence branch.
+    if ((TEXTURE_MASK & (1u << index)) == 0u) { return normal; }
     let tbn = tangent_frame(in, normal, map_uv(in, index));
+    if (!has_map(index)) { return normal; }
     var map = sample_map(in, index).xyz * 2.0 - 1.0;
     map = vec3<f32>(map.xy * strength, map.z);
-    return select(normal, normalize(tbn * normalize(map)), has_map(index));
+    return normalize(tbn * normalize(map));
 }
 
 // Spectral sensitivity fit from Belcour & Barla's thin-film model, as used
