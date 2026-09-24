@@ -194,7 +194,9 @@ suite. The native and browser suites additionally exercise the public API.
 
 The production WASM admission is 2,343,127 bytes raw, 1,095,971 gzip-9 and
 916,657 Brotli-11 locally with Rust 1.98.0, Binaryen 132 and Node 26.8.1.
-The optional AO path adds 87,535 raw bytes over the preceding material build,
-including a 65,536-byte blue-noise texture. `scripts/check-wasm-size.mjs`
+The initial optional AO path added 87,051 raw bytes over the preceding
+material-only build (2,255,592 to 2,342,643), including a 65,536-byte
+blue-noise texture. Later material and AO fixes bring the combined build to
+the size above. `scripts/check-wasm-size.mjs`
 records the explicit budget and CI compressor allowance; benchmark entry points
 remain excluded.

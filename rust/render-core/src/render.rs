@@ -3392,6 +3392,7 @@ mod tests {
             vertex[1] *= 0.5;
         }
         let mut neighbor = strip.clone();
+        // Column 133 samples this front, one-pixel strip; the rear strip is context.
         for vertex in neighbor.positions.as_chunks_mut::<3>().0 {
             vertex[0] += 0.05;
             vertex[2] += 0.02;

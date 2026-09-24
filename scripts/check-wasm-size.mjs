@@ -144,7 +144,7 @@ const sizes = {
 // PNG decoder monomorphization (168,088 raw bytes in the first candidate).
 // v8 benchmark identity records the intentional lighting/output change.
 // Optional full-resolution AO: 2,342,643 / 1,095,564 / 916,905 locally on
-// Node 26.8.1. The +87,062 raw bytes include the 65,536-byte N8AO blue-noise
+// Node 26.8.1. The +87,051 raw bytes include the 65,536-byte N8AO blue-noise
 // texture and the separate depth/estimator/denoiser shader. The gzip ceiling
 // also carries the 6,840-byte compressor spread observed on the preceding
 // byte-identical CI Node 26.10 artifact; the 0.5% tolerance below is unchanged.
@@ -152,8 +152,10 @@ const sizes = {
 // 916,737 locally on Rust 1.98.0 and Node 26.8.1. CI's macOS artifact was
 // 2,342,808 raw; the exact raw gate admits the larger measured build. The
 // gzip ceiling retains the measured 6,840-byte compressor spread above.
-// Combined AO normal fixes and bounded emission: 2,343,127 / 1,095,971 /
-// 916,657 locally on the pinned Rust 1.98.0 and Node 26.8.1 toolchain.
+// Scale-free and thin-feature AO normals add 303 raw bytes over the updated
+// material baseline: 2,342,824 -> 2,343,127 raw, 1,095,971 gzip-9 and
+// 916,657 Brotli-11 locally on Rust 1.98.0 and Node 26.8.1; the CI macOS
+// artifact was 2,343,120 raw.
 const ceilings = { raw: 2_343_127, gzip9: 1_102_663, brotli11: 916_737 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
