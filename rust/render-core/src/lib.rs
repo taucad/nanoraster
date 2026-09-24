@@ -14,6 +14,7 @@ mod capture_overlay;
 mod driver;
 mod encode;
 mod glb;
+mod lighting;
 mod material;
 mod options;
 mod render;
@@ -154,10 +155,10 @@ pub struct ResolvedLighting {
     pub lights: Vec<ResolvedLight>,
     /// Flat multiplier on the diffuse colour.
     pub ambient: f32,
-    /// Whether the analytic environment contributes (specular *and* diffuse).
+    /// Whether the studio environment contributes (specular *and* diffuse).
     pub environment: bool,
     pub space: LightingSpace,
-    /// Linear multiplier applied before the ACES tone map.
+    /// Linear multiplier applied before the PBR Neutral tone map.
     pub exposure: f32,
 }
 
@@ -195,27 +196,16 @@ pub const MAX_SECTION_PLANES: usize = 8;
 impl ResolvedLighting {
     /// The studio preset — the one definition of the built-in rig. `fs_mesh`
     /// carries no lighting literals of its own; it reads these through the
-    /// uniform. Directions are the Tau viewer's `performance` lights
-    /// projected into view space: key upper-left-front, fill opposite it,
-    /// headlamp above the camera.
+    /// uniform. Matches Tau's neutral-room editing profile: one view-space
+    /// headlamp and ambient irradiance converted to a Lambert multiplier.
     #[must_use]
     pub fn studio() -> Self {
         Self {
-            lights: vec![
-                ResolvedLight {
-                    direction: [-0.45, 0.61, 0.63],
-                    color: [2.09, 2.09, 2.09],
-                },
-                ResolvedLight {
-                    direction: [0.45, -0.61, -0.63],
-                    color: [1.45, 1.42, 1.38],
-                },
-                ResolvedLight {
-                    direction: [0.03, 0.74, 0.67],
-                    color: [0.68, 0.66, 0.62],
-                },
-            ],
-            ambient: 0.02,
+            lights: vec![ResolvedLight {
+                direction: [1.0; 3],
+                color: [1.5; 3],
+            }],
+            ambient: 0.1 / std::f32::consts::PI,
             environment: true,
             space: LightingSpace::View,
             exposure: 1.0,
@@ -1007,8 +997,8 @@ mod tests {
         assert!(!options.scale_bar);
         assert_eq!(options.lighting, ResolvedLighting::studio());
         assert_eq!(ResolvedLighting::default(), ResolvedLighting::studio());
-        assert_eq!(options.lighting.lights.len(), 3);
-        assert_eq!(options.lighting.ambient, 0.02);
+        assert_eq!(options.lighting.lights.len(), 1);
+        assert_eq!(options.lighting.ambient, 0.1 / std::f32::consts::PI);
         assert_eq!(options.lighting.exposure, 1.0);
         assert!(options.lighting.environment);
         assert_eq!(options.lighting.space, LightingSpace::View);

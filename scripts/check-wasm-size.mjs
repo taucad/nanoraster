@@ -138,7 +138,11 @@ const sizes = {
 // source. Admit its observed gzip result without widening the compressor
 // tolerance or the raw ceiling. Fixed-array iteration subsequently reduces
 // the local artifact to 1,949,811 / 728,853 / 554,057.
-const ceilings = { raw: 1_949_963, gzip9: 734_679, brotli11: 554_057 };
+// Room IBL + DFG + transmission mips/edges: 2,255,592 / 1,022,509 / 846,022.
+// The embedded room costs 290,487 bytes. Reusing Cursor<&[u8]> avoids a second
+// PNG decoder monomorphization (168,088 raw bytes in the first candidate).
+// v8 benchmark identity records the intentional lighting/output change.
+const ceilings = { raw: 2_255_592, gzip9: 1_022_509, brotli11: 846_022 };
 
 // `raw` is the artifact and is byte-reproducible, so it is enforced exactly.
 // The compressed figures are not properties of the artifact alone: they are

@@ -56,6 +56,7 @@ struct GpuMesh {
     normals: wgpu::Buffer,
     surface_attributes: wgpu::Buffer,
     transparent: bool,
+    transmission: bool,
     constant_attributes: bool,
     alpha_blend: bool,
     center: Vec3,
@@ -90,6 +91,7 @@ pub(crate) struct SceneBuffers {
     gpu_instances: Vec<GpuInstance>,
     texture_pixels: wgpu::Buffer,
     texture_mask: u32,
+    transmission: bool,
 }
 
 /// Scene handle: parsed CPU geometry plus its GPU buffers. The parsed half is
@@ -116,8 +118,10 @@ struct PipelinePair {
     constant_mesh: wgpu::RenderPipeline,
     constant_blend_mesh: wgpu::RenderPipeline,
     screen: wgpu::RenderPipeline,
+    mip: wgpu::RenderPipeline,
     cap: wgpu::RenderPipeline,
     line: wgpu::RenderPipeline,
+    transmission_line: wgpu::RenderPipeline,
 }
 
 struct GpuCap {
@@ -144,6 +148,9 @@ struct SizedTargets {
     msaa_view: wgpu::TextureView,
     hdr_msaa: wgpu::TextureView,
     opaque_view: wgpu::TextureView,
+    opaque_levels: Vec<wgpu::TextureView>,
+    opaque_mips: wgpu::TextureView,
+    transmission: bool,
     composite_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
     resolve_texture: wgpu::Texture,
@@ -739,6 +746,26 @@ fn draw_surface(pass: &mut wgpu::RenderPass<'_>, instance: &GpuInstance, mesh: &
     pass.draw_indexed(0..mesh.index_count, 0, 0..1);
 }
 
+fn draw_lines(pass: &mut wgpu::RenderPass<'_>, scene: &SceneBuffers, options: &RenderOptions) {
+    for instance in &scene.gpu_instances {
+        let asset = &scene.gpu_assets[instance.mesh_index];
+        pass.set_bind_group(2, &instance.bind_group, &[]);
+        for lines in &asset.lines {
+            if !primitive_selected(
+                options,
+                instance.source_node_index,
+                asset.source_mesh_index,
+                lines.source_primitive_index,
+            ) {
+                continue;
+            }
+            pass.set_bind_group(1, &lines.bind_group, &[]);
+            pass.set_vertex_buffer(0, lines.segments.slice(..));
+            pass.draw(0..8, 0..lines.segment_count);
+        }
+    }
+}
+
 fn primitive_selected(
     options: &RenderOptions,
     node_index: usize,
@@ -882,7 +909,7 @@ fn create_pipeline_pair(
                 },
                 targets: &[Some(wgpu::ColorTargetState {
                     format: HDR_FORMAT,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: blend.then_some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -909,31 +936,46 @@ fn create_pipeline_pair(
 
     // ponytail: pipelines compiled sequentially on purpose — llvmpipe SIGSEGVs
     // under concurrent pipeline compilation (bevy #13708).
-    let line = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("line"),
-        layout: Some(pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("vs_line"),
-            compilation_options: Default::default(),
-            buffers: &[Some(segment_layout)],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some("fs_line"),
-            compilation_options: Default::default(),
-            targets: std::slice::from_ref(&color_target),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleStrip,
-            cull_mode: None,
-            ..Default::default()
-        },
-        depth_stencil: line_depth_state,
-        multisample,
-        multiview_mask: None,
-        cache: None,
-    });
+    let make_line = |transmission: bool| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("line"),
+            layout: Some(pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_line"),
+                compilation_options: Default::default(),
+                buffers: &[Some(segment_layout.clone())],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_line"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: if transmission {
+                        HDR_FORMAT
+                    } else {
+                        COLOR_FORMAT
+                    },
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: line_depth_state.clone().map(|mut state| {
+                // The retained opaque image supplies refracted edges; their depth
+                // must not prevent the later glass surface or final edge drawing.
+                state.depth_write_enabled = Some(!transmission);
+                state
+            }),
+            multisample,
+            multiview_mask: None,
+            cache: None,
+        })
+    };
 
     let cap_layout = wgpu::VertexBufferLayout {
         array_stride: 60,
@@ -978,45 +1020,53 @@ fn create_pipeline_pair(
         cache: None,
     });
 
-    let screen = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("HDR output transform"),
-        layout: Some(pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("vs_screen"),
-            compilation_options: Default::default(),
-            buffers: &[],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some("fs_screen"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: COLOR_FORMAT,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            depth_write_enabled: Some(false),
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample,
-        multiview_mask: None,
-        cache: None,
-    });
+    let fullscreen = |mip: bool| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("HDR output transform"),
+            layout: Some(pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_screen"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some(if mip { "fs_mip" } else { "fs_screen" }),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: if mip { HDR_FORMAT } else { COLOR_FORMAT },
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: (!mip).then_some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: if mip {
+                wgpu::MultisampleState::default()
+            } else {
+                multisample
+            },
+            multiview_mask: None,
+            cache: None,
+        })
+    };
     PipelinePair {
         mesh,
         blend_mesh,
         constant_mesh,
         constant_blend_mesh,
-        screen,
+        screen: fullscreen(false),
+        mip: fullscreen(true),
         cap,
-        line,
+        line: make_line(false),
+        transmission_line: make_line(true),
     }
 }
 
@@ -1080,9 +1130,13 @@ impl DeviceState {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("render-core"),
             source: wgpu::ShaderSource::Wgsl(
-                [include_str!("shader.wgsl"), include_str!("physical.wgsl")]
-                    .concat()
-                    .into(),
+                [
+                    include_str!("shader.wgsl"),
+                    include_str!("physical.wgsl"),
+                    include_str!("lighting.wgsl"),
+                ]
+                .concat()
+                .into(),
             ),
         });
 
@@ -1096,24 +1150,73 @@ impl DeviceState {
 
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let [studio_map, dfg_map] = crate::lighting::textures(&device, &queue);
+        let lighting_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("studio filtering"),
+            min_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
         });
         let frame_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("frame"),
             layout: &frame_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: frame_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: frame_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&studio_map),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&dfg_map),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&lighting_sampler),
+                },
+            ],
         });
 
         let prim_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1410,6 +1513,7 @@ impl Renderer {
                             source_primitive_index: primitive.source_index,
                             constant_attributes: primitive.surface_attributes.is_empty(),
                             transparent: primitive.material.transparent(),
+                            transmission: primitive.material.transmission[0] > 0.0,
                             alpha_blend: primitive.material.alpha_mode == 2.0,
                             center,
                             surface_attributes: device.create_buffer_init(
@@ -1497,6 +1601,11 @@ impl Renderer {
             .collect();
 
         SceneBuffers {
+            transmission: scene
+                .meshes
+                .iter()
+                .flat_map(|mesh| &mesh.primitives)
+                .any(|p| p.material.transmission[0] > 0.0),
             gpu_assets,
             gpu_instances,
             texture_mask: scene.meshes.iter().flat_map(|mesh| &mesh.primitives).fold(
@@ -1638,8 +1747,8 @@ impl Renderer {
 
     /// Keep the last-used target set; recreate on size change (R15 mixed-size
     /// plans cycle it within one job).
-    fn ensure_targets(&mut self, width: u32, height: u32) {
-        if matches!(&self.state.targets, Some(targets) if targets.width == width && targets.height == height)
+    fn ensure_targets(&mut self, width: u32, height: u32, transmission: bool) {
+        if matches!(&self.state.targets, Some(targets) if targets.width == width && targets.height == height && targets.transmission == transmission)
         {
             return;
         }
@@ -1701,11 +1810,32 @@ impl Renderer {
             MSAA_SAMPLES,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
         );
-        let opaque_view = hdr_texture(
-            "opaque HDR",
-            1,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        );
+        let mip_count = if transmission {
+            width.max(height).ilog2() + 1
+        } else {
+            1
+        };
+        let opaque_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("opaque HDR mip pyramid"),
+            size: extent,
+            mip_level_count: mip_count,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: HDR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let opaque_levels: Vec<_> = (0..mip_count)
+            .map(|level| {
+                opaque_texture.create_view(&wgpu::TextureViewDescriptor {
+                    base_mip_level: level,
+                    mip_level_count: Some(1),
+                    ..Default::default()
+                })
+            })
+            .collect();
+        let opaque_view = opaque_levels[0].clone();
+        let opaque_mips = opaque_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let composite_view = hdr_texture(
             "composite HDR",
             1,
@@ -1733,6 +1863,9 @@ impl Renderer {
             extent,
             hdr_msaa,
             opaque_view,
+            opaque_mips,
+            opaque_levels,
+            transmission,
             composite_view,
             msaa_view: msaa_texture.create_view(&wgpu::TextureViewDescriptor::default()),
             depth_view: depth_texture.create_view(&wgpu::TextureViewDescriptor::default()),
@@ -1756,7 +1889,7 @@ impl Renderer {
         entry: &PlanEntry,
     ) -> Result<InFlightView, RenderError> {
         let options = &entry.options;
-        self.ensure_targets(options.width, options.height);
+        self.ensure_targets(options.width, options.height, scene.transmission);
         // Bias surfaces only when line geometry actually draws this view:
         // enabled model edges that survive `visiblePrimitives`, or a section
         // boundary (drawn unconditionally). Keying on `options.lines` alone —
@@ -1819,7 +1952,7 @@ impl Renderer {
             })
         };
         let empty_resources = scene_group(&state.empty_scene, &state.empty_scene);
-        let transmission_resources = scene_group(&targets.opaque_view, &state.empty_scene);
+        let transmission_resources = scene_group(&targets.opaque_mips, &state.empty_scene);
         let mut opaque = Vec::new();
         let mut transparent = Vec::new();
         if options.surfaces {
@@ -1848,9 +1981,34 @@ impl Renderer {
         }
         transparent.sort_by(|left, right| left.0.total_cmp(&right.0));
         let has_transparency = !transparent.is_empty();
+        let has_transmission = transparent.iter().any(|(_, _, mesh)| mesh.transmission);
         // Each surface draws once. Transmission samples the retained opaque
         // HDR image; compositing precedes the sole display transform.
         for stage in 0..if has_transparency { 2 } else { 1 } {
+            if stage == 1 && has_transmission {
+                for levels in targets.opaque_levels.windows(2) {
+                    let resources = scene_group(&levels[0], &state.empty_scene);
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("transmission mip"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &levels[1],
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        ..Default::default()
+                    });
+                    pass.set_pipeline(&pair.mip);
+                    pass.set_bind_group(0, &state.frame_bind_group, &[]);
+                    pass.set_bind_group(1, &state.default_material, &[]);
+                    pass.set_bind_group(2, &state.identity_object, &[]);
+                    pass.set_bind_group(3, &resources, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+            }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(if stage == 0 {
                     "opaque HDR"
@@ -1913,6 +2071,10 @@ impl Renderer {
                     });
                     draw_surface(&mut pass, instance, mesh);
                 }
+                if has_transmission && options.lines {
+                    pass.set_pipeline(&pair.transmission_line);
+                    draw_lines(&mut pass, scene, options);
+                }
             } else {
                 for (_, instance, mesh) in &transparent {
                     pass.set_pipeline(match (mesh.constant_attributes, mesh.alpha_blend) {
@@ -1971,23 +2133,7 @@ impl Renderer {
             }
             if options.lines {
                 pass.set_pipeline(&pair.line);
-                for instance in &scene.gpu_instances {
-                    let asset = &scene.gpu_assets[instance.mesh_index];
-                    pass.set_bind_group(2, &instance.bind_group, &[]);
-                    for lines in &asset.lines {
-                        if !primitive_selected(
-                            options,
-                            instance.source_node_index,
-                            asset.source_mesh_index,
-                            lines.source_primitive_index,
-                        ) {
-                            continue;
-                        }
-                        pass.set_bind_group(1, &lines.bind_group, &[]);
-                        pass.set_vertex_buffer(0, lines.segments.slice(..));
-                        pass.draw(0..8, 0..lines.segment_count);
-                    }
-                }
+                draw_lines(&mut pass, scene, options);
             }
             if let (Some(boundary), Some(material), Some(object)) = (
                 &presentation.boundary,
@@ -2644,6 +2790,65 @@ mod tests {
     }
 
     #[test]
+    fn glass_refracts_authored_edges_behind_it() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let mut scene = occluded_line_scene(true);
+        scene.meshes[0].primitives[0].material = Material {
+            base_color: [1.0; 4],
+            metallic: 0.0,
+            roughness: 0.0,
+            transmission: [1.0, 0.0, 1.0, 0.0],
+            ..Material::default()
+        };
+        let hidden = render_test_scene(&mut renderer, scene.clone(), physical_options());
+        let visible = render_test_scene(
+            &mut renderer,
+            scene,
+            RenderOptions {
+                lines: true,
+                ..physical_options()
+            },
+        );
+        let center = (48 * 96 + 48) * 4;
+        assert!(hidden.rgba[center] > 200);
+        let pixel = &visible.rgba[center..center + 4];
+        // Bicubic reconstruction softens a three-pixel line; it must still
+        // strongly contrast with the empty transmission background.
+        assert!(
+            pixel[0] < 100,
+            "authored edge vanished behind glass: {pixel:?}"
+        );
+    }
+
+    #[test]
+    fn clear_glass_preserves_transparent_background() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let glass = Material {
+            base_color: [1.0; 4],
+            metallic: 0.0,
+            roughness: 0.1,
+            transmission: [1.0, 0.0, 1.5, 0.0],
+            ..Material::default()
+        };
+        let image = render_test_scene(
+            &mut renderer,
+            physical_sphere(glass),
+            RenderOptions {
+                background: None,
+                ..physical_options()
+            },
+        );
+        let center = ((image.height / 2 * image.width + image.width / 2) * 4) as usize;
+        let pixel = &image.rgba[center..center + 4];
+        assert!(
+            pixel[3].abs_diff(128) <= 1,
+            "clear glass incorrectly blocks the background: {pixel:?}"
+        );
+    }
+
+    #[test]
     fn physical_material_factors_produce_distinct_gpu_pixels() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
@@ -2723,7 +2928,7 @@ mod tests {
     }
 
     #[test]
-    fn unlit_ignores_lighting_and_exposure_and_mask_discards_pixels() {
+    fn unlit_ignores_lighting_but_uses_display_transform_and_mask_discards_pixels() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
         let mut material = Material {
@@ -2737,7 +2942,6 @@ mod tests {
             physical_sphere(material.clone()),
             options.clone(),
         );
-        options.lighting.exposure = 4.0;
         options.lighting.ambient = 0.0;
         options.lighting.environment = false;
         options.lighting.lights.clear();
@@ -2753,9 +2957,19 @@ mod tests {
         {
             assert!(a.abs_diff(b) <= 1);
         }
-        for (channel, expected) in [118u8, 170, 218].into_iter().enumerate() {
+        for (channel, expected) in [105u8, 162, 212].into_iter().enumerate() {
             assert!(second.rgba[center + channel].abs_diff(expected) <= 1);
         }
+        options.lighting.exposure = 4.0;
+        let exposed = render_test_scene(
+            &mut renderer,
+            physical_sphere(material.clone()),
+            options.clone(),
+        );
+        assert!(
+            exposed.rgba[center] > second.rgba[center] + 30,
+            "exposure applies to unlit glTF colors"
+        );
         material.alpha_mode = 1.0;
         material.base_color[3] = 0.2;
         let hidden = render_test_scene(&mut renderer, physical_sphere(material), options);
@@ -3021,14 +3235,18 @@ mod tests {
         let line = render_test_scene(&mut renderer, line, options);
         let center = (48 * 96 + 48) * 4;
         assert!(blended.rgba[center + 3].abs_diff(128) <= 1);
-        for image in [opaque, blended, line] {
+        for (image, expected_color) in [
+            (opaque, [105u8, 162, 212]),
+            (blended, [105, 162, 212]),
+            (line, [118, 170, 218]),
+        ] {
             let mut partial = 0;
             for pixel in image.rgba.as_chunks::<4>().0 {
                 if pixel[3] == 0 {
                     assert_eq!(&pixel[..3], &[0; 3]);
                 } else if pixel[3] < 255 {
                     partial += 1;
-                    for (channel, expected) in [118u8, 170, 218].into_iter().enumerate() {
+                    for (channel, expected) in expected_color.into_iter().enumerate() {
                         assert!(pixel[channel].abs_diff(expected) <= 3, "{pixel:?}");
                     }
                 }
@@ -3176,12 +3394,12 @@ mod tests {
         }
 
         let studio = frame_uniform(camera, &RenderOptions::default());
-        assert_eq!(studio[FRAME_TAIL].to_bits(), 3);
+        assert_eq!(studio[FRAME_TAIL].to_bits(), 1);
         assert_eq!(studio[FRAME_TAIL + 3].to_bits(), 1);
         // View space ignores the view matrix; the direction is only normalised.
         assert_close(
             Vec3::from_slice(&studio[FRAME_LIGHTS..FRAME_LIGHTS + 3]),
-            Vec3::new(-0.45, 0.61, 0.63).normalize(),
+            Vec3::ONE.normalize(),
         );
     }
 
@@ -4415,23 +4633,23 @@ mod tests {
                 .any(|(key, _)| *key == u64::from(2.0f32.to_bits() << 1 | 1))
         );
 
-        renderer.ensure_targets(320, 240);
+        renderer.ensure_targets(320, 240, false);
         assert_eq!(renderer.counters.target_allocations, 1);
-        renderer.ensure_targets(320, 240);
+        renderer.ensure_targets(320, 240, false);
         assert_eq!(renderer.counters.target_allocations, 1);
-        renderer.ensure_targets(640, 480);
+        renderer.ensure_targets(640, 480, false);
         assert_eq!(renderer.counters.target_allocations, 2);
         // The retention guard keeps ordinary sizes and evicts oversized ones.
         renderer.trim_targets();
         assert!(renderer.state.targets.is_some());
-        renderer.ensure_targets(4096, 4096);
+        renderer.ensure_targets(4096, 4096, false);
         renderer.trim_targets();
         assert!(renderer.state.targets.is_none());
         // Nothing retained: trimming again is a no-op.
         renderer.trim_targets();
         assert!(renderer.state.targets.is_none());
 
-        renderer.ensure_targets(640, 480);
+        renderer.ensure_targets(640, 480, false);
         let targets = renderer.state.targets.as_ref().expect("targets");
         assert_eq!(targets.readback.len(), 2);
         assert_eq!(targets.unpadded_bytes_per_row, 640 * 4);

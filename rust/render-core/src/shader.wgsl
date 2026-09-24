@@ -91,64 +91,6 @@ fn fresnel_schlick(f0: vec3<f32>, v_dot_h: f32) -> vec3<f32> {
     return f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - clamp(v_dot_h, 0.0, 1.0), 5.0);
 }
 
-// Analytic environment, specular half: warm sky-to-floor gradient plus an
-// overhead panel, flattening to grey with roughness. A metal has no other body
-// colour, so it cannot be zero; a dielectric only sees it through Fresnel.
-fn studio_environment(reflection: vec3<f32>, roughness: f32) -> vec3<f32> {
-    let horizon = smoothstep(-0.45, 0.75, reflection.y);
-    var radiance = mix(vec3<f32>(0.041, 0.038, 0.034), vec3<f32>(0.375, 0.367, 0.352), horizon);
-    let panel = pow(
-        max(dot(reflection, normalize(vec3<f32>(-0.55, 0.65, 0.52))), 0.0),
-        mix(96.0, 4.0, roughness)
-    );
-    radiance += vec3<f32>(1.27, 1.22, 1.13) * panel;
-    return mix(radiance, vec3<f32>(0.225, 0.221, 0.214), roughness * roughness);
-}
-
-// Diffuse half: hemisphere irradiance on the shading normal, Lambert 1/PI
-// folded into the constants.
-fn studio_irradiance(normal: vec3<f32>) -> vec3<f32> {
-    return mix(
-        vec3<f32>(0.116, 0.112, 0.107),
-        vec3<f32>(0.362, 0.359, 0.350),
-        normal.y * 0.5 + 0.5
-    );
-}
-
-// three.js ACESFilmicToneMapping: Hill's RRT/ODT fit with its 1/0.6
-// pre-exposure. Reinhard had no shoulder and desaturated by compressing the
-// brightest channel hardest.
-// Invert the display transform for unlit glTF colors and the scene background.
-// This keeps them exact after the common HDR/transmission composition pass.
-fn inverse_tone_map_aces(color: vec3<f32>, exposure: f32) -> vec3<f32> {
-    let inverse_output = mat3x3<f32>(vec3<f32>(0.643038249, 0.059268690, 0.005961901), vec3<f32>(0.311186752, 0.931436487, 0.063929016), vec3<f32>(0.045775457, 0.009294916, 0.930118384));
-    let inverse_input = mat3x3<f32>(vec3<f32>(1.764740972, -0.147027852, -0.036336830), vec3<f32>(-0.675777678, 1.160251512, -0.162436437), vec3<f32>(-0.088963294, -0.013223660, 1.198773267));
-    let fitted_color = inverse_output * color;
-    let a = 1.0 - 0.983729 * fitted_color;
-    let b = 0.0245786 - 0.4329510 * fitted_color;
-    let c = -0.000090537 - 0.238081 * fitted_color;
-    let root = (-b + sqrt(max(b * b - 4.0 * a * c, vec3<f32>(0.0)))) / (2.0 * a);
-    return inverse_input * root * (0.6 / max(exposure, 0.00001));
-}
-
-fn tone_map_aces(color: vec3<f32>, exposure: f32) -> vec3<f32> {
-    // sRGB > XYZ > D65_2_D60 > AP1 > RRT_SAT, then the inverse on the way out.
-    let input_matrix = mat3x3<f32>(
-        vec3<f32>(0.59719, 0.07600, 0.02840),
-        vec3<f32>(0.35458, 0.90834, 0.13383),
-        vec3<f32>(0.04823, 0.01566, 0.83777)
-    );
-    let output_matrix = mat3x3<f32>(
-        vec3<f32>(1.60475, -0.10208, -0.00327),
-        vec3<f32>(-0.53108, 1.10813, -0.07276),
-        vec3<f32>(-0.07367, -0.00605, 1.07602)
-    );
-    let fit = input_matrix * (color * exposure / 0.6);
-    let numerator = fit * (fit + 0.0245786) - 0.000090537;
-    let denominator = fit * (0.983729 * fit + 0.4329510) + 0.238081;
-    return saturate(output_matrix * (numerator / denominator));
-}
-
 fn distribution_ggx(n_dot_h: f32, alpha: f32) -> f32 {
     let alpha_squared = alpha * alpha;
     let denominator = n_dot_h * n_dot_h * (alpha_squared - 1.0) + 1.0;
@@ -180,7 +122,10 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
     var base = prim.base_color * in.vertex_color * sample_map(in, 0u);
     let mr = sample_map(in, 1u);
     let metal = prim.pbr.x * mr.b;
-    let rough = clamp(prim.pbr.y * mr.g, 0.045, 1.0);
+    let derivative_n = normalize(in.view_normal);
+    let dxy = max(abs(dpdx(derivative_n)), abs(dpdy(derivative_n)));
+    let geometry_roughness = max(max(dxy.x, dxy.y), dxy.z);
+    let rough = min(max(prim.pbr.y * mr.g, 0.0525) + geometry_roughness, 1.0);
     let alpha = rough * rough;
     let ao = mix(1.0, sample_map(in, 3u).r, prim.misc.y);
     let emission = prim.emissive.rgb * sample_map(in, 4u).rgb;
@@ -193,12 +138,12 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
     let t = normalize(tbn[0] * direction.x + tbn[1] * direction.y);
     let b = normalize(tbn[1] * direction.x - tbn[0] * direction.y);
     let coat = prim.coat.x * sample_map(in, 6u).r;
-    let coat_rough = max(prim.coat.y * sample_map(in, 7u).g, 0.045);
+    let coat_rough = min(max(prim.coat.y * sample_map(in, 7u).g, 0.0525) + geometry_roughness, 1.0);
     let iridescence = prim.iridescence.x * sample_map(in, 9u).r;
     let irid_map = sample_map(in, 10u).g;
     let film_thickness = mix(prim.iridescence.z, prim.iridescence.w, irid_map);
     let sheen = prim.sheen.rgb * sample_map(in, 11u).rgb;
-    let sheen_rough = max(0.07, prim.sheen.a * sample_map(in, 12u).a);
+    let sheen_rough = max(0.0001, prim.sheen.a) * sample_map(in, 12u).a;
     let sheen_weight = max(max(sheen.r, sheen.g), sheen.b);
     let sheen_energy = 1.0 - sheen_weight * sheen_albedo(nv, sheen_rough);
     let spec_weight = prim.specular.a * sample_map(in, 13u).a;
@@ -214,56 +159,83 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
     }
     if (prim.pbr.z == 1.0 && base.a < prim.pbr.w) { discard; }
     if (prim.pbr.z != 2.0) { base.a = 1.0; }
-    if (prim.anisotropy.w != 0.0) { return vec4<f32>(inverse_tone_map_aces(base.rgb, frame.exposure), base.a); }
+    if (prim.anisotropy.w != 0.0) { return base; }
     let ior = prim.transmission.z;
     let ratio = (ior - 1.0) / (ior + 1.0);
-    let f0 = mix(min(vec3<f32>(ratio * ratio) * spec_color, vec3<f32>(1.0)) * spec_weight, base.rgb, metal);
+    let dielectric_f0 = min(vec3<f32>(ratio * ratio) * spec_color, vec3<f32>(1.0)) * spec_weight;
+    let f0 = mix(dielectric_f0, base.rgb, metal);
     let f90 = vec3<f32>(mix(spec_weight, 1.0, metal));
-    let diffuse = base.rgb * (1.0 - metal) * (1.0 - transmission);
-    let fresnel = material_fresnel(f0, f90, nv, iridescence, film_thickness);
-    var color = diffuse * frame.ambient;
+    let diffuse = base.rgb * (1.0 - metal);
+    let fab_v = dfg(rough, nv);
+    var diffuse_light = diffuse * frame.ambient * sheen_energy;
+    var specular_light = vec3<f32>(0.0);
     var sheen_light = vec3<f32>(0.0);
     var coat_light = vec3<f32>(0.0);
     let coat_fresnel = fresnel_schlick(vec3<f32>(0.04), max(dot(coat_n, v), 0.0));
     if (frame.environment != 0u) {
-        // Stretch the reflected lobe in the anisotropic bitangent plane.
         let bent = cross(cross(b, v), b);
         let bending = pow(1.0 - aniso * (1.0 - rough), 4.0);
         let reflection_n = normalize(mix(select(n, normalize(bent), dot(bent, bent) > 0.000001), n, bending));
-        color += studio_environment(reflect(-v, reflection_n), rough) * fresnel
-            + diffuse * studio_irradiance(n) * (1.0 - fresnel);
-        sheen_light += studio_irradiance(n) * sheen * sheen_albedo(nv, sheen_rough);
-        coat_light += studio_environment(reflect(-v, coat_n), coat_rough) * coat_fresnel;
-    }
-    color *= ao;
-    sheen_light *= ao; coat_light *= ao;
-    if (transmission > 0.0 && metal < 1.0) {
-        var transmitted = transmission_sample(in, n, v, ior, thickness, rough);
-        if (prim.transmission.w > 0.0) {
-            let spread = (ior - 1.0) * prim.transmission.w * 0.025;
-            transmitted.r = transmission_sample(in, n, v, ior - spread, thickness, rough).r;
-            transmitted.b = transmission_sample(in, n, v, ior + spread, thickness, rough).b;
+        var dielectric = dielectric_f0;
+        var metallic = base.rgb;
+        if (iridescence > 0.0 && film_thickness > 0.0) {
+            dielectric = mix(dielectric, film_fresnel(prim.iridescence.y, nv, film_thickness, dielectric), iridescence);
+            metallic = mix(metallic, film_fresnel(prim.iridescence.y, nv, film_thickness, metallic), iridescence);
         }
-        color += transmitted * base.rgb * (1.0 - fresnel) * transmission * (1.0 - metal);
+        let single_d = environment_brdf(dielectric, f90, fab_v);
+        let single_m = environment_brdf(metallic, f90, fab_v);
+        let multi_d = multi_scatter(dielectric, single_d, fab_v);
+        let multi_m = multi_scatter(metallic, single_m, fab_v);
+        let irradiance = room_radiance(n, 1.0);
+        specular_light += (environment_radiance(v, reflection_n, rough) * mix(single_d, single_m, metal)
+            + irradiance * mix(multi_d, multi_m, metal)) * sheen_energy;
+        diffuse_light += diffuse * irradiance * (1.0 - single_d - multi_d) * sheen_energy;
+        sheen_light += irradiance * sheen * sheen_albedo(nv, sheen_rough);
+        coat_light += environment_radiance(v, coat_n, coat_rough)
+            * environment_brdf(vec3<f32>(0.04), vec3<f32>(1.0), dfg(coat_rough, dot(coat_n, v)));
     }
-    color *= sheen_energy;
+    diffuse_light *= ao;
+    let specular_occlusion = saturate(pow(nv + ao, exp2(-16.0 * rough - 1.0)) - 1.0 + ao);
+    specular_light *= specular_occlusion;
+    sheen_light *= ao; coat_light *= ao;
     for (var i = 0u; i < frame.light_count; i++) {
         let l = frame.lights[i].direction;
         let radiance = frame.lights[i].color;
         let nl = max(dot(n, l), 0.0);
         let h = normalize(v + l);
-        let f = material_fresnel(f0, f90, max(dot(v, h), 0.0), iridescence, film_thickness);
-        color += ((1.0 - f) * diffuse / PI + f * anisotropic_ggx(n, t, b, v, l, alpha, aniso)) * radiance * nl
-            * min(sheen_energy, 1.0 - sheen_weight * sheen_albedo(nl, sheen_rough));
+        var f = material_fresnel(f0, f90, max(dot(v, h), 0.0), 0.0, 0.0);
+        if (iridescence > 0.0 && film_thickness > 0.0) {
+            f = mix(f, film_fresnel(prim.iridescence.y, nv, film_thickness, f0), iridescence);
+        }
+        let energy = min(sheen_energy, 1.0 - sheen_weight * sheen_albedo(nl, sheen_rough));
+        diffuse_light += diffuse / PI * radiance * nl * energy;
+        specular_light += (f * anisotropic_ggx(n, t, b, v, l, alpha, aniso)
+            + direct_multi_scatter(f0, f90, fab_v, dfg(rough, nl))) * radiance * nl * energy;
         sheen_light += sheen * sheen_brdf(n, v, l, sheen_rough) * radiance * nl;
         let cnl = max(dot(coat_n, l), 0.0);
         let cnv = max(dot(coat_n, v), 0.0001);
         coat_light += radiance * cnl * distribution_ggx(max(dot(coat_n, h), 0.0), coat_rough * coat_rough)
             * visibility_ggx(cnl, cnv, coat_rough * coat_rough) * fresnel_schlick(vec3<f32>(0.04), dot(v, h));
     }
-    color += sheen_light;
-    color = (color + emission) * (1.0 - coat_fresnel * coat) + coat_light * coat;
-    return vec4<f32>(color, base.a);
+    if (transmission > 0.0) {
+        // Three.js's volume projection uses the position-to-camera ray for both projections.
+        let transmission_v = normalize(-in.view_position);
+        var transmitted = transmission_sample(in, n, transmission_v, ior, thickness, rough);
+        if (prim.transmission.w > 0.0) {
+            let spread = (ior - 1.0) * prim.transmission.w * 0.025;
+            let red = transmission_sample(in, n, transmission_v, ior - spread, thickness, rough);
+            let blue = transmission_sample(in, n, transmission_v, ior + spread, thickness, rough);
+            transmitted = vec4<f32>(red.r, transmitted.g, blue.b, (red.a + transmitted.a + blue.a) / 3.0);
+        }
+        let fresnel = environment_brdf(f0, f90, dfg(rough, dot(n, transmission_v)));
+        diffuse_light = mix(diffuse_light, transmitted.rgb * diffuse * (1.0 - fresnel), transmission);
+        base.a *= mix(1.0, 1.0 - (1.0 - transmitted.a) * (diffuse.r + diffuse.g + diffuse.b) / 3.0, transmission);
+    }
+    let color = (diffuse_light + specular_light + sheen_light + emission) * (1.0 - coat_fresnel * coat) + coat_light * coat;
+    // OPAQUE transmission replaces the pixel, including its coverage alpha;
+    // only glTF BLEND composites with the surface behind it. Retain premultiplied
+    // HDR in both cases (the blend pipeline performs that multiplication itself).
+    return vec4<f32>(select(color * base.a, color, prim.pbr.z == 2.0), base.a);
 }
 
 struct ScreenOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> }
@@ -274,9 +246,13 @@ fn vs_screen(@builtin(vertex_index) index: u32) -> ScreenOut {
     out.uv = vec2<f32>(uv.x, 1.0 - uv.y); return out;
 }
 @fragment
+fn fs_mip(in: ScreenOut) -> @location(0) vec4<f32> {
+    return textureSampleLevel(opaque_scene, scene_sampler, in.uv, 0.0);
+}
+@fragment
 fn fs_screen(in: ScreenOut) -> @location(0) vec4<f32> {
     let color = textureSampleLevel(composite_scene, scene_sampler, in.uv, 0.0);
-    let display = tone_map_aces(color.rgb / max(color.a, 0.000001), frame.exposure);
+    let display = tone_map(color.rgb / max(color.a, 0.000001), frame.exposure);
     let alpha = color.a + frame.background.a * (1.0 - color.a);
     let premultiplied = display * color.a + frame.background.rgb * frame.background.a * (1.0 - color.a);
     // Cap/edge blending and MSAA still need premultiplied-linear RGB. Readback

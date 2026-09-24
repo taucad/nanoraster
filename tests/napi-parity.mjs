@@ -502,14 +502,10 @@ const isometricPerspective = await native.renderImage(
 // Lighting equivalence (R1). Cross-host goldens are impossible by the
 // package's own determinism claims, so the oracle is that the three spellings
 // of the studio preset — omitted, named, and written out — are the same bytes.
-const studioLights = [
-  { direction: [-0.45, 0.61, 0.63], color: [2.09, 2.09, 2.09] },
-  { direction: [0.45, -0.61, -0.63], color: [1.45, 1.42, 1.38] },
-  { direction: [0.03, 0.74, 0.67], color: [0.68, 0.66, 0.62] },
-];
+const studioLights = [{ direction: [1, 1, 1], color: [1.5, 1.5, 1.5] }];
 const studioSpelledOut = {
   lights: studioLights,
-  ambient: 0.02,
+  ambient: 0.1 / Math.PI,
   environment: 'studio',
   space: 'view',
   exposure: 1,

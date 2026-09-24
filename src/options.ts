@@ -30,9 +30,9 @@ export type RenderLightingRig = {
    * `renderImageMaxLights`. An empty array renders from the environment alone.
    */
   readonly lights: readonly RenderLight[];
-  /** Flat ambient multiplier on the diffuse color, from 0 to 4. @default 0.02 */
+  /** Flat ambient multiplier on the diffuse color, from 0 to 4. @default 0.03183098861837907 */
   readonly ambient?: number;
-  /** Analytic environment supplying specular reflection and diffuse irradiance; `'none'` removes both. @default 'studio' */
+  /** Prefiltered neutral-room environment supplying specular reflection and diffuse irradiance; `'none'` removes both. @default 'studio' */
   readonly environment?: 'studio' | 'none';
   /**
    * Frame the directions are authored in. `'world'` fixes the lights to the

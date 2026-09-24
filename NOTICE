@@ -30,8 +30,13 @@ The adaptation in rust/render-core/src/physical.wgsl changes GLSL to WGSL and
 uses the nanoraster material/uniform contract. The Apache-2.0 license text
 is included in this distribution's license file.
 
-The directional sheen albedo fit in physical.wgsl is adapted from Three.js r184:
-https://github.com/mrdoob/three.js/blob/r184/src/renderers/shaders/ShaderChunk/lights_physical_pars_fragment.glsl.js
+The GGX/DFG, sheen, CubeUV, transmission filtering and PBR Neutral routines in
+physical.wgsl, lighting.wgsl and shader.wgsl are adapted from Three.js r184.
+The embedded neutral-room PMREM derives from its RoomEnvironment and the DFG
+lookup table from its DFGLUTData. GLSL was ported to WGSL; room radiance was
+repacked to one channel and quantized. Exact source fingerprints, generation
+instructions and asset hashes are retained in rust/render-core/assets/.
+Source: https://github.com/mrdoob/three.js/tree/r184
 
 The MIT License
 Copyright © 2010-2026 three.js authors

@@ -1831,10 +1831,8 @@ mod tests {
     fn every_spelling_of_the_studio_preset_resolves_identically() {
         let studio = ResolvedLighting::studio();
         let explicit = r#"{"lighting":{"lights":[
-            {"direction":[-0.45,0.61,0.63],"color":[2.09,2.09,2.09]},
-            {"direction":[0.45,-0.61,-0.63],"color":[1.45,1.42,1.38]},
-            {"direction":[0.03,0.74,0.67],"color":[0.68,0.66,0.62]}
-        ],"ambient":0.02,"environment":"studio","space":"view","exposure":1}}"#;
+            {"direction":[1,1,1],"color":[1.5,1.5,1.5]}
+        ],"ambient":0.03183099,"environment":"studio","space":"view","exposure":1}}"#;
         for json in ["{}", r#"{"lighting":"studio"}"#, explicit] {
             assert_eq!(lighting_of(json).expect("resolve"), studio, "{json}");
         }

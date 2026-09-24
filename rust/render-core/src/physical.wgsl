@@ -166,21 +166,45 @@ fn sheen_albedo(cosine: f32, roughness: f32) -> f32 {
     return saturate(exp(a * cosine + b));
 }
 
-fn transmission_sample(in: MeshOut, n: vec3<f32>, v: vec3<f32>, ior: f32, thickness: f32, roughness: f32) -> vec3<f32> {
+// Cubic B-spline reconstruction: four bilinear samples per mip, matching
+// Three.js's transmission filter. Mips are retained HDR, before tone mapping.
+fn cubic_weights(a: f32) -> vec4<f32> {
+    return vec4<f32>(a * (a * (-a + 3.0) - 3.0) + 1.0,
+        a * a * (3.0 * a - 6.0) + 4.0,
+        a * (a * (-3.0 * a + 3.0) + 3.0) + 1.0, a * a * a) / 6.0;
+}
+
+fn bicubic_transmission(uv: vec2<f32>, level: f32) -> vec4<f32> {
+    let size = vec2<f32>(textureDimensions(opaque_scene, u32(level)));
+    let pixel = uv * size + 0.5;
+    let origin = floor(pixel);
+    let wx = cubic_weights(fract(pixel.x)); let wy = cubic_weights(fract(pixel.y));
+    let x0 = wx.x + wx.y; let x1 = wx.z + wx.w;
+    let y0 = wy.x + wy.y; let y1 = wy.z + wy.w;
+    let low = (origin + vec2<f32>(-1.0 + wx.y / x0, -1.0 + wy.y / y0) - 0.5) / size;
+    let high = (origin + vec2<f32>(1.0 + wx.w / x1, 1.0 + wy.w / y1) - 0.5) / size;
+    return y0 * (x0 * textureSampleLevel(opaque_scene, scene_sampler, low, level)
+        + x1 * textureSampleLevel(opaque_scene, scene_sampler, vec2<f32>(high.x, low.y), level))
+        + y1 * (x0 * textureSampleLevel(opaque_scene, scene_sampler, vec2<f32>(low.x, high.y), level)
+        + x1 * textureSampleLevel(opaque_scene, scene_sampler, high, level));
+}
+
+fn transmission_sample(in: MeshOut, n: vec3<f32>, v: vec3<f32>, ior: f32, thickness: f32, roughness: f32) -> vec4<f32> {
     let view_ray = refract(-v, n, 1.0 / max(ior, 1.0)) * thickness;
     let rotation = transpose(mat3x3<f32>(frame.view[0].xyz, frame.view[1].xyz, frame.view[2].xyz));
     let world_ray = (rotation * view_ray) * in.model_scale.xyz;
     let clip = frame.view_projection * vec4<f32>(in.world_position + world_ray, 1.0);
     let uv = vec2<f32>(clip.x, -clip.y) / clip.w * 0.5 + 0.5;
-    let radius = roughness * roughness * clamp(ior * 2.0 - 2.0, 0.0, 1.0) * 0.06;
-    // ponytail: a bounded nine-tap screen-space blur. Replace with a retained
-    // Gaussian mip pyramid when high-roughness transmission dominates captures.
-    var color = vec4<f32>(0.0);
-    for (var y = -1; y <= 1; y++) { for (var x = -1; x <= 1; x++) {
-        color += textureSampleLevel(opaque_scene, scene_sampler, uv + vec2<f32>(f32(x), f32(y)) * radius, 0.0);
-    }}
-    color /= 9.0;
-    let background = inverse_tone_map_aces(frame.background.rgb, frame.exposure) * frame.background.a;
+    let lod = min(log2(f32(textureDimensions(opaque_scene).x)) * roughness
+        * clamp(ior * 2.0 - 2.0, 0.0, 1.0), f32(textureNumLevels(opaque_scene) - 1u));
+    let color = mix(bicubic_transmission(uv, floor(lod)), bicubic_transmission(uv, ceil(lod)), fract(lod));
+    // Three's transmission buffer clears to half-opaque white when the canvas
+    // is transparent. Apply that clear after filtering: it is affine in coverage,
+    // so the opaque image can still be shared with the final composite.
+    let clear_alpha = select(0.5, 1.0, frame.background.a == 1.0);
+    let background = select(vec3<f32>(0.5), frame.background.rgb, frame.background.a == 1.0);
     let radiance = color.rgb + background * (1.0 - color.a);
-    return radiance * pow(max(prim.attenuation.rgb, vec3<f32>(0.000001)), vec3<f32>(length(world_ray) * prim.attenuation.w));
+    let attenuation = pow(max(prim.attenuation.rgb, vec3<f32>(0.000001)), vec3<f32>(length(world_ray) * prim.attenuation.w));
+    let opacity = color.a + clear_alpha * (1.0 - color.a);
+    return vec4<f32>(radiance * attenuation, 1.0 - (1.0 - opacity) * (attenuation.r + attenuation.g + attenuation.b) / 3.0);
 }

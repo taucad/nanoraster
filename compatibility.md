@@ -174,11 +174,12 @@ source; material shading does not replace them with image edge detection.
   mip storage to 16 million pixels (64 MB). Oversized inputs fail explicitly.
 - Refraction samples retained opaque scene color. It does not trace objects
   outside the image, transparent layers behind transparent layers, multiple
-  internal bounces or caustics. Rough transmission uses nine filtered taps.
-- Lighting remains the deterministic analytic studio with ACES output. No
+  internal bounces or caustics. Rough transmission uses an HDR mip pyramid with bicubic reconstruction;
+  authored BRep line primitives participate in the refracted scene.
+- Lighting uses a captured neutral-room PMREM, integrated GGX and PBR Neutral. No
   screen-space ambient occlusion or HDR environment-file loader is added.
-  Identical glTF materials therefore need not match a different viewer's
-  lighting, tone mapping or ambient occlusion pixel for pixel.
+  Metal and glass matrices are compared to captured Three.js r184 WebGL
+  references. Other lighting rigs and ambient occlusion can still differ.
 - Draft material extensions, including diffuse transmission and subsurface
   scattering, are outside this ratified extension set.
 
@@ -188,8 +189,8 @@ suite. The native and browser suites additionally exercise the public API.
 
 ### Physical-material size admission
 
-The production WASM measures 1,949,963 bytes raw, 728,947 gzip-9 and 554,048
-Brotli-11 with Rust 1.98.0, Binaryen 132 and Node 26.8.1. This is an explicit
-431,841-byte raw increase over the previous admission for image decoding,
-physical shading and the HDR transmission pass. `scripts/check-wasm-size.mjs`
-records the exact budget; benchmark entry points remain excluded.
+The production WASM admission is 2,255,592 bytes raw, 1,022,509 gzip-9 and 846,022
+Brotli-11 with Rust 1.98.0, Binaryen 132 and Node 26.8.1. The embedded room
+costs 290,487 bytes and the DFG table 1,024 bytes; the raw increase over the
+physical-material admission is 305,629 bytes. `scripts/check-wasm-size.mjs`
+records the explicit budget; benchmark entry points remain excluded.

@@ -48,7 +48,9 @@ const report = {
   // v7: physical materials use an energy-conserving GGX BRDF, the corrected
   // orthographic view vector and an HDR scene pass. Surface pixels change;
   // geometry, framing, authored edges and codec conformance remain fixed.
-  name: 'gear-parse-raster-encode-512x384-v7',
+  // v8: captured room IBL, integrated GGX and PBR Neutral replace the
+  // analytic lighting/ACES profile. Glass uses bicubic HDR mip filtering.
+  name: 'gear-parse-raster-encode-512x384-v8',
   adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,
