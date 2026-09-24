@@ -1385,8 +1385,10 @@ impl Renderer {
                         let center = if primitive.material.transparent() {
                             primitive
                                 .positions
-                                .chunks_exact(3)
-                                .map(Vec3::from_slice)
+                                .as_chunks::<3>()
+                                .0
+                                .iter()
+                                .map(|point| Vec3::from_array(*point))
                                 .sum::<Vec3>()
                                 / (primitive.positions.len() / 3).max(1) as f32
                         } else {
@@ -2664,8 +2666,10 @@ mod tests {
                 render_test_scene(&mut renderer, physical_sphere(material), physical_options());
             let changed = image
                 .rgba
-                .chunks_exact(4)
-                .zip(reference.rgba.chunks_exact(4))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(reference.rgba.as_chunks::<4>().0)
                 .filter(|(a, b)| a[..3].iter().zip(&b[..3]).any(|(a, b)| a.abs_diff(*b) > 2))
                 .count();
             assert!(
@@ -2790,8 +2794,8 @@ mod tests {
             let mut expected = m.clone();
             match slot {
                 0 => {
-                    for i in 0..3 {
-                        expected.base_color[i] *= srgb[i];
+                    for (i, value) in srgb.iter().enumerate().take(3) {
+                        expected.base_color[i] *= value;
                     }
                 }
                 1 => {
@@ -2799,8 +2803,8 @@ mod tests {
                     expected.metallic *= linear[2];
                 }
                 4 => {
-                    for i in 0..3 {
-                        expected.emissive[i] *= srgb[i];
+                    for (i, value) in srgb.iter().enumerate().take(3) {
+                        expected.emissive[i] *= value;
                     }
                 }
                 5 => {
@@ -2819,15 +2823,15 @@ mod tests {
                         + (expected.iridescence[3] - expected.iridescence[2]) * linear[1]
                 }
                 11 => {
-                    for i in 0..3 {
-                        expected.sheen[i] *= srgb[i];
+                    for (i, value) in srgb.iter().enumerate().take(3) {
+                        expected.sheen[i] *= value;
                     }
                 }
                 12 => expected.sheen[3] *= linear[3],
                 13 => expected.specular[3] *= linear[3],
                 14 => {
-                    for i in 0..3 {
-                        expected.specular[i] *= srgb[i];
+                    for (i, value) in srgb.iter().enumerate().take(3) {
+                        expected.specular[i] *= value;
                     }
                 }
                 15 => expected.transmission[0] *= linear[0],

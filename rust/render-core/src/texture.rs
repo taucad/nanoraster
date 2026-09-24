@@ -119,7 +119,7 @@ fn decode(bytes: &[u8], mime: &str) -> Result<(u32, u32, Vec<u8>), String> {
                 .map_err(|e| format!("WebP: {e}"))?;
             if !decoder.has_alpha() {
                 let mut rgba = Vec::with_capacity(count * 4);
-                for pixel in pixels.chunks_exact(3) {
+                for pixel in pixels.as_chunks::<3>().0 {
                     rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
                 }
                 pixels = rgba;
@@ -205,8 +205,10 @@ impl<'a> TextureStore<'a> {
         let mut result = [self.pixels.len() as u32, width, height, 0];
         loop {
             self.pixels.extend(
-                rgba.chunks_exact(4)
-                    .map(|p| u32::from_le_bytes([p[0], p[1], p[2], p[3]])),
+                rgba.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|p| u32::from_le_bytes(*p)),
             );
             result[3] += 1;
             if width == 1 && height == 1 {

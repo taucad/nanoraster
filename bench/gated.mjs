@@ -45,7 +45,10 @@ const report = {
   // hidden 432px reference. High-resolution edge pixels change on purpose.
   // v6: fitted cameras use geometry-tight centred framing, intentionally
   // changing the rendered subject scale and pixels.
-  name: 'gear-parse-raster-encode-512x384-v6',
+  // v7: physical materials use an energy-conserving GGX BRDF, the corrected
+  // orthographic view vector and an HDR scene pass. Surface pixels change;
+  // geometry, framing, authored edges and codec conformance remain fixed.
+  name: 'gear-parse-raster-encode-512x384-v7',
   adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,
