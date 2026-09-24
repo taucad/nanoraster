@@ -3334,7 +3334,13 @@ mod tests {
         let large = render_test_scene(&mut renderer, large_cube, options);
         let mut error = 0u64;
         let mut count = 0u64;
-        for (a, b) in large.rgba.chunks_exact(4).zip(small.rgba.chunks_exact(4)) {
+        for (a, b) in large
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(small.rgba.as_chunks::<4>().0.iter())
+        {
             if a[3] == 255 && b[3] == 255 {
                 error += u64::from(a[0].abs_diff(b[0]));
                 count += 1;
