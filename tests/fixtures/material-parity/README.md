@@ -12,6 +12,9 @@ Each matrix contains twelve radius-14 mm spheres. Columns use roughness
 - Metal: silver; copper; copper with anisotropy 0.8 at π/4 and clearcoat 0.7.
 - Glass: IOR 1 / zero thickness; IOR 1.5 / 25 mm thickness; the same volume
   with green attenuation over 40 mm. A blue/grey unlit checkerboard is behind it.
+- Layers: tinted dielectric specular; colored sheen; 400 nm iridescence on
+  dark metal. The dark base colors keep highlights and interference colors
+  visible without clipping.
 
 Files are gzip-compressed GLB and raw RGBA8. Both oracles come from the
 straight-alpha WebGL framebuffer, which matches its browser PNG byte-for-byte.
