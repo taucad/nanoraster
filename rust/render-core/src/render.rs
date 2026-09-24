@@ -2890,8 +2890,18 @@ mod tests {
                 "map {slot} must have a visible effect"
             );
         }
-        // The remaining three maps encode vectors or occlusion, rather than a scalar material factor.
-        for slot in [2, 3, 8] {
+        renderer
+            .take_uncaptured()
+            .expect("no GPU validation errors");
+    }
+
+    #[test]
+    fn clearcoat_normal_and_surface_normal_maps_render_on_a_fresh_device() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        // Keep vector maps independent of the scalar-map pipeline cache and
+        // exercise clearcoat first, including a zero-strength neutral check.
+        for slot in [8, 2, 3] {
             let mut material = Material {
                 roughness: 0.3,
                 metallic: 0.0,
