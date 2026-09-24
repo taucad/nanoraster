@@ -176,10 +176,13 @@ source; material shading does not replace them with image edge detection.
   outside the image, transparent layers behind transparent layers, multiple
   internal bounces or caustics. Rough transmission uses an HDR mip pyramid with bicubic reconstruction;
   authored BRep line primitives participate in the refracted scene.
-- Lighting uses a captured neutral-room PMREM, integrated GGX and PBR Neutral. No
-  screen-space ambient occlusion or HDR environment-file loader is added.
-  Metal and glass matrices are compared to captured Three.js 0.184.0 WebGL
-  references. Other lighting rigs and ambient occlusion can still differ.
+- Lighting uses a captured neutral-room PMREM, integrated GGX and PBR Neutral.
+  Optional `ao: {}` enables full-resolution screen-space ambient occlusion with
+  a depth prepass and two bilateral denoise passes. It defaults off to avoid
+  the extra geometry pass and three full-screen passes. `radiusPixels`,
+  `intensity`, and `distanceFalloff` tune its screen-space profile. Metal and
+  glass matrices are compared to captured Three.js 0.184.0 WebGL references with
+  AO both off and on. No HDR environment-file loader is included.
 - Draft material extensions, including diffuse transmission and subsurface
   scattering, are outside this ratified extension set.
 
@@ -189,8 +192,9 @@ suite. The native and browser suites additionally exercise the public API.
 
 ### Physical-material size admission
 
-The production WASM admission is 2,255,592 bytes raw, 1,022,509 gzip-9 and 846,022
-Brotli-11 with Rust 1.98.0, Binaryen 132 and Node 26.8.1. The embedded room
-costs 290,487 bytes and the DFG table 1,024 bytes; the raw increase over the
-physical-material admission is 305,629 bytes. `scripts/check-wasm-size.mjs`
-records the explicit budget; benchmark entry points remain excluded.
+The production WASM admission is 2,342,643 bytes raw, 1,095,564 gzip-9 and
+916,905 Brotli-11 locally with Rust 1.98.0, Binaryen 132 and Node 26.8.1.
+The optional AO path adds 87,062 raw bytes over the preceding material build,
+including a 65,536-byte blue-noise texture. `scripts/check-wasm-size.mjs`
+records the explicit budget and CI compressor allowance; benchmark entry points
+remain excluded.

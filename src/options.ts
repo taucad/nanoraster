@@ -53,6 +53,16 @@ export type RenderLightingRig = {
  */
 export type RenderLighting = 'studio' | RenderLightingRig;
 
+/** Screen-space ambient occlusion for contact shadows in opaque geometry. Omit to skip its render passes. @public */
+export type RenderAmbientOcclusion = {
+  /** Sampling radius in output pixels. @default max(1% of image diagonal, 4) */
+  readonly radiusPixels?: number;
+  /** Visibility exponent. @default 3 */
+  readonly intensity?: number;
+  /** Fraction of the sampling radius used for depth rejection. @default 0.2 */
+  readonly distanceFalloff?: number;
+};
+
 /**
  * A three-component vector in the request's caller-world coordinates. Those
  * are glTF world coordinates when `world` is omitted.
@@ -257,6 +267,8 @@ type RenderImageSharedOptions = {
    * @default 'studio'
    */
   readonly lighting?: RenderLighting;
+  /** Optional opaque-surface AO matching Tau's WebGL editing profile. @default disabled */
+  readonly ao?: RenderAmbientOcclusion;
 };
 
 /** The singular camera plus the top-left label, whose presence is its switch. */
@@ -499,6 +511,7 @@ export type StrictRenderImagesOptions<Options extends RenderImagesOptions> = NoE
 > & {
   readonly views: StrictViews<Options['views']>;
   readonly lighting?: StrictLighting<Options['lighting']>;
+  readonly ao?: NoExtraKeys<Options['ao'], RenderAmbientOcclusion>;
   readonly visiblePrimitives?: StrictVisiblePrimitives<Options['visiblePrimitives']>;
   readonly sections?: StrictSections<Options['sections']>;
   readonly world?: StrictWorld<Options['world']>;
@@ -521,6 +534,7 @@ const singularKeys = new Set([
   'axes',
   'scaleBar',
   'lighting',
+  'ao',
 ]);
 
 const pluralKeys = new Set([
@@ -538,6 +552,7 @@ const pluralKeys = new Set([
   'axes',
   'scaleBar',
   'lighting',
+  'ao',
   'timings',
   'views',
 ]);
@@ -559,6 +574,8 @@ const fixedOrthographicProjectionKeys = new Set(['kind', 'verticalSpan', 'zoom']
 const clippingKeys = new Set(['near', 'far']);
 
 const lightingKeys = new Set(['lights', 'ambient', 'environment', 'space', 'exposure']);
+
+const aoKeys = new Set(['radiusPixels', 'intensity', 'distanceFalloff']);
 
 const lightKeys = new Set(['direction', 'color']);
 
@@ -1002,6 +1019,16 @@ const validateLighting = (lighting: unknown): void => {
   assertOptionalEnum(space, 'lighting.space', ['view', 'world']);
 };
 
+const validateAo = (ao: unknown): void => {
+  if (ao === undefined) return;
+  if (!isRecord(ao)) throw new TypeError('ao must be an object');
+  assertKnownKeys(ao, aoKeys, 'ao');
+  if (ao['radiusPixels'] !== undefined) assertRange(ao['radiusPixels'], 'ao.radiusPixels', [1, 128]);
+  if (ao['intensity'] !== undefined) assertRange(ao['intensity'], 'ao.intensity', [0, 8]);
+  if (ao['distanceFalloff'] !== undefined)
+    assertRange(ao['distanceFalloff'], 'ao.distanceFalloff', [0.01, 1]);
+};
+
 const validatePresentation = (options: CameraCommonOptions): void => {
   assertOptionalBoolean(options.surfaces, 'surfaces');
   assertOptionalBoolean(options.lines, 'lines');
@@ -1134,6 +1161,7 @@ const validateCameraCommon = (options: CameraCommonOptions, annotated: boolean):
   validateAnnotatedDimensions(options, annotated);
   validateBackground(options.background);
   validateLighting(options.lighting);
+  validateAo(options.ao);
   validatePresentation(options);
 };
 
@@ -1177,6 +1205,7 @@ export const toImageRequestJson = (options: RenderImageOptions): string => {
     axes: options.axes,
     scaleBar: options.scaleBar,
     lighting: options.lighting,
+    ao: options.ao,
   });
 };
 
@@ -1271,6 +1300,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     axes: options.axes,
     scaleBar: options.scaleBar,
     lighting: options.lighting,
+    ao: options.ao,
     timings: options.timings,
     views: normalizedViews,
   });

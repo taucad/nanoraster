@@ -91,6 +91,16 @@ test('wasm shell renders a deterministic 192x192 PNG', async () => {
   expect(png.byteLength).toBeGreaterThan(1_000);
 });
 
+test('wasm AO changes contact shading without changing zero-intensity pixels', async () => {
+  const options = { width: 192, height: 192, format: 'raw', lines: false };
+  const off = await render_image(glb, JSON.stringify(options));
+  const zero = await render_image(glb, JSON.stringify({ ...options, ao: { intensity: 0 } }));
+  const on = await render_image(glb, JSON.stringify({ ...options, ao: {} }));
+  expect(zero).toEqual(off);
+  expect(on).not.toEqual(off);
+  expect(await render_image(glb, JSON.stringify({ ...options, ao: {} }))).toEqual(on);
+});
+
 test('fitted perspective keeps the gear contained and legible through wide fields of view', async () => {
   const boundsAt = async (verticalFieldOfView) => {
     const bytes = await render_image(
@@ -457,17 +467,20 @@ test('metal and glass match captured WebGL material matrices', async () => {
     );
   };
   for (const reference of references) {
-    const bytes = await decompress(`${reference.id}.glb.gz`);
+    const base = reference.sourceId ? references.find((entry) => entry.id === reference.sourceId) : reference;
+    expect(base).toBeDefined();
+    const bytes = await decompress(`${reference.sourceId ?? reference.id}.glb.gz`);
     const expected = await decompress(`${reference.id}.rgba.gz`);
     const actual = await renderImage(bytes, {
-      width: reference.width,
-      height: reference.height,
+      width: base.width,
+      height: base.height,
       format: 'raw',
       world: { up: '+z', forward: '-y', unit: 'meter' },
       lines: false,
-      camera: reference.camera,
+      camera: base.camera,
+      ao: reference.ao,
     });
-    for (const error of materialErrors(reference, actual.bytes, expected)) {
+    for (const error of materialErrors(base, actual.bytes, expected)) {
       expect(error.mae, `${reference.id} row ${error.row} roughness ${error.roughness}`).toBeLessThan(2);
       expect(error.alphaMae).toBeLessThan(2);
     }

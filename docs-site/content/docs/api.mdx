@@ -431,6 +431,20 @@ call renders.
 
 <auto-type-table path="./props.ts" name="RenderImagesOptions" caption="RenderImagesOptions properties" />
 
+### `RenderAmbientOcclusion`
+
+Pass `ao: {}` to add screen-space contact shadows to opaque surfaces. Omit it
+to skip the depth and full-screen passes. The optional fields tune the radius
+in output pixels, visibility exponent, and distance rejection. AO uses the
+same profile for every view in a batch and leaves authored material factors
+unchanged.
+
+<auto-type-table
+  path="./props.ts"
+  name="RenderAmbientOcclusion"
+  caption="RenderAmbientOcclusion properties"
+/>
+
 ### `StrictRenderImagesOptions`
 
 The exact parameter type of [`renderImages`](#renderimages) and

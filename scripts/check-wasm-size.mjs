@@ -143,7 +143,12 @@ const sizes = {
 // The embedded room costs 290,487 bytes. Reusing Cursor<&[u8]> avoids a second
 // PNG decoder monomorphization (168,088 raw bytes in the first candidate).
 // v8 benchmark identity records the intentional lighting/output change.
-const ceilings = { raw: 2_255_592, gzip9: 1_029_292, brotli11: 846_022 };
+// Optional full-resolution AO: 2,342,643 / 1,095,564 / 916,905 locally on
+// Node 26.8.1. The +87,062 raw bytes include the 65,536-byte N8AO blue-noise
+// texture and the separate depth/estimator/denoiser shader. The gzip ceiling
+// also carries the 6,840-byte compressor spread observed on the preceding
+// byte-identical CI Node 26.10 artifact; the 0.5% tolerance below is unchanged.
+const ceilings = { raw: 2_342_643, gzip9: 1_102_404, brotli11: 916_905 };
 
 // `raw` is the artifact and is byte-reproducible, so it is enforced exactly.
 // The compressed figures are not properties of the artifact alone: they are

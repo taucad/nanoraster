@@ -18,7 +18,9 @@ const variants = values.baseline
     ]
   : [['candidate', candidate]];
 const root = new URL('../tests/fixtures/material-parity/', import.meta.url);
-const references = JSON.parse(readFileSync(new URL('reference.json', root), 'utf8'));
+const references = JSON.parse(readFileSync(new URL('reference.json', root), 'utf8')).filter(
+  (reference) => !reference.sourceId,
+);
 const distribution = (values) => {
   const sorted = [...values].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];

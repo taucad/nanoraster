@@ -214,5 +214,49 @@
     "roughness": [0.05, 0.25, 0.5, 0.85],
     "pixelSource": "Straight-alpha WebGL RGBA8 framebuffer and byte-identical canvas PNG",
     "capture": "effects-strong-ortho-1790243697626.json"
+  },
+  {
+    "id": "glass-ao",
+    "sourceId": "glass",
+    "referenceSha256": "7ff634783d1e85efd3f0b709cc894c13fa9909e385af5c906d433e46506b9073",
+    "ao": {},
+    "metadata": {
+      "post": {
+        "aoEnabled": true,
+        "radiusCssPixels": "viewport",
+        "aoCompositeStage": "display",
+        "intensity": 3,
+        "gtaoIntensity": 1,
+        "distanceFalloff": 0.2,
+        "gtaoDistanceFalloff": 1,
+        "webglHalfResolution": false,
+        "webglDenoiseRadiusCssPixels": 3,
+        "displayMode": "combined",
+        "toneMapping": "neutral"
+      },
+      "capture": "glass-ao-on-front-1790245043131.json"
+    }
+  },
+  {
+    "id": "metal-ao",
+    "sourceId": "metal",
+    "referenceSha256": "d0e4e4136e2fd51d0cc20641a742987c9dd2e9b6d029d5ac044c3622ebf7a98e",
+    "ao": {},
+    "metadata": {
+      "post": {
+        "aoEnabled": true,
+        "radiusCssPixels": "viewport",
+        "aoCompositeStage": "display",
+        "intensity": 3,
+        "gtaoIntensity": 1,
+        "distanceFalloff": 0.2,
+        "gtaoDistanceFalloff": 1,
+        "webglHalfResolution": false,
+        "webglDenoiseRadiusCssPixels": 3,
+        "displayMode": "combined",
+        "toneMapping": "neutral"
+      },
+      "capture": "metal-ao-on-front-1790245228278.json"
+    }
   }
 ]

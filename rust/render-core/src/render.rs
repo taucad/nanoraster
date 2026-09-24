@@ -124,6 +124,26 @@ struct PipelinePair {
     transmission_line: wgpu::RenderPipeline,
 }
 
+struct AoPipelines {
+    texture_mask: u32,
+    depth_mesh: wgpu::RenderPipeline,
+    depth_constant_mesh: wgpu::RenderPipeline,
+    estimate: wgpu::RenderPipeline,
+    blur_first: wgpu::RenderPipeline,
+    blur_second: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    blue_noise: wgpu::TextureView,
+    frame_buffer: wgpu::Buffer,
+}
+
+struct AoTargets {
+    depth_view: wgpu::TextureView,
+    test_depth_view: wgpu::TextureView,
+    estimate_view: wgpu::TextureView,
+    blur_view: wgpu::TextureView,
+}
+
 struct GpuCap {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
@@ -151,6 +171,7 @@ struct SizedTargets {
     opaque_levels: Vec<wgpu::TextureView>,
     opaque_mips: wgpu::TextureView,
     transmission: bool,
+    ao: Option<AoTargets>,
     composite_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
     resolve_texture: wgpu::Texture,
@@ -206,12 +227,14 @@ struct DeviceState {
     scene_layout: wgpu::BindGroupLayout,
     scene_sampler: wgpu::Sampler,
     empty_scene: wgpu::TextureView,
+    empty_ao: wgpu::TextureView,
     default_material: wgpu::BindGroup,
     identity_object: wgpu::BindGroup,
     object_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
     /// Keyed on `line_width_px` bits and whether wireframe bias is needed.
     pipelines: Vec<(u64, PipelinePair)>,
+    ao_pipelines: Option<AoPipelines>,
     /// Last-used target set, keyed on (width, height).
     targets: Option<SizedTargets>,
     /// Next readback slot; alternates so at most one view is ever in flight
@@ -660,14 +683,14 @@ fn orthographic_half_extents(
 
 // The one definition of the `Frame` uniform (see `shader.wgsl`): two mat4 and
 // a viewport vec4, then eight Lights at a 32-byte stride, a 16-byte lighting
-// tail, `MAX_SECTION_PLANES` section planes, and a 16-byte section tail.
-// 560 bytes at eight planes.
+// tail, `MAX_SECTION_PLANES` section planes, a 16-byte section tail, 16-byte
+// background, and 16-byte AO control. 592 bytes at eight planes.
 const FRAME_LIGHTS: usize = 36;
 const FRAME_LIGHT_STRIDE: usize = 8;
 const FRAME_TAIL: usize = 100;
 const FRAME_SECTION_PLANES: usize = 104;
 const FRAME_SECTION_TAIL: usize = FRAME_SECTION_PLANES + MAX_SECTION_PLANES * 4;
-const FRAME_FLOATS: usize = FRAME_SECTION_TAIL + 8;
+const FRAME_FLOATS: usize = FRAME_SECTION_TAIL + 12;
 
 fn frame_uniform(camera: CameraState, options: &RenderOptions) -> [f32; FRAME_FLOATS] {
     let lighting = &options.lighting;
@@ -701,12 +724,13 @@ fn frame_uniform(camera: CameraState, options: &RenderOptions) -> [f32; FRAME_FL
         camera_projection_kind(&options.camera) == Projection::Orthographic,
     ));
     let background = clear_color(options);
-    data[FRAME_SECTION_TAIL + 4..].copy_from_slice(&[
+    data[FRAME_SECTION_TAIL + 4..FRAME_SECTION_TAIL + 8].copy_from_slice(&[
         background.r as f32,
         background.g as f32,
         background.b as f32,
         background.a as f32,
     ]);
+    data[FRAME_SECTION_TAIL + 8] = options.ao.map_or(1.0, |ao| ao.intensity);
     if let Some(sections) = &options.sections {
         // Clamped the way the light rig is: `RenderOptions` is public, so the
         // uniform's fixed array is the authority even when validation is not.
@@ -1070,6 +1094,217 @@ fn create_pipeline_pair(
     }
 }
 
+fn create_ao_pipelines(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    mesh_shader: &wgpu::ShaderModule,
+    mesh_layout: &wgpu::PipelineLayout,
+    texture_mask: u32,
+) -> AoPipelines {
+    let position = wgpu::VertexBufferLayout {
+        array_stride: 12,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+    };
+    let normal = wgpu::VertexBufferLayout {
+        array_stride: 12,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &wgpu::vertex_attr_array![1 => Float32x3],
+    };
+    let attributes = wgpu::VertexBufferLayout {
+        array_stride: 64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4],
+    };
+    let make_depth_mesh = |constant: bool| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("AO opaque depth"),
+            layout: Some(mesh_layout),
+            vertex: wgpu::VertexState {
+                module: mesh_shader,
+                entry_point: Some("vs_mesh"),
+                compilation_options: Default::default(),
+                buffers: &[
+                    Some(position.clone()),
+                    Some(normal.clone()),
+                    Some(wgpu::VertexBufferLayout {
+                        step_mode: if constant {
+                            wgpu::VertexStepMode::Instance
+                        } else {
+                            wgpu::VertexStepMode::Vertex
+                        },
+                        ..attributes.clone()
+                    }),
+                ],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: mesh_shader,
+                entry_point: Some("fs_ao_depth"),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &[("TEXTURE_MASK", f64::from(texture_mask))],
+                    ..Default::default()
+                },
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::R32Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    let depth_mesh = make_depth_mesh(false);
+    let depth_constant_mesh = make_depth_mesh(true);
+
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("AO depth and estimate"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("AO fullscreen"),
+        bind_group_layouts: &[Some(&layout)],
+        immediate_size: 0,
+    });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("AO estimate and denoise"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("ao.wgsl").into()),
+    });
+    let fullscreen = |entry: &str, blur_index: Option<f64>| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(entry),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_ao"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some(entry),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &blur_index.map_or(Vec::new(), |index| vec![("BLUR_INDEX", index)]),
+                    ..Default::default()
+                },
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    AoPipelines {
+        texture_mask,
+        depth_mesh,
+        depth_constant_mesh,
+        estimate: fullscreen("fs_ao_estimate", None),
+        blur_first: fullscreen("fs_ao_blur", Some(0.0)),
+        blur_second: fullscreen("fs_ao_blur", Some(1.0)),
+        layout,
+        sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("AO denoise filtering"),
+            min_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        }),
+        // Decoded from n8ao 1.10.2 src/BlueNoise.js (project LICENSE: CC0-1.0).
+        blue_noise: device
+            .create_texture_with_data(
+                queue,
+                &wgpu::TextureDescriptor {
+                    label: Some("N8AO blue noise (CC0-1.0)"),
+                    size: wgpu::Extent3d {
+                        width: 128,
+                        height: 128,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                },
+                wgpu::util::TextureDataOrder::LayerMajor,
+                include_bytes!("../assets/n8ao-blue-noise.bin"),
+            )
+            .create_view(&wgpu::TextureViewDescriptor::default()),
+        frame_buffer: device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("AO frame"),
+            size: 160,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }),
+    }
+}
+
 impl DeviceState {
     async fn new(
         power: wgpu::PowerPreference,
@@ -1312,6 +1547,16 @@ impl DeviceState {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let scene_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -1336,6 +1581,27 @@ impl DeviceState {
                 view_formats: &[],
             })
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let empty_ao = device
+            .create_texture_with_data(
+                &queue,
+                &wgpu::TextureDescriptor {
+                    label: Some("unoccluded AO"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                },
+                wgpu::util::TextureDataOrder::LayerMajor,
+                &[255, 255, 255, 255],
+            )
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("render-core"),
@@ -1358,11 +1624,13 @@ impl DeviceState {
             scene_layout,
             scene_sampler,
             empty_scene,
+            empty_ao,
             default_material,
             identity_object,
             object_layout,
             pipeline_layout,
             pipelines: Vec::new(),
+            ao_pipelines: None,
             targets: None,
             slot: 0,
         })
@@ -1745,10 +2013,29 @@ impl Renderer {
         self.state.pipelines.len() - 1
     }
 
+    fn ensure_ao_pipelines(&mut self, texture_mask: u32) {
+        if self
+            .state
+            .ao_pipelines
+            .as_ref()
+            .is_some_and(|pipelines| pipelines.texture_mask == texture_mask)
+        {
+            return;
+        }
+        self.counters.pipeline_sets += 1;
+        self.state.ao_pipelines = Some(create_ao_pipelines(
+            &self.state.device,
+            &self.state.queue,
+            &self.state.shader,
+            &self.state.pipeline_layout,
+            texture_mask,
+        ));
+    }
+
     /// Keep the last-used target set; recreate on size change (R15 mixed-size
     /// plans cycle it within one job).
-    fn ensure_targets(&mut self, width: u32, height: u32, transmission: bool) {
-        if matches!(&self.state.targets, Some(targets) if targets.width == width && targets.height == height && targets.transmission == transmission)
+    fn ensure_targets(&mut self, width: u32, height: u32, transmission: bool, ao: bool) {
+        if matches!(&self.state.targets, Some(targets) if targets.width == width && targets.height == height && targets.transmission == transmission && targets.ao.is_some() == ao)
         {
             return;
         }
@@ -1779,6 +2066,44 @@ impl Renderer {
             format: DEPTH_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
+        });
+        let ao_targets = ao.then(|| {
+            let texture = |label, format, usage| {
+                device
+                    .create_texture(&wgpu::TextureDescriptor {
+                        label: Some(label),
+                        size: extent,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format,
+                        usage,
+                        view_formats: &[],
+                    })
+                    .create_view(&wgpu::TextureViewDescriptor::default())
+            };
+            AoTargets {
+                depth_view: texture(
+                    "AO view depth",
+                    wgpu::TextureFormat::R32Float,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                ),
+                test_depth_view: texture(
+                    "AO depth test",
+                    DEPTH_FORMAT,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT,
+                ),
+                estimate_view: texture(
+                    "AO estimate",
+                    wgpu::TextureFormat::Rgba8Unorm,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                ),
+                blur_view: texture(
+                    "AO denoise",
+                    wgpu::TextureFormat::Rgba8Unorm,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                ),
+            }
         });
         let resolve_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("resolve"),
@@ -1866,6 +2191,7 @@ impl Renderer {
             opaque_mips,
             opaque_levels,
             transmission,
+            ao: ao_targets,
             composite_view,
             msaa_view: msaa_texture.create_view(&wgpu::TextureViewDescriptor::default()),
             depth_view: depth_texture.create_view(&wgpu::TextureViewDescriptor::default()),
@@ -1889,7 +2215,11 @@ impl Renderer {
         entry: &PlanEntry,
     ) -> Result<InFlightView, RenderError> {
         let options = &entry.options;
-        self.ensure_targets(options.width, options.height, scene.transmission);
+        let ao_active = options.ao.is_some_and(|ao| ao.intensity > 0.0);
+        self.ensure_targets(options.width, options.height, scene.transmission, ao_active);
+        if ao_active {
+            self.ensure_ao_pipelines(scene.texture_mask);
+        }
         // Bias surfaces only when line geometry actually draws this view:
         // enabled model edges that survive `visiblePrimitives`, or a section
         // boundary (drawn unconditionally). Keying on `options.lines` alone —
@@ -1927,32 +2257,38 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("render"),
             });
-        let scene_group = |opaque: &wgpu::TextureView, composite: &wgpu::TextureView| {
-            state.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("capture material resources"),
-                layout: &state.scene_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: scene.texture_pixels.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(opaque),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&state.scene_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(composite),
-                    },
-                ],
-            })
-        };
-        let empty_resources = scene_group(&state.empty_scene, &state.empty_scene);
-        let transmission_resources = scene_group(&targets.opaque_mips, &state.empty_scene);
+        let scene_group =
+            |opaque: &wgpu::TextureView, composite: &wgpu::TextureView, ao: &wgpu::TextureView| {
+                state.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("capture material resources"),
+                    layout: &state.scene_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: scene.texture_pixels.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(opaque),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&state.scene_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(composite),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::TextureView(ao),
+                        },
+                    ],
+                })
+            };
+        let empty_resources = scene_group(&state.empty_scene, &state.empty_scene, &state.empty_ao);
+        let transmission_resources =
+            scene_group(&targets.opaque_mips, &state.empty_scene, &state.empty_ao);
         let mut opaque = Vec::new();
         let mut transparent = Vec::new();
         if options.surfaces {
@@ -1987,7 +2323,7 @@ impl Renderer {
         for stage in 0..if has_transparency { 2 } else { 1 } {
             if stage == 1 && has_transmission {
                 for levels in targets.opaque_levels.windows(2) {
-                    let resources = scene_group(&levels[0], &state.empty_scene);
+                    let resources = scene_group(&levels[0], &state.empty_scene, &state.empty_ao);
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("transmission mip"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2087,6 +2423,125 @@ impl Renderer {
                 }
             }
         }
+        if let (Some(ao), Some(ao_targets)) = (options.ao, &targets.ao) {
+            let pipelines = state
+                .ao_pipelines
+                .as_ref()
+                .expect("AO pipelines ensured above");
+            let radius = ao.radius_pixels.unwrap_or_else(|| {
+                ((options.width as f32).hypot(options.height as f32) * 0.01).max(4.0)
+            });
+            let mut ao_frame = [0f32; 40];
+            ao_frame[..16].copy_from_slice(&camera.projection.to_cols_array());
+            ao_frame[16..32].copy_from_slice(&camera.projection.inverse().to_cols_array());
+            ao_frame[32..36].copy_from_slice(&[
+                options.width as f32,
+                options.height as f32,
+                radius,
+                ao.distance_falloff,
+            ]);
+            ao_frame[36] =
+                f32::from(camera_projection_kind(&options.camera) == Projection::Orthographic);
+            state
+                .queue
+                .write_buffer(&pipelines.frame_buffer, 0, bytemuck::cast_slice(&ao_frame));
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("AO opaque depth"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &ao_targets.depth_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &ao_targets.test_depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    ..Default::default()
+                });
+                pass.set_bind_group(0, &state.frame_bind_group, &[]);
+                pass.set_bind_group(3, &empty_resources, &[]);
+                for (instance, mesh) in &opaque {
+                    pass.set_pipeline(if mesh.constant_attributes {
+                        &pipelines.depth_constant_mesh
+                    } else {
+                        &pipelines.depth_mesh
+                    });
+                    draw_surface(&mut pass, instance, mesh);
+                }
+            }
+            for (label, output, input, pipeline) in [
+                (
+                    "AO hemisphere",
+                    &ao_targets.estimate_view,
+                    &state.empty_ao,
+                    &pipelines.estimate,
+                ),
+                (
+                    "AO denoise first",
+                    &ao_targets.blur_view,
+                    &ao_targets.estimate_view,
+                    &pipelines.blur_first,
+                ),
+                (
+                    "AO denoise second",
+                    &ao_targets.estimate_view,
+                    &ao_targets.blur_view,
+                    &pipelines.blur_second,
+                ),
+            ] {
+                let resources = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(label),
+                    layout: &pipelines.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: pipelines.frame_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&ao_targets.depth_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(input),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::Sampler(&pipelines.sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::TextureView(&pipelines.blue_noise),
+                        },
+                    ],
+                });
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some(label),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: output,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                });
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &resources, &[]);
+                pass.draw(0..3, 0..1);
+            }
+        }
         let final_resources = scene_group(
             &state.empty_scene,
             if has_transparency {
@@ -2094,6 +2549,10 @@ impl Renderer {
             } else {
                 &targets.opaque_view
             },
+            targets
+                .ao
+                .as_ref()
+                .map_or(&state.empty_ao, |ao| &ao.estimate_view),
         );
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2790,6 +3249,66 @@ mod tests {
     }
 
     #[test]
+    fn ao_uses_opaque_depth_and_zero_intensity_keeps_baseline_pixels() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let scene = glb::parse_glb(include_bytes!("../../../tests/fixtures/gear-12.glb"))
+            .expect("gear fixture");
+        let options = RenderOptions {
+            width: 256,
+            height: 256,
+            lines: false,
+            ..RenderOptions::default()
+        };
+        let off = render_test_scene(&mut renderer, scene.clone(), options.clone());
+        let zero = render_test_scene(
+            &mut renderer,
+            scene.clone(),
+            RenderOptions {
+                ao: Some(crate::AmbientOcclusion {
+                    radius_pixels: None,
+                    intensity: 0.0,
+                    distance_falloff: 0.2,
+                }),
+                ..options.clone()
+            },
+        );
+        let on = render_test_scene(
+            &mut renderer,
+            scene,
+            RenderOptions {
+                ao: Some(crate::AmbientOcclusion {
+                    radius_pixels: None,
+                    intensity: 3.0,
+                    distance_falloff: 0.2,
+                }),
+                ..options
+            },
+        );
+        assert_eq!(zero.rgba, off.rgba);
+        let changed = on
+            .rgba
+            .iter()
+            .zip(&off.rgba)
+            .filter(|(a, b)| a != b)
+            .count();
+        assert!(changed > 100, "AO changed only {changed} channels");
+        // Per-vertex tangent/UV/color attributes select the other depth pipeline.
+        let mut with_attributes = physical_options();
+        with_attributes.ao = Some(crate::AmbientOcclusion {
+            radius_pixels: None,
+            intensity: 3.0,
+            distance_falloff: 0.2,
+        });
+        render_test_scene(
+            &mut renderer,
+            physical_sphere(Material::default()),
+            with_attributes,
+        );
+        renderer.take_uncaptured().expect("AO GPU validation");
+    }
+
+    #[test]
     fn glass_refracts_authored_edges_behind_it() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
@@ -3364,7 +3883,22 @@ mod tests {
         // tail and leaves the tail where `shader.wgsl` declares it.
         assert_eq!(MAX_SECTION_PLANES, 8);
         assert_eq!(FRAME_SECTION_TAIL, 136);
-        assert_eq!(FRAME_FLOATS * 4, 576);
+        assert_eq!(FRAME_FLOATS * 4, 592);
+        assert_eq!(data[FRAME_SECTION_TAIL + 8], 1.0);
+        assert_eq!(
+            frame_uniform(
+                camera,
+                &RenderOptions {
+                    ao: Some(crate::AmbientOcclusion {
+                        radius_pixels: None,
+                        intensity: 2.0,
+                        distance_falloff: 0.2
+                    }),
+                    ..RenderOptions::default()
+                }
+            )[FRAME_SECTION_TAIL + 8],
+            2.0
+        );
         let full = frame_uniform(
             camera,
             &RenderOptions {
@@ -4633,23 +5167,23 @@ mod tests {
                 .any(|(key, _)| *key == u64::from(2.0f32.to_bits() << 1 | 1))
         );
 
-        renderer.ensure_targets(320, 240, false);
+        renderer.ensure_targets(320, 240, false, false);
         assert_eq!(renderer.counters.target_allocations, 1);
-        renderer.ensure_targets(320, 240, false);
+        renderer.ensure_targets(320, 240, false, false);
         assert_eq!(renderer.counters.target_allocations, 1);
-        renderer.ensure_targets(640, 480, false);
+        renderer.ensure_targets(640, 480, false, false);
         assert_eq!(renderer.counters.target_allocations, 2);
         // The retention guard keeps ordinary sizes and evicts oversized ones.
         renderer.trim_targets();
         assert!(renderer.state.targets.is_some());
-        renderer.ensure_targets(4096, 4096, false);
+        renderer.ensure_targets(4096, 4096, false, false);
         renderer.trim_targets();
         assert!(renderer.state.targets.is_none());
         // Nothing retained: trimming again is a no-op.
         renderer.trim_targets();
         assert!(renderer.state.targets.is_none());
 
-        renderer.ensure_targets(640, 480, false);
+        renderer.ensure_targets(640, 480, false, false);
         let targets = renderer.state.targets.as_ref().expect("targets");
         assert_eq!(targets.readback.len(), 2);
         assert_eq!(targets.unpadded_bytes_per_row, 640 * 4);
@@ -4657,6 +5191,23 @@ mod tests {
             targets.padded_bytes_per_row % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
             0
         );
+        renderer.ensure_targets(640, 480, false, true);
+        assert!(
+            renderer
+                .state
+                .targets
+                .as_ref()
+                .expect("AO targets")
+                .ao
+                .is_some()
+        );
+        assert_eq!(renderer.counters.target_allocations, 5);
+        renderer.ensure_targets(640, 480, false, true);
+        assert_eq!(renderer.counters.target_allocations, 5);
+        renderer.ensure_ao_pipelines(0);
+        let pipeline_sets = renderer.counters.pipeline_sets;
+        renderer.ensure_ao_pipelines(0);
+        assert_eq!(renderer.counters.pipeline_sets, pipeline_sets);
     }
 
     /// musl starts every process at a 128 KiB default and never lowers it, so

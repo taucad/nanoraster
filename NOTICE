@@ -30,6 +30,11 @@ The adaptation in rust/render-core/src/physical.wgsl changes GLSL to WGSL and
 uses the nanoraster material/uniform contract. The Apache-2.0 license text
 is included in this distribution's license file.
 
+The 128×128 blue-noise RGBA texture in rust/render-core/assets/ is decoded
+from n8ao 1.10.2 src/BlueNoise.js, released under CC0 1.0 Universal.
+Source: https://unpkg.com/n8ao@1.10.2/src/BlueNoise.js
+Decoded SHA-256: b9efcfbc51ecafe80db33a5b0c9577f978a18bb7c0eb72777fe8a0a4205fd1ac
+
 The GGX/DFG, sheen, CubeUV, transmission filtering and PBR Neutral routines in
 physical.wgsl, lighting.wgsl and shader.wgsl are adapted from Three.js r184.
 The embedded neutral-room PMREM derives from its RoomEnvironment and the DFG

@@ -25,6 +25,7 @@ struct Frame {
     clip_lines: u32,
     orthographic: u32,
     background: vec4<f32>,
+    ao_control: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -49,6 +50,7 @@ struct Prim {
 @group(3) @binding(1) var opaque_scene: texture_2d<f32>;
 @group(3) @binding(2) var scene_sampler: sampler;
 @group(3) @binding(3) var composite_scene: texture_2d<f32>;
+@group(3) @binding(4) var ao_scene: texture_2d<f32>;
 
 struct Object {
     model: mat4x4<f32>,
@@ -238,6 +240,19 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
     return vec4<f32>(select(color * base.a, color, prim.pbr.z == 2.0), base.a);
 }
 
+@fragment
+fn fs_ao_depth(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(0) f32 {
+    if (front_facing != (in.model_scale.w > 0.0) && prim.coat.z == 0.0) { discard; }
+    if (frame.clip_surfaces != 0u) {
+        for (var i = 0u; i < frame.section_count; i++) {
+            let plane = frame.section_planes[i];
+            if (dot(plane.xyz, in.world_position) + plane.w < 0.0) { discard; }
+        }
+    }
+    if (prim.pbr.z == 1.0 && (prim.base_color * in.vertex_color * sample_map(in, 0u)).a < prim.pbr.w) { discard; }
+    return in.view_position.z;
+}
+
 struct ScreenOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> }
 @vertex
 fn vs_screen(@builtin(vertex_index) index: u32) -> ScreenOut {
@@ -252,7 +267,8 @@ fn fs_mip(in: ScreenOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_screen(in: ScreenOut) -> @location(0) vec4<f32> {
     let color = textureSampleLevel(composite_scene, scene_sampler, in.uv, 0.0);
-    let display = tone_map(color.rgb / max(color.a, 0.000001), frame.exposure);
+    let visibility = pow(textureSampleLevel(ao_scene, scene_sampler, in.uv, 0.0).r, frame.ao_control.x);
+    let display = tone_map(color.rgb / max(color.a, 0.000001), frame.exposure) * visibility;
     let alpha = color.a + frame.background.a * (1.0 - color.a);
     let premultiplied = display * color.a + frame.background.rgb * frame.background.a * (1.0 - color.a);
     // Cap/edge blending and MSAA still need premultiplied-linear RGB. Readback

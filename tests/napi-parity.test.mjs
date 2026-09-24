@@ -1,5 +1,5 @@
 import { materialErrors } from './material-parity.mjs';
-import { renderImage } from '#index.node.js';
+import { createRenderer, renderImage } from '#index.node.js';
 import { physicalMaterialGlb, physicalMaterial } from './pbr-fixture.mjs';
 import { expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -10,21 +10,42 @@ const parityRoot = new URL('./fixtures/material-parity/', import.meta.url);
 const references = JSON.parse(readFileSync(new URL('reference.json', parityRoot), 'utf8'));
 
 test.each(references)('$id matches the Three.js material matrix', async (reference) => {
-  const glb = gunzipSync(readFileSync(new URL(`${reference.id}.glb.gz`, parityRoot)));
+  const base = reference.sourceId ? references.find((entry) => entry.id === reference.sourceId) : reference;
+  expect(base).toBeDefined();
+  const glb = gunzipSync(readFileSync(new URL(`${reference.sourceId ?? reference.id}.glb.gz`, parityRoot)));
   const expected = gunzipSync(readFileSync(new URL(`${reference.id}.rgba.gz`, parityRoot)));
-  expect(createHash('sha256').update(glb).digest('hex')).toBe(reference.sha256);
+  expect(createHash('sha256').update(glb).digest('hex')).toBe(base.sha256);
   expect(createHash('sha256').update(expected).digest('hex')).toBe(reference.referenceSha256);
   const actual = await renderImage(glb, {
-    width: reference.width,
-    height: reference.height,
+    width: base.width,
+    height: base.height,
     format: 'raw',
     world: { up: '+z', forward: '-y', unit: 'meter' },
     lines: false,
-    camera: reference.camera,
+    camera: base.camera,
+    ao: reference.ao,
   });
-  for (const error of materialErrors(reference, actual.bytes, expected)) {
+  for (const error of materialErrors(base, actual.bytes, expected)) {
     expect(error.mae, `${reference.id} row ${error.row} roughness ${error.roughness}`).toBeLessThan(2);
     expect(error.alphaMae).toBeLessThan(2);
+  }
+});
+
+test('AO changes contact shading, intensity zero preserves pixels, and warm batch output is stable', async () => {
+  const glb = readFileSync(new URL('./fixtures/gear-12.glb', import.meta.url));
+  const renderer = await createRenderer();
+  try {
+    const options = { width: 256, height: 256, format: 'raw', lines: false };
+    const off = await renderer.renderImage(glb, options);
+    const zero = await renderer.renderImage(glb, { ...options, ao: { intensity: 0 } });
+    const on = await renderer.renderImage(glb, { ...options, ao: {} });
+    expect(zero.bytes).toEqual(off.bytes);
+    expect(on.bytes).not.toEqual(off.bytes);
+    const batch = await renderer.renderImages(glb, { ...options, ao: {}, views: [{ id: 'iso' }] });
+    expect(batch[0].file.bytes).toEqual(on.bytes);
+    expect((await renderer.renderImage(glb, { ...options, ao: {} })).bytes).toEqual(on.bytes);
+  } finally {
+    renderer.dispose();
   }
 });
 
