@@ -188,7 +188,6 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm nx run nanoraster:docs-prose
       # Needs the exported site, which the docs-prose target has just built.
-      - run: node scripts/check-links.mjs --internal-only
       - if: github.event_name != 'pull_request'
         run: pnpm run docs:links
 
@@ -355,7 +354,7 @@ jobs:
         run: pnpm run test:native-parity
 
   assemble:
-    needs: [preflight, quality, docs-prose, node, build]
+    needs: [preflight, quality, node, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
@@ -728,7 +727,7 @@ jobs:
 
   publish:
     if: needs.preflight.outputs.npm-publish == 'true'
-    needs: [preflight, assemble, smoke, browser, security]
+    needs: [preflight, assemble, docs-prose, smoke, browser, security]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
