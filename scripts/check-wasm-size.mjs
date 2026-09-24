@@ -163,7 +163,8 @@ const ceilings = { raw: 2_342_843, gzip9: 1_102_404, brotli11: 916_905 };
 // not hypothetical: it red-lined CI on the parent commit over a single byte.
 // Allow the compressors 0.5% of headroom, which absorbs every version spread
 // measured here and still catches the kilobyte-scale growth this ratchet
-// exists to police; `raw` keeps that growth honest to the byte regardless.
+// exists to police; `raw` catches byte growth within one build environment.
+// Its ceiling also admits the measured 25-byte CI/macOS build spread above.
 const compressorTolerance = 0.005;
 const allowances = {
   raw: 0,
