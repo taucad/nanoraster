@@ -442,6 +442,8 @@ const parityOptions = ['png', 'webp', 'jpeg'].flatMap((format) =>
     })),
   ),
 );
+// Reuse one device for the 336-case matrix; cold one-shot behavior is checked above.
+const parityRenderer = await native.createRenderer();
 for (const { format, projection, axes, labelled, scaleBar } of parityOptions) {
   const common = {
     width: 512,
@@ -452,9 +454,9 @@ for (const { format, projection, axes, labelled, scaleBar } of parityOptions) {
     scaleBar,
   };
   const views = parityViews.map((view) => renderView(view, projection, labelled));
-  const images = (await native.renderImages(glb, JSON.stringify({ ...common, views }))).images;
+  const images = (await parityRenderer.renderImages(glb, JSON.stringify({ ...common, views }))).images;
   for (const [index, view] of views.entries()) {
-    const one = await native.renderImage(
+    const one = await parityRenderer.renderImage(
       glb,
       JSON.stringify({ ...common, label: view.label, camera: view.camera }),
     );
@@ -466,11 +468,13 @@ for (const { format, projection, axes, labelled, scaleBar } of parityOptions) {
     parityCases += 1;
   }
   const reordered = [{ ...views[3], id: 'right-first' }, views[0], { ...views[3], id: 'right-second' }];
-  const repeated = (await native.renderImages(glb, JSON.stringify({ ...common, views: reordered }))).images;
+  const repeated = (await parityRenderer.renderImages(glb, JSON.stringify({ ...common, views: reordered })))
+    .images;
   if (!repeated[0].equals(repeated[2])) {
     throw new Error(`${format}/${projection} repeated annotated view differs`);
   }
 }
+parityRenderer.dispose();
 const canonicalVisuals = (
   await native.renderImages(
     glb,
