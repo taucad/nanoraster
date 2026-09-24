@@ -2,7 +2,7 @@
   {
     "id": "metal",
     "sha256": "f109d123f6ae6d171f890769512f48d953c51b6b75ac397c70c794ea4c88bb34",
-    "referenceSha256": "afe217c1d6ed13f3543c589c550a129231ede9b32783f006218187482aa06b85",
+    "referenceSha256": "96539cef10c0bcadb1da11400e10fa0d33b89e03e5e6700b7e6a16571d71fcd0",
     "width": 1276,
     "height": 798,
     "camera": {
@@ -49,12 +49,14 @@
       "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)"
     },
     "rows": [0, 1, 2],
-    "roughness": [0.05, 0.25, 0.5, 0.85]
+    "roughness": [0.05, 0.25, 0.5, 0.85],
+    "pixelSource": "Straight-alpha WebGL RGBA8 framebuffer and byte-identical canvas PNG",
+    "capture": "metal-straight-alpha-1790239032855.json"
   },
   {
     "id": "glass",
     "sha256": "0c6115f2cf5a753ab26c350ffb6e3d040c68b5a4e2e2f1bac95b73c0e1f0f4c1",
-    "referenceSha256": "0572f715d454836a96ad669393513df3ed5913b6543dc181bf0f14a7dfe32b29",
+    "referenceSha256": "4ad607767ef7f13757c4823f948f3df03b77311bd4d609abda2f809a60d0477f",
     "width": 1276,
     "height": 798,
     "camera": {
@@ -102,7 +104,7 @@
     },
     "rows": [0, 1, 2],
     "roughness": [0.05, 0.25, 0.5, 0.85],
-    "pixelSource": "WebGL RGBA8 framebuffer, before canvas PNG unpremultiplication",
-    "capture": "parity-glass-framebuffer-1790234598023.json"
+    "pixelSource": "Straight-alpha WebGL RGBA8 framebuffer and byte-identical canvas PNG",
+    "capture": "glass-alpha-ortho-after-1790238562136.json"
   }
 ]

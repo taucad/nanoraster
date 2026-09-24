@@ -1,6 +1,6 @@
 # Three.js physical-material oracle
 
-These are actual WebGL r184 captures of Replicad BRep fixtures exported by
+These are actual Three.js 0.184.0 WebGL captures of Replicad BRep fixtures exported by
 Tau's `ui:render-calibration-physical` target. `reference.json` retains the
 camera, geometry and reference pixel hashes, room lighting and display
 settings. AO, grids and authored edges are disabled to isolate materials.
@@ -13,13 +13,10 @@ Each matrix contains twelve radius-14 mm spheres. Columns use roughness
 - Glass: IOR 1 / zero thickness; IOR 1.5 / 25 mm thickness; the same volume
   with green attenuation over 40 mm. A blue/grey unlit checkerboard is behind it.
 
-Files are gzip-compressed GLB and raw RGBA8. For glass, the oracle is read
-straight from the WebGL framebuffer before canvas PNG conversion. The latter
-unpremultiplies already-straight sRGB transmission channels and brightens
-partial-alpha glass (e.g. [177,183,194,214] becomes [211,218,231,214]). This
-oracle isolates shader output and alpha; it does not hide that outstanding
-Tau canvas/compositor mismatch or claim browser PNG byte parity. The native test verifies hashes
-and compares every material's sphere interior separately. The gate is mean
+Files are gzip-compressed GLB and raw RGBA8. Both oracles come from the
+straight-alpha WebGL framebuffer, which matches its browser PNG byte-for-byte.
+The native test verifies hashes and compares every material's sphere interior
+separately. The gate is mean
 absolute RGB error <2/255 per material, without exposure adjustment, image
 registration or brightness masking. The three-pixel silhouette exclusion
 isolates shading from differences between WebGL and wgpu 4× MSAA coverage.

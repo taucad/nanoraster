@@ -198,11 +198,11 @@ fn transmission_sample(in: MeshOut, n: vec3<f32>, v: vec3<f32>, ior: f32, thickn
     let lod = min(log2(f32(textureDimensions(opaque_scene).x)) * roughness
         * clamp(ior * 2.0 - 2.0, 0.0, 1.0), f32(textureNumLevels(opaque_scene) - 1u));
     let color = mix(bicubic_transmission(uv, floor(lod)), bicubic_transmission(uv, ceil(lod)), fract(lod));
-    // Three's transmission buffer clears to half-opaque white when the canvas
-    // is transparent. Apply that clear after filtering: it is affine in coverage,
-    // so the opaque image can still be shared with the final composite.
+    // Three's straight-alpha transmission buffer clears to white at alpha 0.5
+    // when the canvas is transparent. Apply that clear after filtering: it is
+    // affine in coverage, so the opaque image can still be shared.
     let clear_alpha = select(0.5, 1.0, frame.background.a == 1.0);
-    let background = select(vec3<f32>(0.5), frame.background.rgb, frame.background.a == 1.0);
+    let background = select(vec3<f32>(1.0), frame.background.rgb, frame.background.a == 1.0);
     let radiance = color.rgb + background * (1.0 - color.a);
     let attenuation = pow(max(prim.attenuation.rgb, vec3<f32>(0.000001)), vec3<f32>(length(world_ray) * prim.attenuation.w));
     let opacity = color.a + clear_alpha * (1.0 - color.a);
