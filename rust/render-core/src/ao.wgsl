@@ -56,7 +56,11 @@ fn ao_normal(p: vec2<i32>, center_z: f32) -> vec3<f32> {
     let dy = select(ao_position(vec2<f32>(top) + 0.5, t1) - center,
         center - ao_position(vec2<f32>(bottom) + 0.5, b1), db < dt);
     let n = cross(dx, dy);
-    if (dot(n, n) <= 1e-16) { return vec3<f32>(0.0, 0.0, 1.0); }
+    // Cross-product magnitude scales with scene units squared. Test the angle
+    // between derivatives instead so millimetre CAD faces keep their normals.
+    if (dot(n, n) <= 1e-6 * dot(dx, dx) * dot(dy, dy)) {
+        return vec3<f32>(0.0, 0.0, 1.0);
+    }
     return normalize(n);
 }
 

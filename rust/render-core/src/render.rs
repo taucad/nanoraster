@@ -3309,6 +3309,45 @@ mod tests {
     }
 
     #[test]
+    fn ao_is_stable_across_cad_scene_scales() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let options = RenderOptions {
+            width: 768,
+            height: 576,
+            lines: false,
+            ao: Some(crate::AmbientOcclusion {
+                radius_pixels: None,
+                intensity: 3.0,
+                distance_falloff: 0.2,
+            }),
+            ..RenderOptions::default()
+        };
+        let small_cube = glb::parse_glb(include_bytes!("../../../tests/fixtures/cad-mm-cube.glb"))
+            .expect("small CAD cube");
+        let small = render_test_scene(&mut renderer, small_cube.clone(), options.clone());
+        let mut large_cube = small_cube;
+        for position in &mut large_cube.meshes[0].primitives[0].positions {
+            *position *= 100.0;
+        }
+        large_cube.bounds = Some(([-1.0; 3], [1.0; 3]));
+        let large = render_test_scene(&mut renderer, large_cube, options);
+        let mut error = 0u64;
+        let mut count = 0u64;
+        for (a, b) in large.rgba.chunks_exact(4).zip(small.rgba.chunks_exact(4)) {
+            if a[3] == 255 && b[3] == 255 {
+                error += u64::from(a[0].abs_diff(b[0]));
+                count += 1;
+            }
+        }
+        let mean_error = error as f64 / count as f64;
+        assert!(
+            mean_error < 3.0,
+            "AO changed with scene scale: mean red error {mean_error}"
+        );
+    }
+
+    #[test]
     fn glass_refracts_authored_edges_behind_it() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
