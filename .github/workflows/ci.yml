@@ -188,7 +188,9 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm nx run nanoraster:docs-prose
       # Needs the exported site, which the docs-prose target has just built.
-      - run: pnpm run docs:links
+      - run: node scripts/check-links.mjs --internal-only
+      - if: github.event_name != 'pull_request'
+        run: pnpm run docs:links
 
   node:
     needs: preflight
