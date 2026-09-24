@@ -152,7 +152,9 @@ const sizes = {
 // (+175), 1,103,008 gzip-9, and 916,682 brotli-11. The pinned local macOS
 // build measures 2,342,843 raw (+200). Admit that measured upper bound;
 // compressed bytes remain inside the existing allowance.
-const ceilings = { raw: 2_342_843, gzip9: 1_102_404, brotli11: 916_905 };
+// Missing-neighbor AO fallback: 2,342,955 raw (+112), 1,095,713 gzip-9,
+// 916,719 brotli-11 locally on the same pinned toolchain.
+const ceilings = { raw: 2_342_955, gzip9: 1_102_404, brotli11: 916_905 };
 
 // `raw` is deterministic within a build environment, so it has no percentage allowance.
 // The compressed figures are not properties of the artifact alone: they are

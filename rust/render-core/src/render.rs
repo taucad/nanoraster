@@ -3382,6 +3382,57 @@ mod tests {
     }
 
     #[test]
+    fn ao_thin_feature_ignores_missing_depth_neighbors() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let mut scene = occluded_line_scene(false);
+        let strip = &mut scene.meshes[0].primitives[0];
+        for vertex in strip.positions.as_chunks_mut::<3>().0 {
+            vertex[0] = if vertex[0] < 0.0 { 0.0 } else { 0.009 };
+            vertex[1] *= 0.5;
+        }
+        let mut neighbor = strip.clone();
+        for vertex in neighbor.positions.as_chunks_mut::<3>().0 {
+            vertex[0] += 0.05;
+            vertex[2] += 0.02;
+        }
+        scene.meshes[0].primitives.push(neighbor);
+        let options = RenderOptions {
+            width: 256,
+            height: 256,
+            lines: false,
+            camera: fixed_camera(CameraProjection::Orthographic {
+                vertical_span: Some(2.4),
+                zoom: 1.0,
+            }),
+            ..RenderOptions::default()
+        };
+        let off = render_test_scene(&mut renderer, scene.clone(), options.clone());
+        let on = render_test_scene(
+            &mut renderer,
+            scene,
+            RenderOptions {
+                ao: Some(crate::AmbientOcclusion {
+                    radius_pixels: Some(16.0),
+                    intensity: 3.0,
+                    distance_falloff: 0.2,
+                }),
+                ..options
+            },
+        );
+        let mut error = 0u64;
+        for y in 112..145 {
+            let pixel = ((y * 256 + 133) * 4) as usize;
+            assert!(off.rgba[pixel] > 230, "thin strip must be visible");
+            error += u64::from(off.rgba[pixel].abs_diff(on.rgba[pixel]));
+        }
+        assert!(
+            error as f64 / 33.0 < 2.0,
+            "AO darkened a thin isolated strip"
+        );
+    }
+
+    #[test]
     fn glass_refracts_authored_edges_behind_it() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");

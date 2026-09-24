@@ -47,6 +47,9 @@ fn ao_normal(p: vec2<i32>, center_z: f32) -> vec3<f32> {
     let r1 = ao_z(right); let r2 = ao_z(vec2<i32>(p.x + 2, p.y));
     let b1 = ao_z(bottom); let b2 = ao_z(vec2<i32>(p.x, p.y + 2));
     let t1 = ao_z(top); let t2 = ao_z(vec2<i32>(p.x, p.y - 2));
+    if ((l1 == 0.0 && r1 == 0.0) || (b1 == 0.0 && t1 == 0.0)) {
+        return vec3<f32>(0.0, 0.0, 1.0);
+    }
     let dl = select(1e9, abs((2.0 * l1 - l2) - center_z), l1 != 0.0);
     let dr = select(1e9, abs((2.0 * r1 - r2) - center_z), r1 != 0.0);
     let db = select(1e9, abs((2.0 * b1 - b2) - center_z), b1 != 0.0);
