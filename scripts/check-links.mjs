@@ -161,7 +161,10 @@ if (isFile(path.join(OUT, 'docs.mdx'))) {
   );
 }
 
-for (const file of await walk(ROOT, (f) => path.dirname(f) === ROOT && f.endsWith('.md'))) {
+// Root Markdown is non-recursive; walking node_modules can exhaust the CI runner.
+for (const entry of await readdir(ROOT, { withFileTypes: true })) {
+  if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+  const file = path.join(ROOT, entry.name);
   const text = await readFile(file, 'utf8');
   const targets = [
     ...Array.from(text.matchAll(/\[[^\]]*\]\(([^)\s]+)/g), (m) => m[1]),
