@@ -192,8 +192,8 @@ suite. The native and browser suites additionally exercise the public API.
 
 ### Physical-material size admission
 
-The production WASM admission is 2,342,643 bytes raw, 1,095,564 gzip-9 and
-916,905 Brotli-11 locally with Rust 1.98.0, Binaryen 132 and Node 26.8.1.
+The production WASM admission is 2,342,824 bytes raw, 1,095,823 gzip-9 and
+916,737 Brotli-11 locally with Rust 1.98.0, Binaryen 132 and Node 26.8.1.
 The optional AO path adds 87,062 raw bytes over the preceding material build,
 including a 65,536-byte blue-noise texture. `scripts/check-wasm-size.mjs`
 records the explicit budget and CI compressor allowance; benchmark entry points
