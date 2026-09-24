@@ -3571,6 +3571,26 @@ mod tests {
     }
 
     #[test]
+    fn large_emission_stays_finite_through_hdr_and_display() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let material = Material {
+            emissive: [100000.0, 100000.0, 100000.0, 0.0],
+            ..Material::default()
+        };
+        let image = render_test_scene(&mut renderer, physical_sphere(material), physical_options());
+        let center = ((image.height / 2 * image.width + image.width / 2) * 4) as usize;
+        assert!(
+            image.rgba[center..center + 3]
+                .iter()
+                .all(|&channel| channel >= 250),
+            "bright emitter must tone-map to white: {:?}",
+            &image.rgba[center..center + 4]
+        );
+        renderer.take_uncaptured().expect("no uncaptured GPU error");
+    }
+
+    #[test]
     fn unlit_ignores_lighting_but_uses_display_transform_and_mask_discards_pixels() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");

@@ -1988,6 +1988,22 @@ mod tests {
     }
 
     #[test]
+    fn emissive_strength_resolves_within_the_hdr_target_range() {
+        let (json, bin) = physical_fixture(
+            json!({
+                "emissiveFactor": [1, 0.5, 0],
+                "extensions": {"KHR_materials_emissive_strength": {"emissiveStrength": 100000}}
+            }),
+            None,
+        );
+        let scene = parse_glb(&glb(json, bin)).expect("large finite strength remains valid");
+        assert_eq!(
+            scene.meshes[0].primitives[0].material.emissive,
+            [65504.0, 32752.0, 0.0, 0.0]
+        );
+    }
+
+    #[test]
     fn physical_materials_fail_closed_on_invalid_factors_or_missing_attributes() {
         for material in [
             json!({"extensions":{"KHR_materials_ior":{"ior":0.5}}}),

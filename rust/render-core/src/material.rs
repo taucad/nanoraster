@@ -190,7 +190,8 @@ impl Material {
             1.0,
             0.0,
             f32::MAX,
-        )?;
+        )?
+        .min(65504.0); // The HDR scene target is Rgba16Float.
         result.emissive = [
             emission[0] * strength,
             emission[1] * strength,

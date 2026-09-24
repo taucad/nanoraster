@@ -233,7 +233,8 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
         diffuse_light = mix(diffuse_light, transmitted.rgb * diffuse * (1.0 - fresnel), transmission);
         base.a *= mix(1.0, 1.0 - (1.0 - transmitted.a) * (diffuse.r + diffuse.g + diffuse.b) / 3.0, transmission);
     }
-    let color = (diffuse_light + specular_light + sheen_light + emission) * (1.0 - coat_fresnel * coat) + coat_light * coat;
+    let color = min((diffuse_light + specular_light + sheen_light + emission) * (1.0 - coat_fresnel * coat) + coat_light * coat,
+        vec3<f32>(65504.0)); // Keep the Rgba16Float scene and transmission mips finite.
     // OPAQUE transmission replaces the pixel, including its coverage alpha;
     // only glTF BLEND composites with the surface behind it. Retain premultiplied
     // HDR in both cases (the blend pipeline performs that multiplication itself).
