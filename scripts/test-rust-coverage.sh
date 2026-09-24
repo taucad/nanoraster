@@ -36,12 +36,15 @@ IGNORE_PATHS='vendor/image-webp|vendor/wgpu-hal|render-wasm|render-napi'
 cd "$REPO_ROOT"
 # --all-features keeps the default-off `bench` surface measured rather than
 # silently uncompiled: its code counts, and its tests run.
+# Tests share the CI GPU. Serialize separate test cases to avoid WARP device
+# resets under simultaneous shader compilation; concurrency inside tests remains.
 cargo llvm-cov \
   --manifest-path rust/Cargo.toml \
   --workspace \
   --all-features \
   --ignore-filename-regex "$IGNORE_PATHS" \
   --fail-under-lines 100 \
-  --summary-only
+  --summary-only \
+  -- --test-threads=1
 
 printf '%s\n' '✓ Rust line coverage is 100%'
