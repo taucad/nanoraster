@@ -3456,12 +3456,10 @@ mod tests {
         };
         let image = render_test_scene(&mut renderer, physical_sphere(material), physical_options());
         let center = ((image.height / 2 * image.width + image.width / 2) * 4) as usize;
+        let pixel = &image.rgba[center..center + 4];
         assert!(
-            image.rgba[center..center + 3]
-                .iter()
-                .all(|&channel| channel >= 250),
-            "bright emitter must tone-map to white: {:?}",
-            &image.rgba[center..center + 4]
+            pixel[..3].iter().all(|&channel| channel >= 250),
+            "bright emitter must tone-map to white: {pixel:?}"
         );
         renderer.take_uncaptured().expect("no uncaptured GPU error");
     }
