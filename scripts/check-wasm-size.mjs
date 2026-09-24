@@ -148,15 +148,16 @@ const sizes = {
 // texture and the separate depth/estimator/denoiser shader. The gzip ceiling
 // also carries the 6,840-byte compressor spread observed on the preceding
 // byte-identical CI Node 26.10 artifact; the 0.5% tolerance below is unchanged.
-// Scale-independent AO normals: CI Node 26.10.0 measures 2,342,818 raw
-// (+175), 1,103,008 gzip-9, and 916,682 brotli-11. The pinned local macOS
-// build measures 2,342,843 raw (+200). Admit that measured upper bound;
-// compressed bytes remain inside the existing allowance.
-// Missing-neighbor AO fallback: 2,342,955 raw (+112), 1,095,713 gzip-9,
-// 916,719 brotli-11 locally on the same pinned toolchain.
-const ceilings = { raw: 2_342_955, gzip9: 1_102_404, brotli11: 916_905 };
+// Bounded emissive HDR and cached sRGB mip decoding: 2,342,824 / 1,095,823 /
+// 916,737 locally on Rust 1.98.0 and Node 26.8.1. CI's macOS artifact was
+// 2,342,808 raw; the exact raw gate admits the larger measured build. The
+// gzip ceiling retains the measured 6,840-byte compressor spread above.
+// Combined AO normal fixes and bounded emission: 2,343,127 / 1,095,971 /
+// 916,657 locally on the pinned Rust 1.98.0 and Node 26.8.1 toolchain.
+const ceilings = { raw: 2_343_127, gzip9: 1_102_663, brotli11: 916_737 };
 
-// `raw` is deterministic within a build environment, so it has no percentage allowance.
+// `raw` is the artifact and is measured exactly on each build; the ceiling
+// covers the measured host variation without a percentage allowance.
 // The compressed figures are not properties of the artifact alone: they are
 // what *this host's* zlib and brotli make of it. A byte-identical wasm
 // measures 569,364 gzip-9 under Node 24 and 26 and 569,404 under CI's Node,
@@ -166,7 +167,6 @@ const ceilings = { raw: 2_342_955, gzip9: 1_102_404, brotli11: 916_905 };
 // Allow the compressors 0.5% of headroom, which absorbs every version spread
 // measured here and still catches the kilobyte-scale growth this ratchet
 // exists to police; `raw` catches byte growth within one build environment.
-// Its ceiling also admits the measured 25-byte CI/macOS build spread above.
 const compressorTolerance = 0.005;
 const allowances = {
   raw: 0,
