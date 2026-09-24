@@ -148,9 +148,13 @@ const sizes = {
 // texture and the separate depth/estimator/denoiser shader. The gzip ceiling
 // also carries the 6,840-byte compressor spread observed on the preceding
 // byte-identical CI Node 26.10 artifact; the 0.5% tolerance below is unchanged.
-const ceilings = { raw: 2_342_643, gzip9: 1_102_404, brotli11: 916_905 };
+// Scale-independent AO normals: CI Node 26.10.0 measures 2,342,818 raw
+// (+175), 1,103,008 gzip-9, and 916,682 brotli-11. The pinned local macOS
+// build measures 2,342,843 raw (+200). Admit that measured upper bound;
+// compressed bytes remain inside the existing allowance.
+const ceilings = { raw: 2_342_843, gzip9: 1_102_404, brotli11: 916_905 };
 
-// `raw` is the artifact and is byte-reproducible, so it is enforced exactly.
+// `raw` is deterministic within a build environment, so it has no percentage allowance.
 // The compressed figures are not properties of the artifact alone: they are
 // what *this host's* zlib and brotli make of it. A byte-identical wasm
 // measures 569,364 gzip-9 under Node 24 and 26 and 569,404 under CI's Node,
