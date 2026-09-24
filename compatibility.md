@@ -178,7 +178,7 @@ source; material shading does not replace them with image edge detection.
   authored BRep line primitives participate in the refracted scene.
 - Lighting uses a captured neutral-room PMREM, integrated GGX and PBR Neutral. No
   screen-space ambient occlusion or HDR environment-file loader is added.
-  Metal and glass matrices are compared to captured Three.js r184 WebGL
+  Metal and glass matrices are compared to captured Three.js 0.184.0 WebGL
   references. Other lighting rigs and ambient occlusion can still differ.
 - Draft material extensions, including diffuse transmission and subsurface
   scattering, are outside this ratified extension set.
