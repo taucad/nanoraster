@@ -3325,12 +3325,21 @@ mod tests {
         };
         let small_cube = glb::parse_glb(include_bytes!("../../../tests/fixtures/cad-mm-cube.glb"))
             .expect("small CAD cube");
+        let without_ao = render_test_scene(
+            &mut renderer,
+            small_cube.clone(),
+            RenderOptions {
+                ao: None,
+                ..options.clone()
+            },
+        );
         let small = render_test_scene(&mut renderer, small_cube.clone(), options.clone());
         let mut large_cube = small_cube;
-        for position in &mut large_cube.meshes[0].primitives[0].positions {
-            *position *= 100.0;
+        for primitive in &mut large_cube.meshes[0].primitives {
+            for position in &mut primitive.positions {
+                *position *= 100.0;
+            }
         }
-        large_cube.bounds = Some(([-1.0; 3], [1.0; 3]));
         let large = render_test_scene(&mut renderer, large_cube, options);
         let mut error = 0u64;
         let mut count = 0u64;
@@ -3342,14 +3351,33 @@ mod tests {
             .zip(small.rgba.as_chunks::<4>().0.iter())
         {
             if a[3] == 255 && b[3] == 255 {
-                error += u64::from(a[0].abs_diff(b[0]));
+                error += u64::from(
+                    (0..3)
+                        .map(|channel| a[channel].abs_diff(b[channel]))
+                        .max()
+                        .unwrap(),
+                );
                 count += 1;
             }
         }
+        assert!(count > 100_000, "only {count} overlapping opaque pixels");
         let mean_error = error as f64 / count as f64;
         assert!(
             mean_error < 3.0,
-            "AO changed with scene scale: mean red error {mean_error}"
+            "AO changed with scene scale: mean RGB error {mean_error}"
+        );
+        // The planar left wall is far from contact edges. The old absolute
+        // normal threshold darkened it by ~25 levels at millimetre scale.
+        let mut wall_error = 0u64;
+        for y in 240..330 {
+            for x in 230..320 {
+                let offset = ((y * 768 + x) * 4) as usize;
+                wall_error += u64::from(small.rgba[offset].abs_diff(without_ao.rgba[offset]));
+            }
+        }
+        assert!(
+            wall_error as f64 / 8_100.0 < 3.0,
+            "AO falsely darkened the planar millimetre-scale wall"
         );
     }
 
