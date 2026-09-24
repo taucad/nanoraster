@@ -160,5 +160,59 @@
     "roughness": [0.05, 0.25, 0.5, 0.85],
     "pixelSource": "Straight-alpha WebGL RGBA8 framebuffer and byte-identical canvas PNG",
     "capture": "layers-ortho-final-1790243028751.json"
+  },
+  {
+    "id": "effects",
+    "sha256": "cdcc7d8522903688ff604bfbcecfe29dfbb2367edb28c059c29c260a94f434e9",
+    "referenceSha256": "31b41774c46f6be128abbd3affedf2b049c9f3e7bf963255521d1476c903c922",
+    "width": 1276,
+    "height": 798,
+    "camera": {
+      "framing": "fixed",
+      "position": [0, -0.20755744246211869, 0.03799999970942736],
+      "target": [0, 0.004504895303398371, 0.03799999970942736],
+      "up": [0, 4.440892098500626e-16, 1],
+      "projection": {
+        "kind": "orthographic",
+        "verticalSpan": 0.141,
+        "zoom": 1
+      },
+      "clipping": {
+        "near": 0.18388887137300142,
+        "far": 0.24023580415803286
+      }
+    },
+    "metadata": {
+      "threeRevision": "184",
+      "lighting": {
+        "environment": "room",
+        "ambientIntensity": 0.1,
+        "headlampIntensity": 1.5,
+        "environmentIntensity": 1,
+        "keyIntensity": 64,
+        "keySize": 1.2,
+        "fillIntensity": 1,
+        "backgroundIntensity": 0,
+        "exposure": 1
+      },
+      "post": {
+        "aoEnabled": false,
+        "radiusCssPixels": "viewport",
+        "aoCompositeStage": "display",
+        "intensity": 3,
+        "gtaoIntensity": 1,
+        "distanceFalloff": 0.2,
+        "gtaoDistanceFalloff": 1,
+        "webglHalfResolution": false,
+        "webglDenoiseRadiusCssPixels": 3,
+        "displayMode": "combined",
+        "toneMapping": "neutral"
+      },
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)"
+    },
+    "rows": [0, 1, 2],
+    "roughness": [0.05, 0.25, 0.5, 0.85],
+    "pixelSource": "Straight-alpha WebGL RGBA8 framebuffer and byte-identical canvas PNG",
+    "capture": "effects-strong-ortho-1790243697626.json"
   }
 ]

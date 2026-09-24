@@ -15,6 +15,9 @@ Each matrix contains twelve radius-14 mm spheres. Columns use roughness
 - Layers: tinted dielectric specular; colored sheen; 400 nm iridescence on
   dark metal. The dark base colors keep highlights and interference colors
   visible without clipping.
+- Effects: transmissive glass with dispersion 1, IOR 1.8 and 100 mm authored
+  thickness over narrow red/cyan stripes; blue emission at four strengths;
+  red alpha blending from 0.1 to 0.9 over a blue/grey checkerboard.
 
 Files are gzip-compressed GLB and raw RGBA8. Both oracles come from the
 straight-alpha WebGL framebuffer, which matches its browser PNG byte-for-byte.
