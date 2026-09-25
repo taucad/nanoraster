@@ -1,0 +1,262 @@
+[
+  {
+    "id": "metal",
+    "sha256": "f109d123f6ae6d171f890769512f48d953c51b6b75ac397c70c794ea4c88bb34",
+    "referenceSha256": "96539cef10c0bcadb1da11400e10fa0d33b89e03e5e6700b7e6a16571d71fcd0",
+    "width": 1276,
+    "height": 798,
+    "camera": {
+      "framing": "fixed",
+      "position": [0.000004895031452178955, -0.19220391741927198, 0.038000001572072506],
+      "target": [0.000004895031452178955, 0, 0.038000001572072506],
+      "up": [0, 2.220446049250313e-16, 1],
+      "projection": {
+        "kind": "orthographic",
+        "verticalSpan": 0.141,
+        "zoom": 1
+      },
+      "clipping": {
+        "near": 0.16930302258229704,
+        "far": 0.21510481225624703
+      }
+    },
+    "metadata": {
+      "threeRevision": "184",
+      "lighting": {
+        "environment": "room",
+        "ambientIntensity": 0.1,
+        "headlampIntensity": 1.5,
+        "environmentIntensity": 1,
+        "keyIntensity": 64,
+        "keySize": 1.2,
+        "fillIntensity": 1,
+        "backgroundIntensity": 0,
+        "exposure": 1
+      },
+      "post": {
+        "aoEnabled": false,
+        "radiusCssPixels": "viewport",
+        "aoCompositeStage": "display",
+        "intensity": 3,
+        "gtaoIntensity": 1,
+        "distanceFalloff": 0.2,
+        "gtaoDistanceFalloff": 1,
+        "webglHalfResolution": false,
+        "webglDenoiseRadiusCssPixels": 3,
+        "displayMode": "combined",
+        "toneMapping": "neutral"
+      },
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)"
+    },
+    "rows": [0, 1, 2],
+    "roughness": [0.05, 0.25, 0.5, 0.85],
+    "pixelSource": "Straight-alpha WebGL RGBA8 framebuffer and byte-identical canvas PNG",
+    "capture": "metal-straight-alpha-1790239032855.json"
+  },
+  {
+    "id": "glass",
+    "sha256": "0c6115f2cf5a753ab26c350ffb6e3d040c68b5a4e2e2f1bac95b73c0e1f0f4c1",
+    "referenceSha256": "4ad607767ef7f13757c4823f948f3df03b77311bd4d609abda2f809a60d0477f",
+    "width": 1276,
+    "height": 798,
+    "camera": {
+      "framing": "fixed",
+      "position": [0, -0.20755744246211869, 0.03799999970942736],
+      "target": [0, 0.004504895303398371, 0.03799999970942736],
+      "up": [0, 4.440892098500626e-16, 1],
+      "projection": {
+        "kind": "orthographic",
+        "verticalSpan": 0.141,
+        "zoom": 1
+      },
+      "clipping": {
+        "near": 0.18388887137300142,
+        "far": 0.24023580415803286
+      }
+    },
+    "metadata": {
+      "threeRevision": "184",
+      "lighting": {
+        "environment": "room",
+        "ambientIntensity": 0.1,
+        "headlampIntensity": 1.5,
+        "environmentIntensity": 1,
+        "keyIntensity": 64,
+        "keySize": 1.2,
+        "fillIntensity": 1,
+        "backgroundIntensity": 0,
+        "exposure": 1
+      },
+      "post": {
+        "aoEnabled": false,
+        "radiusCssPixels": "viewport",
+        "aoCompositeStage": "display",
+        "intensity": 3,
+        "gtaoIntensity": 1,
+        "distanceFalloff": 0.2,
+        "gtaoDistanceFalloff": 1,
+        "webglHalfResolution": false,
+        "webglDenoiseRadiusCssPixels": 3,
+        "displayMode": "combined",
+        "toneMapping": "neutral"
+      },
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)"
+    },
+    "rows": [0, 1, 2],
+    "roughness": [0.05, 0.25, 0.5, 0.85],
+    "pixelSource": "Straight-alpha WebGL RGBA8 framebuffer and byte-identical canvas PNG",
+    "capture": "glass-alpha-ortho-after-1790238562136.json"
+  },
+  {
+    "id": "layers",
+    "sha256": "0be70b5860a3690826110742805ffbe2eb21a159c85d3e123e0f3352e83a04f8",
+    "referenceSha256": "75e8befd36f046d0ac5dbaac01c1ad42bebd85371776e467fc6ee4d3edb4415f",
+    "width": 1276,
+    "height": 798,
+    "camera": {
+      "framing": "fixed",
+      "position": [0.000004895031452178955, -0.19220391741927198, 0.038000001572072506],
+      "target": [0.000004895031452178955, 0, 0.038000001572072506],
+      "up": [0, 2.220446049250313e-16, 1],
+      "projection": {
+        "kind": "orthographic",
+        "verticalSpan": 0.141,
+        "zoom": 1
+      },
+      "clipping": {
+        "near": 0.16930302258229704,
+        "far": 0.21510481225624703
+      }
+    },
+    "metadata": {
+      "threeRevision": "184",
+      "lighting": {
+        "environment": "room",
+        "ambientIntensity": 0.1,
+        "headlampIntensity": 1.5,
+        "environmentIntensity": 1,
+        "keyIntensity": 64,
+        "keySize": 1.2,
+        "fillIntensity": 1,
+        "backgroundIntensity": 0,
+        "exposure": 1
+      },
+      "post": {
+        "aoEnabled": false,
+        "radiusCssPixels": "viewport",
+        "aoCompositeStage": "display",
+        "intensity": 3,
+        "gtaoIntensity": 1,
+        "distanceFalloff": 0.2,
+        "gtaoDistanceFalloff": 1,
+        "webglHalfResolution": false,
+        "webglDenoiseRadiusCssPixels": 3,
+        "displayMode": "combined",
+        "toneMapping": "neutral"
+      },
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)"
+    },
+    "rows": [0, 1, 2],
+    "roughness": [0.05, 0.25, 0.5, 0.85],
+    "pixelSource": "Straight-alpha WebGL RGBA8 framebuffer and byte-identical canvas PNG",
+    "capture": "layers-ortho-final-1790243028751.json"
+  },
+  {
+    "id": "effects",
+    "sha256": "cdcc7d8522903688ff604bfbcecfe29dfbb2367edb28c059c29c260a94f434e9",
+    "referenceSha256": "31b41774c46f6be128abbd3affedf2b049c9f3e7bf963255521d1476c903c922",
+    "width": 1276,
+    "height": 798,
+    "camera": {
+      "framing": "fixed",
+      "position": [0, -0.20755744246211869, 0.03799999970942736],
+      "target": [0, 0.004504895303398371, 0.03799999970942736],
+      "up": [0, 4.440892098500626e-16, 1],
+      "projection": {
+        "kind": "orthographic",
+        "verticalSpan": 0.141,
+        "zoom": 1
+      },
+      "clipping": {
+        "near": 0.18388887137300142,
+        "far": 0.24023580415803286
+      }
+    },
+    "metadata": {
+      "threeRevision": "184",
+      "lighting": {
+        "environment": "room",
+        "ambientIntensity": 0.1,
+        "headlampIntensity": 1.5,
+        "environmentIntensity": 1,
+        "keyIntensity": 64,
+        "keySize": 1.2,
+        "fillIntensity": 1,
+        "backgroundIntensity": 0,
+        "exposure": 1
+      },
+      "post": {
+        "aoEnabled": false,
+        "radiusCssPixels": "viewport",
+        "aoCompositeStage": "display",
+        "intensity": 3,
+        "gtaoIntensity": 1,
+        "distanceFalloff": 0.2,
+        "gtaoDistanceFalloff": 1,
+        "webglHalfResolution": false,
+        "webglDenoiseRadiusCssPixels": 3,
+        "displayMode": "combined",
+        "toneMapping": "neutral"
+      },
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, Unspecified Version)"
+    },
+    "rows": [0, 1, 2],
+    "roughness": [0.05, 0.25, 0.5, 0.85],
+    "pixelSource": "Straight-alpha WebGL RGBA8 framebuffer and byte-identical canvas PNG",
+    "capture": "effects-strong-ortho-1790243697626.json"
+  },
+  {
+    "id": "glass-ao",
+    "sourceId": "glass",
+    "referenceSha256": "7ff634783d1e85efd3f0b709cc894c13fa9909e385af5c906d433e46506b9073",
+    "ao": {},
+    "metadata": {
+      "post": {
+        "aoEnabled": true,
+        "radiusCssPixels": "viewport",
+        "aoCompositeStage": "display",
+        "intensity": 3,
+        "gtaoIntensity": 1,
+        "distanceFalloff": 0.2,
+        "gtaoDistanceFalloff": 1,
+        "webglHalfResolution": false,
+        "webglDenoiseRadiusCssPixels": 3,
+        "displayMode": "combined",
+        "toneMapping": "neutral"
+      },
+      "capture": "glass-ao-on-front-1790245043131.json"
+    }
+  },
+  {
+    "id": "metal-ao",
+    "sourceId": "metal",
+    "referenceSha256": "d0e4e4136e2fd51d0cc20641a742987c9dd2e9b6d029d5ac044c3622ebf7a98e",
+    "ao": {},
+    "metadata": {
+      "post": {
+        "aoEnabled": true,
+        "radiusCssPixels": "viewport",
+        "aoCompositeStage": "display",
+        "intensity": 3,
+        "gtaoIntensity": 1,
+        "distanceFalloff": 0.2,
+        "gtaoDistanceFalloff": 1,
+        "webglHalfResolution": false,
+        "webglDenoiseRadiusCssPixels": 3,
+        "displayMode": "combined",
+        "toneMapping": "neutral"
+      },
+      "capture": "metal-ao-on-front-1790245228278.json"
+    }
+  }
+]

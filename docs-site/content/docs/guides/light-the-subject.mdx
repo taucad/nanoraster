@@ -29,23 +29,22 @@ const image = await renderImage(glb, {
 
 </RenderDemo>
 
-`lights` replaces the three studio lights outright. It never adds to them.
+`lights` replaces the studio light outright. It never adds to them.
 `direction` points from the surface toward the light, in view space by default
 (`+x` right, `+y` up, `+z` toward the viewer). The rig travels with the
 camera and lights every view the same way. The renderer normalises any
 non-zero vector.
 
 `color` is linear RGB radiance, unitless. The rig takes up to eight lights.
-`ambient` lifts the shadow side. `exposure` scales the rig before the ACES
+`ambient` lifts the shadow side. `exposure` scales the rig before the PBR Neutral
 tone map.
 
-The studio preset, for reference (`ambient: 0.02`, analytic environment):
+The studio preset uses a view-locked neutral room, `ambient: 0.1 / Math.PI`,
+and one direct light:
 
-| Light    | `direction`            | `color`              |
-| -------- | ---------------------- | -------------------- |
-| Key      | `[-0.45, 0.61, 0.63]`  | `[2.09, 2.09, 2.09]` |
-| Fill     | `[0.45, -0.61, -0.63]` | `[1.45, 1.42, 1.38]` |
-| Headlamp | `[0.03, 0.74, 0.67]`   | `[0.68, 0.66, 0.62]` |
+| Light    | `direction` | `color`           |
+| -------- | ----------- | ----------------- |
+| Headlamp | `[1, 1, 1]` | `[1.5, 1.5, 1.5]` |
 
 ### 2. Render from the environment alone
 
@@ -65,7 +64,7 @@ const image = await renderImage(glb, {
 
 </RenderDemo>
 
-An empty `lights` array with `ambient: 0` leaves the analytic environment as
+An empty `lights` array with `ambient: 0` leaves the prefiltered room environment as
 the only source. A rig inherits the studio ambient unless it says otherwise.
 Metals have no diffuse lobe, so the environment alone renders them well.
 Dielectrics render soft and flat. `environment: 'none'` removes the specular

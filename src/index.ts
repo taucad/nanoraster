@@ -56,6 +56,7 @@ export type {
   RenderLight,
   RenderLighting,
   RenderLightingRig,
+  RenderAmbientOcclusion,
   RenderPrimitiveReference,
   RenderSectionPlane,
   RenderSections,

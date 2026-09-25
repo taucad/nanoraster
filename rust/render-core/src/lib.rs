@@ -14,9 +14,12 @@ mod capture_overlay;
 mod driver;
 mod encode;
 mod glb;
+mod lighting;
+mod material;
 mod options;
 mod render;
 mod section;
+mod texture;
 
 use glb::parse_glb;
 
@@ -152,10 +155,10 @@ pub struct ResolvedLighting {
     pub lights: Vec<ResolvedLight>,
     /// Flat multiplier on the diffuse colour.
     pub ambient: f32,
-    /// Whether the analytic environment contributes (specular *and* diffuse).
+    /// Whether the studio environment contributes (specular *and* diffuse).
     pub environment: bool,
     pub space: LightingSpace,
-    /// Linear multiplier applied before the ACES tone map.
+    /// Linear multiplier applied before the PBR Neutral tone map.
     pub exposure: f32,
 }
 
@@ -185,6 +188,14 @@ pub struct Sections {
     pub clip_lines: bool,
 }
 
+/// Optional screen-space ambient occlusion for opaque surfaces.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AmbientOcclusion {
+    pub radius_pixels: Option<f32>,
+    pub intensity: f32,
+    pub distance_falloff: f32,
+}
+
 /// Maximum number of simultaneous retained-half-space planes. Eight, so an
 /// axis-aligned box crop (six faces) still has two planes spare; the limit is
 /// the `Frame` uniform's plane array, not the shader's clipping arithmetic.
@@ -193,27 +204,16 @@ pub const MAX_SECTION_PLANES: usize = 8;
 impl ResolvedLighting {
     /// The studio preset — the one definition of the built-in rig. `fs_mesh`
     /// carries no lighting literals of its own; it reads these through the
-    /// uniform. Directions are the Tau viewer's `performance` lights
-    /// projected into view space: key upper-left-front, fill opposite it,
-    /// headlamp above the camera.
+    /// uniform. Matches Tau's neutral-room editing profile: one view-space
+    /// headlamp and ambient irradiance converted to a Lambert multiplier.
     #[must_use]
     pub fn studio() -> Self {
         Self {
-            lights: vec![
-                ResolvedLight {
-                    direction: [-0.45, 0.61, 0.63],
-                    color: [2.09, 2.09, 2.09],
-                },
-                ResolvedLight {
-                    direction: [0.45, -0.61, -0.63],
-                    color: [1.45, 1.42, 1.38],
-                },
-                ResolvedLight {
-                    direction: [0.03, 0.74, 0.67],
-                    color: [0.68, 0.66, 0.62],
-                },
-            ],
-            ambient: 0.02,
+            lights: vec![ResolvedLight {
+                direction: [1.0; 3],
+                color: [1.5; 3],
+            }],
+            ambient: 0.1 / std::f32::consts::PI,
             environment: true,
             space: LightingSpace::View,
             exposure: 1.0,
@@ -259,6 +259,8 @@ pub struct RenderOptions {
     /// Direct lights, ambient, environment and exposure. Defaults to
     /// [`ResolvedLighting::studio`].
     pub lighting: ResolvedLighting,
+    /// Screen-space contact shadows; absent by default to avoid an estimator pass.
+    pub ao: Option<AmbientOcclusion>,
     /// Caller +X/+Y/+Z basis vectors expressed in glTF world coordinates.
     pub world_axes: [[f32; 3]; 3],
 }
@@ -279,6 +281,7 @@ impl Default for RenderOptions {
             axes: false,
             scale_bar: false,
             lighting: ResolvedLighting::studio(),
+            ao: None,
             world_axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         }
     }
@@ -394,6 +397,19 @@ fn validate_options(options: &RenderOptions) -> Result<(), RenderError> {
     if !options.line_width.is_finite() || !(0.25..=16.0).contains(&options.line_width) {
         return Err(RenderError::Parse(
             "lineWidth must be between 0.25 and 16".into(),
+        ));
+    }
+    if let Some(ao) = options.ao
+        && (ao
+            .radius_pixels
+            .is_some_and(|radius| !radius.is_finite() || !(1.0..=128.0).contains(&radius))
+            || !ao.intensity.is_finite()
+            || !(0.0..=8.0).contains(&ao.intensity)
+            || !ao.distance_falloff.is_finite()
+            || !(0.01..=1.0).contains(&ao.distance_falloff))
+    {
+        return Err(RenderError::Parse(
+            "ao values outside supported ranges".into(),
         ));
     }
     if let Some(primitives) = &options.visible_primitives {
@@ -1005,8 +1021,8 @@ mod tests {
         assert!(!options.scale_bar);
         assert_eq!(options.lighting, ResolvedLighting::studio());
         assert_eq!(ResolvedLighting::default(), ResolvedLighting::studio());
-        assert_eq!(options.lighting.lights.len(), 3);
-        assert_eq!(options.lighting.ambient, 0.02);
+        assert_eq!(options.lighting.lights.len(), 1);
+        assert_eq!(options.lighting.ambient, 0.1 / std::f32::consts::PI);
         assert_eq!(options.lighting.exposure, 1.0);
         assert!(options.lighting.environment);
         assert_eq!(options.lighting.space, LightingSpace::View);
@@ -1207,6 +1223,28 @@ mod tests {
         for options in invalid {
             assert!(validate_options(&options).is_err());
         }
+        let ao = AmbientOcclusion {
+            radius_pixels: Some(12.0),
+            intensity: 3.0,
+            distance_falloff: 0.2,
+        };
+        assert!(
+            validate_options(&RenderOptions {
+                ao: Some(ao),
+                ..Default::default()
+            })
+            .is_ok()
+        );
+        assert!(
+            validate_options(&RenderOptions {
+                ao: Some(AmbientOcclusion {
+                    radius_pixels: Some(0.0),
+                    ..ao
+                }),
+                ..Default::default()
+            })
+            .is_err()
+        );
         assert!(validate_options(&RenderOptions::default()).is_ok());
         assert!(
             validate_options(&RenderOptions {

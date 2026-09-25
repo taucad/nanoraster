@@ -1,3 +1,4 @@
+import { materialErrors } from '../material-parity.mjs';
 import { beforeAll, expect, test } from 'vitest';
 import * as candidate from 'nanoraster-wasm-candidate';
 import init, { Renderer, render_image } from 'nanoraster-wasm-candidate';
@@ -5,7 +6,13 @@ import initBench, { codec_conformance, render_image as renderImageBench } from '
 import { createRenderer, RenderError, renderImage } from 'nanoraster';
 
 import { describeAdapter } from '../../src/describe-adapter.ts';
-import { countDefaultMaterialCapPixels, sparseManifoldCubeGlb, withPbrFactors } from '../pbr-fixture.mjs';
+import {
+  countDefaultMaterialCapPixels,
+  sparseManifoldCubeGlb,
+  withPbrFactors,
+  physicalMaterialGlb,
+  physicalMaterial,
+} from '../pbr-fixture.mjs';
 
 let glb;
 let cubeGlb;
@@ -82,6 +89,16 @@ test('wasm shell renders a deterministic 192x192 PNG', async () => {
   expect(view.getUint32(16)).toBe(192);
   expect(view.getUint32(20)).toBe(192);
   expect(png.byteLength).toBeGreaterThan(1_000);
+});
+
+test('wasm AO changes contact shading without changing zero-intensity pixels', async () => {
+  const options = { width: 192, height: 192, format: 'raw', lines: false };
+  const off = await render_image(glb, JSON.stringify(options));
+  const zero = await render_image(glb, JSON.stringify({ ...options, ao: { intensity: 0 } }));
+  const on = await render_image(glb, JSON.stringify({ ...options, ao: {} }));
+  expect(zero).toEqual(off);
+  expect(on).not.toEqual(off);
+  expect(await render_image(glb, JSON.stringify({ ...options, ao: {} }))).toEqual(on);
 });
 
 test('fitted perspective keeps the gear contained and legible through wide fields of view', async () => {
@@ -397,5 +414,75 @@ test('should reject a malformed GLB with a parse error through the packed public
     expect(error).toBeInstanceOf(RenderError);
     expect(error.code).toBe('parse');
     expect(error.isGpuFault).toBe(false);
+  }
+});
+
+test('physical material layers survive the public WebGPU facade and repeat exactly', async () => {
+  const options = { width: 128, height: 128, format: 'raw', background: '#FFFFFF', lines: false };
+  const bytes = physicalMaterialGlb(physicalMaterial);
+  const first = await renderImage(bytes, options);
+  expect(first.bytes).toEqual((await renderImage(bytes, options)).bytes);
+  const plain = await renderImage(physicalMaterialGlb({ ...physicalMaterial, extensions: {} }), options);
+  expect(first.bytes).not.toEqual(plain.bytes);
+  const unlit = await renderImage(
+    physicalMaterialGlb({
+      pbrMetallicRoughness: { baseColorFactor: [0.18, 0.4, 0.7, 1] },
+      extensions: { KHR_materials_unlit: {} },
+    }),
+    options,
+  );
+  const center = (64 * 128 + 64) * 4;
+  expect(unlit.bytes.slice(center, center + 4)).toEqual(new Uint8Array([105, 162, 212, 255]));
+  const translucent = await renderImage(
+    physicalMaterialGlb({
+      pbrMetallicRoughness: { baseColorFactor: [0.18, 0.4, 0.7, 0.5] },
+      alphaMode: 'BLEND',
+      extensions: { KHR_materials_unlit: {} },
+    }),
+    { ...options, background: undefined },
+  );
+  for (const [channel, expected] of [105, 162, 212, 128].entries()) {
+    expect(Math.abs(translucent.bytes[center + channel] - expected)).toBeLessThanOrEqual(2);
+  }
+  await expect(
+    renderImage(
+      physicalMaterialGlb({ extensions: { KHR_materials_anisotropy: { anisotropyStrength: 2 } } }),
+      options,
+    ),
+  ).rejects.toThrow(/anisotropyStrength/);
+});
+
+test('metal and glass match captured WebGL material matrices', async () => {
+  const references = await (
+    await fetch(new URL('../fixtures/material-parity/reference.json', import.meta.url))
+  ).json();
+  const decompress = async (name) => {
+    const response = await fetch(new URL(`../fixtures/material-parity/${name}`, import.meta.url));
+    expect(response.ok).toBe(true);
+    // Vite serves .gz with Content-Encoding; fetch already decodes that body.
+    if (response.headers.get('content-encoding') === 'gzip')
+      return new Uint8Array(await response.arrayBuffer());
+    return new Uint8Array(
+      await new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer(),
+    );
+  };
+  for (const reference of references) {
+    const base = reference.sourceId ? references.find((entry) => entry.id === reference.sourceId) : reference;
+    expect(base).toBeDefined();
+    const bytes = await decompress(`${reference.sourceId ?? reference.id}.glb.gz`);
+    const expected = await decompress(`${reference.id}.rgba.gz`);
+    const actual = await renderImage(bytes, {
+      width: base.width,
+      height: base.height,
+      format: 'raw',
+      world: { up: '+z', forward: '-y', unit: 'meter' },
+      lines: false,
+      camera: base.camera,
+      ao: reference.ao,
+    });
+    for (const error of materialErrors(base, actual.bytes, expected)) {
+      expect(error.mae, `${reference.id} row ${error.row} roughness ${error.roughness}`).toBeLessThan(2);
+      expect(error.alphaMae).toBeLessThan(2);
+    }
   }
 });

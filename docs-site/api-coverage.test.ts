@@ -33,6 +33,7 @@ const tableNames = [
   'RenderImageOptions',
   'RenderImagesOptions',
   'RenderImageView',
+  'RenderAmbientOcclusion',
   'RenderLightingRig',
   'RenderLight',
   'CreateRendererOptions',
@@ -59,6 +60,7 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'axes',
     'scaleBar',
     'lighting',
+    'ao',
     'label',
     'camera',
   ],
@@ -77,10 +79,12 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'axes',
     'scaleBar',
     'lighting',
+    'ao',
     'timings',
     'views',
   ],
   RenderImageView: ['id', 'label', 'camera', 'width', 'height', 'format', 'quality'],
+  RenderAmbientOcclusion: ['radiusPixels', 'intensity', 'distanceFalloff'],
   RenderLightingRig: ['lights', 'ambient', 'environment', 'space', 'exposure'],
   RenderLight: ['direction', 'color'],
   CreateRendererOptions: ['powerPreference'],
@@ -116,6 +120,7 @@ const defaults = {
   axes: 'false',
   scaleBar: 'false',
   lighting: "'studio'",
+  ao: 'disabled',
 } as const;
 
 const generateDoc = async (name: (typeof tableNames)[number]): Promise<GeneratedDoc> => {
@@ -257,7 +262,8 @@ describe('static agent documentation', () => {
     }
 
     const apiHtml = resolve(output, 'docs/api.html');
-    expect(statSync(apiHtml).size).toBeLessThan(810_000);
+    // The public AO property table raises the generated page to 830,205 bytes.
+    expect(statSync(apiHtml).size).toBeLessThan(835_000);
 
     const optionsHtml = readFileSync(apiHtml, 'utf8');
     expect(optionsHtml).toContain('aria-label="RenderImageOptions properties"');

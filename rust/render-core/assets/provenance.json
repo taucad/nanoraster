@@ -1,0 +1,28 @@
+{
+  "threeRevision": "184",
+  "pmrem": {
+    "size": 256,
+    "format": "r16float little-endian packed as RGBA8 PNG",
+    "captureSize": 512,
+    "droppedMantissaBits": 3
+  },
+  "dfg": {
+    "width": 16,
+    "height": 16,
+    "format": "rg16float little-endian"
+  },
+  "sources": {
+    "src/renderers/shaders/DFGLUTData.js": "4a6e5e13121a71227524272d63e38adc9f6b3ecad9265f7bb001a0cd8b8990c4",
+    "src/renderers/shaders/ShaderChunk/lights_physical_pars_fragment.glsl.js": "93c6fbb624f9adbc0ac6ea0b01180a980ed11eeed7686bcade07b631270e8a9b",
+    "src/renderers/shaders/ShaderChunk/cube_uv_reflection_fragment.glsl.js": "8610f2598b998c8443c89c24f712ca8c36197f5d7152811c7176f9e0e255553c",
+    "src/renderers/shaders/ShaderChunk/tonemapping_pars_fragment.glsl.js": "447958b93d07616c83d9273829ed810eb734d02ebbe60f12fc9bdda4f7928f44",
+    "src/renderers/shaders/ShaderChunk/transmission_pars_fragment.glsl.js": "586f774384f3442bdca1270d203b19f4cc318fd56ee522cdecc4a8b1cb9fc8fc",
+    "examples/jsm/environments/RoomEnvironment.js": "55f466192cc84298755a424c5e040345006b2ee1455589b3b54126c2ea4123f4"
+  },
+  "captureSha256": "3fafea7a9bfaf9c379da6502141f93178bf1e73c7b7287110a5560e87dd4cacd",
+  "assets": {
+    "studio.png": "eaa116fa0b23e2ad4feec8729a37215a2996869d714f29eddbbff7c82f924d01",
+    "dfg.bin": "b41ba8e2bd29fa007dfbf034d4d58b853f378062183847846b1f6d228f2c7e79"
+  },
+  "generator": "Tau apps/ui/scripts/render-calibration/pack-lighting.mts"
+}

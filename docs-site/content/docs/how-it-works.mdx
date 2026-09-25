@@ -126,17 +126,16 @@ comparison, so a diff can only report the render.
 
 ## Material model
 
-nanoraster renders factor-only glTF 2.0 metallic-roughness materials. A
-material is three numbers and a colour, not an image. That restriction is the
-renderer's supported profile, and it lets a render be reproduced from the model
-file alone. A texture-backed material would make the output depend on image
-decoding and mip generation. The host supplies those, not the GLB, so two hosts
-could disagree about the same file.
+nanoraster renders glTF 2.0 metallic-roughness materials, embedded PNG/JPEG/WebP
+maps and the physical material extensions listed in the compatibility guide.
+Image decoding and mip generation run in the shared Rust core on every host.
+A fixed model, camera and lighting rig therefore has the same material inputs
+on native and browser backends.
 
-`metallicFactor` selects between two behaviours rather than blends two looks.
+`metallicFactor` blends dielectric and metallic responses.
 At `0` the surface has a diffuse colour and a white specular highlight. At `1`
 there is no diffuse term: the body colour is reflected environment, tinted by
-the base colour. A metal has no diffuse lobe, so only the analytic environment
+the base colour. A metal has no diffuse lobe, so the prefiltered room environment
 gives it a body colour. `roughnessFactor` spreads the specular lobe: low values
 give a tight highlight, and high values spread it into a broad sheen.
 
@@ -165,11 +164,11 @@ an approximation, not pixel parity. A matcap maps view-space normals into an
 image, while PBR derives the result from material, surface, camera, and
 lighting.
 
-The renderer ignores a texture-backed material rather than rejects it. It
-falls back to its factors, so the render succeeds and looks flatter
-than the authoring tool showed. Metals read as grey at small sizes, because
-only an analytic environment is there to reflect. Prefer a dielectric for
-thumbnails. The renderer draws authored edge lines in their own pass,
-unaffected by the material factors. With `lighting` held constant, a difference
+The studio uses a neutral room environment, an integrated GGX lookup table,
+multiple-scattering compensation and PBR Neutral tone mapping. Glass samples
+retained HDR scene mip levels with bicubic filtering. Unlit materials bypass
+lighting but still receive exposure and tone mapping. Authored edge lines
+remain in their own pass, unaffected by material factors.
+With `lighting` held constant, a difference
 between two renders of the same model is a material difference and nothing
 else.

@@ -1750,10 +1750,12 @@ mod tests {
                 0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5, 0, 1, 5, 0,
                 5, 4, 3, 7, 6, 3, 6, 2,
             ],
+            surface_attributes: Vec::new(),
             material: glb::Material {
                 base_color,
                 metallic: 0.0,
                 roughness: 1.0,
+                ..crate::glb::Material::default()
             },
         }
     }
@@ -1774,6 +1776,7 @@ mod tests {
                 })
                 .collect(),
             topology_diagnostics: Vec::new(),
+            texture_pixels: vec![u32::MAX],
             bounds: Some(([-1.0; 3], [1.0; 3])),
         }
     }
@@ -1819,6 +1822,7 @@ mod tests {
                 normal_matrix: Mat4::IDENTITY,
             }],
             topology_diagnostics: Vec::new(),
+            texture_pixels: vec![u32::MAX],
             bounds: Some(([-0.01; 3], [0.01; 3])),
         }
     }
@@ -1859,10 +1863,12 @@ mod tests {
             normals: positions.clone(),
             positions,
             indices,
+            surface_attributes: Vec::new(),
             material: glb::Material {
                 base_color: [0.5, 0.5, 0.5, 1.0],
                 metallic: 0.0,
                 roughness: 1.0,
+                ..crate::glb::Material::default()
             },
         }
     }
@@ -1937,10 +1943,12 @@ mod tests {
             normals: positions.clone(),
             positions,
             indices,
+            surface_attributes: Vec::new(),
             material: glb::Material {
                 base_color: [0.5; 4],
                 metallic: 0.0,
                 roughness: 1.0,
+                ..crate::glb::Material::default()
             },
         }
     }
@@ -1961,6 +1969,7 @@ mod tests {
                 })
                 .collect(),
             topology_diagnostics: Vec::new(),
+            texture_pixels: vec![u32::MAX],
             bounds: None,
         }
     }
@@ -2333,10 +2342,12 @@ mod tests {
             positions: vec![1.0e9, 0.0, 0.0, 1.0e9, 1.0, 0.0],
             normals: Vec::new(),
             indices: vec![0, 1],
+            surface_attributes: Vec::new(),
             material: glb::Material {
                 base_color: [0.5; 4],
                 metallic: 0.0,
                 roughness: 1.0,
+                ..crate::glb::Material::default()
             },
         });
         with_line.bounds = Some(([-1.0; 3], [1.0e9, 1.0, 1.0]));
@@ -2437,6 +2448,7 @@ mod tests {
                 normal_matrix: Mat4::IDENTITY,
             }],
             topology_diagnostics: Vec::new(),
+            texture_pixels: vec![u32::MAX],
             bounds: Some(([0.0; 3], [1.0; 3])),
         };
 

@@ -103,6 +103,30 @@ describe('image request serialization', () => {
     }
   });
 
+  it('should serialize AO in singular and batch requests and reject malformed controls', () => {
+    const ao = { radiusPixels: 12, intensity: 2, distanceFalloff: 0.25 };
+    expect(parse(toImageRequestJson({ format: 'raw', ao }))).toEqual({ format: 'raw', ao });
+    expect(parse(toImageRequestJson({ format: 'raw', ao: {} }))).toEqual({ format: 'raw', ao: {} });
+    expect(parse(toImagesRequestJson({ format: 'raw', ao, views: [{ id: 'front' }] }))).toEqual({
+      format: 'raw',
+      ao,
+      views: [{ id: 'front' }],
+    });
+    for (const invalid of [
+      null,
+      [],
+      { radiusPixels: 0 },
+      { intensity: 9 },
+      { distanceFalloff: 0 },
+      { radiusPixels: Number.NaN },
+      { extra: true },
+    ]) {
+      expect(() => toImageRequestJson({ format: 'raw', ao: invalid } as RenderImageOptions)).toThrow(
+        TypeError,
+      );
+    }
+  });
+
   // render-core derives the caller's right as `up × forward`, which makes
   // `(right, up, forward)` right-handed for every non-collinear pair, so it
   // accepts all 24 of them. The TS mirror once rejected half of them as

@@ -442,6 +442,8 @@ const parityOptions = ['png', 'webp', 'jpeg'].flatMap((format) =>
     })),
   ),
 );
+// Reuse one device for the 336-case matrix; cold one-shot behavior is checked above.
+const parityRenderer = await native.createRenderer();
 for (const { format, projection, axes, labelled, scaleBar } of parityOptions) {
   const common = {
     width: 512,
@@ -452,9 +454,9 @@ for (const { format, projection, axes, labelled, scaleBar } of parityOptions) {
     scaleBar,
   };
   const views = parityViews.map((view) => renderView(view, projection, labelled));
-  const images = (await native.renderImages(glb, JSON.stringify({ ...common, views }))).images;
+  const images = (await parityRenderer.renderImages(glb, JSON.stringify({ ...common, views }))).images;
   for (const [index, view] of views.entries()) {
-    const one = await native.renderImage(
+    const one = await parityRenderer.renderImage(
       glb,
       JSON.stringify({ ...common, label: view.label, camera: view.camera }),
     );
@@ -466,11 +468,13 @@ for (const { format, projection, axes, labelled, scaleBar } of parityOptions) {
     parityCases += 1;
   }
   const reordered = [{ ...views[3], id: 'right-first' }, views[0], { ...views[3], id: 'right-second' }];
-  const repeated = (await native.renderImages(glb, JSON.stringify({ ...common, views: reordered }))).images;
+  const repeated = (await parityRenderer.renderImages(glb, JSON.stringify({ ...common, views: reordered })))
+    .images;
   if (!repeated[0].equals(repeated[2])) {
     throw new Error(`${format}/${projection} repeated annotated view differs`);
   }
 }
+parityRenderer.dispose();
 const canonicalVisuals = (
   await native.renderImages(
     glb,
@@ -502,14 +506,10 @@ const isometricPerspective = await native.renderImage(
 // Lighting equivalence (R1). Cross-host goldens are impossible by the
 // package's own determinism claims, so the oracle is that the three spellings
 // of the studio preset — omitted, named, and written out — are the same bytes.
-const studioLights = [
-  { direction: [-0.45, 0.61, 0.63], color: [2.09, 2.09, 2.09] },
-  { direction: [0.45, -0.61, -0.63], color: [1.45, 1.42, 1.38] },
-  { direction: [0.03, 0.74, 0.67], color: [0.68, 0.66, 0.62] },
-];
+const studioLights = [{ direction: [1, 1, 1], color: [1.5, 1.5, 1.5] }];
 const studioSpelledOut = {
   lights: studioLights,
-  ambient: 0.02,
+  ambient: 0.1 / Math.PI,
   environment: 'studio',
   space: 'view',
   exposure: 1,

@@ -2,9 +2,9 @@
 
 use crate::encode::ImageFormat;
 use crate::{
-    CameraProjection, ClipPlanes, LightingSpace, MAX_LIGHTS, MAX_SECTION_PLANES, PrimitiveRef,
-    RenderCamera, RenderError, RenderOptions, ResolvedLight, ResolvedLighting, SectionPlane,
-    Sections,
+    AmbientOcclusion, CameraProjection, ClipPlanes, LightingSpace, MAX_LIGHTS, MAX_SECTION_PLANES,
+    PrimitiveRef, RenderCamera, RenderError, RenderOptions, ResolvedLight, ResolvedLighting,
+    SectionPlane, Sections,
 };
 use serde::{Deserialize, Deserializer, de, de::DeserializeOwned};
 use std::collections::HashSet;
@@ -128,6 +128,25 @@ pub struct SectionsRequest {
     clip_lines: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AoRequest {
+    #[serde(default, deserialize_with = "present_ao_number")]
+    radius_pixels: Option<f32>,
+    #[serde(default, deserialize_with = "present_ao_number")]
+    intensity: Option<f32>,
+    #[serde(default, deserialize_with = "present_ao_number")]
+    distance_falloff: Option<f32>,
+}
+
+fn present_ao_number<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f32>, D::Error> {
+    f32::deserialize(deserializer).map(Some)
+}
+
+fn present_ao<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<AoRequest>, D::Error> {
+    AoRequest::deserialize(deserializer).map(Some)
+}
+
 /// Wrap a present field so an explicit `null` survives as `Some(None)`. Serde
 /// only calls this for a field that is actually there, so an absent one still
 /// lands on `Default` — `None` — and a plain `Option` would collapse the two.
@@ -240,6 +259,8 @@ pub struct RenderRequest {
     pub axes: Option<bool>,
     pub scale_bar: Option<bool>,
     pub lighting: Option<LightingRequest>,
+    #[serde(default, deserialize_with = "present_ao")]
+    pub ao: Option<AoRequest>,
 }
 
 /// Wire shape for one identified camera in a batch: camera identity plus
@@ -274,6 +295,8 @@ pub struct RenderImagesRequest {
     pub axes: Option<bool>,
     pub scale_bar: Option<bool>,
     pub lighting: Option<LightingRequest>,
+    #[serde(default, deserialize_with = "present_ao")]
+    pub ao: Option<AoRequest>,
     pub timings: Option<bool>,
     pub views: Vec<RenderImageViewRequest>,
 }
@@ -335,6 +358,7 @@ struct CommonRequest<'a> {
     annotated: bool,
     scale_bar: Option<bool>,
     lighting: Option<&'a LightingRequest>,
+    ao: Option<&'a AoRequest>,
 }
 
 impl RenderRequest {
@@ -374,6 +398,7 @@ impl RenderRequest {
                 || self.label.is_some(),
             scale_bar: self.scale_bar,
             lighting: self.lighting.as_ref(),
+            ao: self.ao.as_ref(),
         }
     }
 }
@@ -475,6 +500,7 @@ impl RenderImagesRequest {
             annotated: false,
             scale_bar: self.scale_bar,
             lighting: self.lighting.as_ref(),
+            ao: self.ao.as_ref(),
         }
     }
 }
@@ -555,6 +581,27 @@ fn resolve_common(
     }
 
     let lighting = resolve_lighting(request.lighting, world)?;
+    let ao = request
+        .ao
+        .map(|ao| {
+            for (name, value, range) in [
+                ("radiusPixels", ao.radius_pixels, 1.0..=128.0),
+                ("intensity", ao.intensity, 0.0..=8.0),
+                ("distanceFalloff", ao.distance_falloff, 0.01..=1.0),
+            ] {
+                if let Some(value) = value
+                    && (!value.is_finite() || !range.contains(&value))
+                {
+                    return Err(RenderError::Parse(format!("ao.{name} outside {range:?}")));
+                }
+            }
+            Ok(AmbientOcclusion {
+                radius_pixels: ao.radius_pixels,
+                intensity: ao.intensity.unwrap_or(3.0),
+                distance_falloff: ao.distance_falloff.unwrap_or(0.2),
+            })
+        })
+        .transpose()?;
     let visible_primitives = request
         .visible_primitives
         .map(|primitives| {
@@ -633,6 +680,7 @@ fn resolve_common(
             axes,
             scale_bar,
             lighting,
+            ao,
             world_axes: world.axes,
             ..defaults
         },
@@ -1121,6 +1169,50 @@ mod tests {
         assert!(options.label.is_none());
         assert!(!options.scale_bar);
         assert_eq!(format, ImageFormat::Png);
+    }
+
+    #[test]
+    fn ao_defaults_and_admission_match_in_single_and_batch_requests() {
+        let (single, _) = RenderRequest::from_json(r#"{"format":"raw","ao":{}}"#)
+            .expect("AO request")
+            .resolve()
+            .expect("AO defaults");
+        assert_eq!(
+            single.ao,
+            Some(AmbientOcclusion {
+                radius_pixels: None,
+                intensity: 3.0,
+                distance_falloff: 0.2,
+            })
+        );
+        let (batch, _, _, _) = RenderImagesRequest::from_json(
+            r#"{"format":"raw","ao":{"radiusPixels":12,"intensity":2,"distanceFalloff":0.25},"views":[{"id":"front"}]}"#,
+        )
+        .expect("batch AO request")
+        .resolve()
+        .expect("batch AO controls");
+        assert_eq!(
+            batch.ao,
+            Some(AmbientOcclusion {
+                radius_pixels: Some(12.0),
+                intensity: 2.0,
+                distance_falloff: 0.25,
+            })
+        );
+        for invalid in [
+            r#"{"format":"raw","ao":null}"#,
+            r#"{"format":"raw","ao":{"intensity":null}}"#,
+            r#"{"format":"raw","ao":{"radiusPixels":0}}"#,
+            r#"{"format":"raw","ao":{"distanceFalloff":2}}"#,
+            r#"{"format":"raw","ao":{"other":1}}"#,
+        ] {
+            assert!(
+                RenderRequest::from_json(invalid)
+                    .and_then(|request| request.resolve())
+                    .is_err(),
+                "{invalid}"
+            );
+        }
     }
 
     #[test]
@@ -1831,10 +1923,8 @@ mod tests {
     fn every_spelling_of_the_studio_preset_resolves_identically() {
         let studio = ResolvedLighting::studio();
         let explicit = r#"{"lighting":{"lights":[
-            {"direction":[-0.45,0.61,0.63],"color":[2.09,2.09,2.09]},
-            {"direction":[0.45,-0.61,-0.63],"color":[1.45,1.42,1.38]},
-            {"direction":[0.03,0.74,0.67],"color":[0.68,0.66,0.62]}
-        ],"ambient":0.02,"environment":"studio","space":"view","exposure":1}}"#;
+            {"direction":[1,1,1],"color":[1.5,1.5,1.5]}
+        ],"ambient":0.03183099,"environment":"studio","space":"view","exposure":1}}"#;
         for json in ["{}", r#"{"lighting":"studio"}"#, explicit] {
             assert_eq!(lighting_of(json).expect("resolve"), studio, "{json}");
         }

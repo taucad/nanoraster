@@ -127,9 +127,35 @@ const sizes = {
 // basis; the compressed figures land inside their 0.5% compressor allowance.
 // Standalone RGBA WebP encoder: 1,518,122 raw — +1,684 for exposing the
 // existing WebP codec without renderer initialization.
-const ceilings = { raw: 1_518_122, gzip9: 569_364, brotli11: 431_345 };
+// Physical-material build: 1,949,963 / 728,947 / 554,048 on Rust 1.98.0,
+// Binaryen 132 and Node 26.8.1 — +431,841 raw (+28.4%), +159,583 gzip-9
+// (+28.0%), +122,703 brotli-11 (+28.4%) over the preceding admission.
+// This explicitly admits embedded PNG/JPEG decoding, bounded texture mip
+// storage, the eleven ratified material extensions, HDR transmission and
+// the final tone-map pass. Unused texture paths specialize out at pipeline
+// creation; production WASM still excludes the benchmark surface.
+// CI Node 26.10.0 measures 1,949,942 / 734,679 / 554,017 for the same
+// source. Admit its observed gzip result without widening the compressor
+// tolerance or the raw ceiling. Fixed-array iteration subsequently reduces
+// the local artifact to 1,949,811 / 728,853 / 554,057.
+// Room IBL + DFG + transmission mips/edges: 2,255,592 / 1,022,509 / 846,022
+// locally; CI Node 26.10.0 measured 2,255,566 / 1,029,292 / 845,682.
+// The embedded room costs 290,487 bytes. Reusing Cursor<&[u8]> avoids a second
+// PNG decoder monomorphization (168,088 raw bytes in the first candidate).
+// v8 benchmark identity records the intentional lighting/output change.
+// Optional full-resolution AO: 2,342,643 / 1,095,564 / 916,905 locally on
+// Node 26.8.1. The +87,062 raw bytes include the 65,536-byte N8AO blue-noise
+// texture and the separate depth/estimator/denoiser shader. The gzip ceiling
+// also carries the 6,840-byte compressor spread observed on the preceding
+// byte-identical CI Node 26.10 artifact; the 0.5% tolerance below is unchanged.
+// Bounded emissive HDR and cached sRGB mip decoding: 2,342,824 / 1,095,823 /
+// 916,737 locally on Rust 1.98.0 and Node 26.8.1. CI's macOS artifact was
+// 2,342,808 raw; the exact raw gate admits the larger measured build. The
+// gzip ceiling retains the measured 6,840-byte compressor spread above.
+const ceilings = { raw: 2_342_824, gzip9: 1_102_663, brotli11: 916_737 };
 
-// `raw` is the artifact and is byte-reproducible, so it is enforced exactly.
+// `raw` is the artifact and is measured exactly on each build; the ceiling
+// covers the 16-byte host variation measured above without adding slack.
 // The compressed figures are not properties of the artifact alone: they are
 // what *this host's* zlib and brotli make of it. A byte-identical wasm
 // measures 569,364 gzip-9 under Node 24 and 26 and 569,404 under CI's Node,

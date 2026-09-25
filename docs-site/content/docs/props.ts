@@ -12,6 +12,7 @@ export type {
   RenderImageOptions,
   RenderImagesOptions,
   RenderImageView,
+  RenderAmbientOcclusion,
   RenderLight,
   RenderLighting,
   RenderLightingRig,

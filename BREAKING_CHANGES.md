@@ -115,3 +115,12 @@ The package has no compatibility commitments before its first stable release.
   `bench` cargo feature; build the crates with `--features bench` if you need
   them. Rendered pixels are unchanged; the WebP byte changes are the ones
   documented above.
+
+## Neutral-room studio profile
+
+The built-in studio intentionally changes pixels: captured neutral-room IBL,
+one view-space light `[1,1,1]` at radiance `[1.5,1.5,1.5]`, ambient `0.1 / π`,
+integrated GGX and PBR Neutral replace analytic lighting and ACES. Authored
+PBR factors are unchanged. Unlit materials now receive exposure and the
+output transform, matching the Three.js reference. Refresh image baselines
+only after reviewing the v8 benchmark identity and paired material fixtures.

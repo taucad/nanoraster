@@ -145,14 +145,56 @@ arm64 and armv7 hardware.
 
 ## Render profile
 
-| glTF 2.0 feature                                                   | Supported |
-| ------------------------------------------------------------------ | --------- |
-| Factor-only `baseColorFactor`, `metallicFactor`, `roughnessFactor` | Yes       |
-| Valid `EXT_mesh_manifold` topology                                 | Yes       |
-| All texture-backed PBR materials                                   | No        |
-| Surface-less WebGPU rendering                                      | Yes       |
+The renderer consumes standard glTF metallic-roughness materials, including
+embedded PNG, JPEG and WebP images. It supports the eleven ratified material
+extensions: `KHR_materials_anisotropy`, `KHR_materials_clearcoat`,
+`KHR_materials_dispersion`, `KHR_materials_emissive_strength`,
+`KHR_materials_ior`, `KHR_materials_iridescence`, `KHR_materials_sheen`,
+`KHR_materials_specular`, `KHR_materials_transmission`, `KHR_materials_unlit`
+and `KHR_materials_volume`.
 
-Factor-only metallic-roughness materials use deterministic analytic studio
-lighting. `EXT_mesh_manifold` supplies exact section topology while the base
-primitives remain authoritative for rendering. Texture-backed materials return
-a parse error.
+Core base-color, metallic-roughness, normal, occlusion and emissive maps and
+all maps belonging to those material extensions are sampled with their glTF
+channel and color-space rules. `KHR_texture_transform`, four UV sets, vertex
+colors, tangent frames, sampler wrapping/filtering and mipmaps are supported.
+Anisotropy requires a tangent frame or a normal map with suitable UVs.
+`OPAQUE`, `MASK`, `BLEND` and double-sided materials preserve their glTF
+semantics. Unknown required extensions and malformed material data fail with
+a parse error. Unknown optional extensions retain the glTF fallback behavior.
+
+`EXT_mesh_manifold` supplies exact section topology while base primitives
+remain authoritative for rendering. Authored line primitives remain the edge
+source; material shading does not replace them with image edge detection.
+
+### Limits
+
+- Images must be embedded in GLB buffer views. External image URLs, KTX2/Basis
+  and compressed mesh extensions are not decoded.
+- Decoded images are bounded to 8,192 pixels per dimension and the combined
+  mip storage to 16 million pixels (64 MB). Oversized inputs fail explicitly.
+- Refraction samples retained opaque scene color. It does not trace objects
+  outside the image, transparent layers behind transparent layers, multiple
+  internal bounces or caustics. Rough transmission uses an HDR mip pyramid with bicubic reconstruction;
+  authored BRep line primitives participate in the refracted scene.
+- Lighting uses a captured neutral-room PMREM, integrated GGX and PBR Neutral.
+  Optional `ao: {}` enables full-resolution screen-space ambient occlusion with
+  a depth prepass and two bilateral denoise passes. It defaults off to avoid
+  the extra geometry pass and three full-screen passes. `radiusPixels`,
+  `intensity`, and `distanceFalloff` tune its screen-space profile. Metal and
+  glass matrices are compared to captured Three.js 0.184.0 WebGL references with
+  AO both off and on. No HDR environment-file loader is included.
+- Draft material extensions, including diffuse transmission and subsurface
+  scattering, are outside this ratified extension set.
+
+Material factors, all 17 map slots, alpha/depth ordering, transmission,
+attenuation and repeated-render determinism are exercised by the Rust GPU
+suite. The native and browser suites additionally exercise the public API.
+
+### Physical-material size admission
+
+The production WASM admission is 2,342,824 bytes raw, 1,095,823 gzip-9 and
+916,737 Brotli-11 locally with Rust 1.98.0, Binaryen 132 and Node 26.8.1.
+The optional AO path adds 87,062 raw bytes over the preceding material build,
+including a 65,536-byte blue-noise texture. `scripts/check-wasm-size.mjs`
+records the explicit budget and CI compressor allowance; benchmark entry points
+remain excluded.
