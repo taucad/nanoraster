@@ -3309,6 +3309,131 @@ mod tests {
     }
 
     #[test]
+    fn ao_is_stable_across_cad_scene_scales() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let options = RenderOptions {
+            width: 768,
+            height: 576,
+            lines: false,
+            ao: Some(crate::AmbientOcclusion {
+                radius_pixels: None,
+                intensity: 3.0,
+                distance_falloff: 0.2,
+            }),
+            ..RenderOptions::default()
+        };
+        let small_cube = glb::parse_glb(include_bytes!("../../../tests/fixtures/cad-mm-cube.glb"))
+            .expect("small CAD cube");
+        let without_ao = render_test_scene(
+            &mut renderer,
+            small_cube.clone(),
+            RenderOptions {
+                ao: None,
+                ..options.clone()
+            },
+        );
+        let small = render_test_scene(&mut renderer, small_cube.clone(), options.clone());
+        let mut large_cube = small_cube;
+        for primitive in &mut large_cube.meshes[0].primitives {
+            for position in &mut primitive.positions {
+                *position *= 100.0;
+            }
+        }
+        let large = render_test_scene(&mut renderer, large_cube, options);
+        let mut error = 0u64;
+        let mut count = 0u64;
+        for (a, b) in large
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(small.rgba.as_chunks::<4>().0.iter())
+        {
+            if a[3] == 255 && b[3] == 255 {
+                error += u64::from(
+                    (0..3)
+                        .map(|channel| a[channel].abs_diff(b[channel]))
+                        .max()
+                        .unwrap(),
+                );
+                count += 1;
+            }
+        }
+        assert!(count > 100_000, "only {count} overlapping opaque pixels");
+        let mean_error = error as f64 / count as f64;
+        assert!(
+            mean_error < 3.0,
+            "AO changed with scene scale: mean RGB error {mean_error}"
+        );
+        // The planar left wall is far from contact edges. The old absolute
+        // normal threshold darkened it by ~25 levels at millimetre scale.
+        let mut wall_error = 0u64;
+        for y in 240..330 {
+            for x in 230..320 {
+                let offset = ((y * 768 + x) * 4) as usize;
+                wall_error += u64::from(small.rgba[offset].abs_diff(without_ao.rgba[offset]));
+            }
+        }
+        assert!(
+            wall_error as f64 / 8_100.0 < 3.0,
+            "AO falsely darkened the planar millimetre-scale wall"
+        );
+    }
+
+    #[test]
+    fn ao_thin_feature_ignores_missing_depth_neighbors() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let mut scene = occluded_line_scene(false);
+        let strip = &mut scene.meshes[0].primitives[0];
+        for vertex in strip.positions.as_chunks_mut::<3>().0 {
+            vertex[0] = if vertex[0] < 0.0 { 0.0 } else { 0.009 };
+            vertex[1] *= 0.5;
+        }
+        let mut neighbor = strip.clone();
+        // Column 133 samples this front, one-pixel strip; the rear strip is context.
+        for vertex in neighbor.positions.as_chunks_mut::<3>().0 {
+            vertex[0] += 0.05;
+            vertex[2] += 0.02;
+        }
+        scene.meshes[0].primitives.push(neighbor);
+        let options = RenderOptions {
+            width: 256,
+            height: 256,
+            lines: false,
+            camera: fixed_camera(CameraProjection::Orthographic {
+                vertical_span: Some(2.4),
+                zoom: 1.0,
+            }),
+            ..RenderOptions::default()
+        };
+        let off = render_test_scene(&mut renderer, scene.clone(), options.clone());
+        let on = render_test_scene(
+            &mut renderer,
+            scene,
+            RenderOptions {
+                ao: Some(crate::AmbientOcclusion {
+                    radius_pixels: Some(16.0),
+                    intensity: 3.0,
+                    distance_falloff: 0.2,
+                }),
+                ..options
+            },
+        );
+        let mut error = 0u64;
+        for y in 112..145 {
+            let pixel = ((y * 256 + 133) * 4) as usize;
+            assert!(off.rgba[pixel] > 230, "thin strip must be visible");
+            error += u64::from(off.rgba[pixel].abs_diff(on.rgba[pixel]));
+        }
+        assert!(
+            error as f64 / 33.0 < 2.0,
+            "AO darkened a thin isolated strip"
+        );
+    }
+
+    #[test]
     fn glass_refracts_authored_edges_behind_it() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
