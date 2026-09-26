@@ -1,3 +1,13 @@
+## 0.5.4 (2026-09-26)
+
+### 🩹 Fixes
+
+- Free a renderer's retired render targets as soon as they are replaced instead of leaving them to the browser's garbage collector, which let GPU memory accumulate until a later render failed with `gpu: map_async` on WebGPU devices with a fixed memory budget ([#95](https://github.com/taucad/nanoraster/pull/95))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.5.3 (2026-09-26)
 
 ### 🩹 Fixes
