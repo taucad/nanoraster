@@ -1,3 +1,13 @@
+## 0.5.3 (2026-09-26)
+
+### 🩹 Fixes
+
+- Refresh the Rust dependencies behind the native addons and the WASM build: napi 3.12, wasm-bindgen 0.2.128, wgpu 30.0.1 and jpeg-encoder 0.7.1 ([#72](https://github.com/taucad/nanoraster/pull/72))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.5.2 (2026-09-25)
 
 ### 🚀 Features
