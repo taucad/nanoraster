@@ -176,15 +176,63 @@ struct SizedTargets {
     depth_view: wgpu::TextureView,
     resolve_texture: wgpu::Texture,
     resolve_view: wgpu::TextureView,
-    readback: [wgpu::Buffer; 2],
+    readback: [Arc<Readback>; 2],
     unpadded_bytes_per_row: u32,
     padded_bytes_per_row: u32,
+}
+
+// wgpu's WebGPU backend frees nothing on drop, so a retired target set would
+// hold its GPU memory until the JS garbage collector runs: about 100 MB at
+// 1276x798 with MSAA, HDR, transmission mips and AO. Browsers with a fixed GPU
+// budget then fail a later allocation, surfacing as a rejected `map_async` on
+// a live device. Destroying is safe for work already submitted.
+impl Drop for SizedTargets {
+    fn drop(&mut self) {
+        let mut views = vec![
+            &self.msaa_view,
+            &self.hdr_msaa,
+            &self.opaque_view,
+            &self.opaque_mips,
+            &self.composite_view,
+            &self.depth_view,
+            &self.resolve_view,
+        ];
+        if let Some(ao) = &self.ao {
+            views.extend([
+                &ao.depth_view,
+                &ao.test_depth_view,
+                &ao.estimate_view,
+                &ao.blur_view,
+            ]);
+        }
+        for view in views {
+            view.texture().destroy();
+        }
+    }
+}
+
+/// A readback buffer shared by its target set and any view still reading it
+/// back, destroyed when the last of them lets go (see `SizedTargets`' drop).
+struct Readback(wgpu::Buffer);
+
+impl std::ops::Deref for Readback {
+    type Target = wgpu::Buffer;
+
+    fn deref(&self) -> &wgpu::Buffer {
+        &self.0
+    }
+}
+
+impl Drop for Readback {
+    fn drop(&mut self) {
+        self.0.destroy();
+    }
 }
 
 /// One submitted view awaiting readback. Owns clones of the wgpu handles it
 /// needs so target-cache turnover cannot invalidate it.
 struct InFlightView {
-    buffer: wgpu::Buffer,
+    buffer: Arc<Readback>,
     receiver: futures_channel::oneshot::Receiver<Result<(), wgpu::BufferAsyncError>>,
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     submission: wgpu::SubmissionIndex,
@@ -2173,13 +2221,16 @@ impl Renderer {
         let padded_bytes_per_row = unpadded_bytes_per_row
             .div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        // Native renderers cross threads, so this is an `Arc`; wasm handles are
+        // not `Send`, which is harmless on the single-threaded browser.
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
         let readback = std::array::from_fn(|_| {
-            device.create_buffer(&wgpu::BufferDescriptor {
+            Arc::new(Readback(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("readback"),
                 size: (padded_bytes_per_row * height) as u64,
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
-            })
+            })))
         });
 
         self.state.targets = Some(SizedTargets {
@@ -5128,15 +5179,14 @@ mod tests {
             let (sender, receiver) = futures_channel::oneshot::channel();
             sender.send(Err(wgpu::BufferAsyncError)).unwrap();
             let view = InFlightView {
-                buffer: renderer
-                    .state
-                    .device
-                    .create_buffer(&wgpu::BufferDescriptor {
+                buffer: Arc::new(Readback(renderer.state.device.create_buffer(
+                    &wgpu::BufferDescriptor {
                         label: Some("failed map"),
                         size: 256,
                         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                         mapped_at_creation: false,
-                    }),
+                    },
+                ))),
                 receiver,
                 submission: renderer.state.queue.submit([]),
                 height: 1,
@@ -5179,7 +5229,7 @@ mod tests {
         let submission = renderer.state.queue.submit(Some(commands));
         let (_sender, receiver) = futures_channel::oneshot::channel();
         let view = InFlightView {
-            buffer: readback,
+            buffer: Arc::new(Readback(readback)),
             receiver,
             submission,
             height: 1,
@@ -5224,7 +5274,7 @@ mod tests {
         assert!(renderer.take_uncaptured().is_err());
         let (_sender, receiver) = futures_channel::oneshot::channel();
         let view = InFlightView {
-            buffer: readback,
+            buffer: Arc::new(Readback(readback)),
             receiver,
             submission,
             height: 1,
