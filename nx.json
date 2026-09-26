@@ -35,6 +35,7 @@
         "CONTRIBUTING.md",
         "MAINTAINER.md",
         "SECURITY.md",
+        "osv-scanner.toml",
         ".github/**",
         "docs-site/**",
         "tests/**",

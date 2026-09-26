@@ -1,5 +1,6 @@
-# Every suppression must include a stable reason and an ISO expiry date.
+# Every suppression must include a stable reason and an RFC 3339 expiry timestamp;
+# osv-scanner 2.6 rejects a bare date.
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0192"
 reason = "ttf-parser only parses the repository-pinned Geist font at build time; review when fontdue replaces it"
-ignoreUntil = "2027-02-15"
+ignoreUntil = 2027-02-15T00:00:00Z
