@@ -1,5 +1,9 @@
 ## 0.5.2 (2026-09-25)
 
+### 🚀 Features
+
+- Render standard glTF physical materials and embedded textures: metallic-roughness factors and maps, the ratified material extensions, transmission, emissive HDR and a final tone-map pass. This merged without a Version Plan and shipped in 0.5.2 unannounced; the entry was added after release. ([#86](https://github.com/taucad/nanoraster/pull/86))
+
 ### 🩹 Fixes
 
 - Keep AO shading stable on small CAD parts and thin silhouettes ([#87](https://github.com/taucad/nanoraster/pull/87))

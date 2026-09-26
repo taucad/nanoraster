@@ -156,7 +156,12 @@ const sizes = {
 // material baseline: 2,342,824 -> 2,343,127 raw, 1,095,971 gzip-9 and
 // 916,657 Brotli-11 locally on Rust 1.98.0 and Node 26.8.1; the CI macOS
 // artifact was 2,343,120 raw.
-const ceilings = { raw: 2_343_127, gzip9: 1_102_663, brotli11: 916_737 };
+// Rust dependency refresh (#72): 2,346,352 / 1,104,086 / 917,085 locally on
+// Rust 1.98.0 and Node 24.10.0 — +3,225 raw over 2,343,127, measured by
+// reverting one group at a time: wasm-bindgen 0.2.128 with the wgpu 30.0.1 it
+// requires +1,782, jpeg-encoder 0.7.1 +1,491, and the other thirteen crates
+// -48. The compressed figures stay inside their 0.5% compressor allowance.
+const ceilings = { raw: 2_346_352, gzip9: 1_102_663, brotli11: 916_737 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
