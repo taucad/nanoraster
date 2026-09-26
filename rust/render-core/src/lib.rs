@@ -1850,6 +1850,30 @@ mod tests {
         renderer.destroy();
     }
 
+    /// Each view here changes the output size, so beginning it retires the
+    /// target set whose readback the previous view is still mapping. Retiring
+    /// destroys the targets' textures, but the in-flight readback must outlive
+    /// them or its map fails.
+    #[test]
+    fn target_turnover_keeps_the_in_flight_readback() {
+        let mut renderer = pollster::block_on(Renderer::from_request(None)).expect("renderer");
+        let allocations = renderer.counters().target_allocations;
+        let (images, _) = pollster::block_on(renderer.render_images_request(
+            FIXTURE,
+            r#"{"format":"raw","views":[
+                {"id":"a","width":64,"height":48},
+                {"id":"b","width":96,"height":64},
+                {"id":"c","width":64,"height":48}]}"#,
+            None,
+        ))
+        .expect("mixed-size plan");
+        assert_eq!(renderer.counters().target_allocations - allocations, 3);
+        assert_eq!(images[0].len(), 64 * 48 * 4);
+        assert_eq!(images[1].len(), 96 * 64 * 4);
+        assert_eq!(images[0], images[2]);
+        renderer.destroy();
+    }
+
     /// The surface pipeline takes a slope-scaled depth bias only when line
     /// geometry actually draws. `visiblePrimitives` can exclude every line
     /// primitive while `lines` stays on, and that view must be the same render

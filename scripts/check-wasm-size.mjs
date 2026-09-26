@@ -161,7 +161,12 @@ const sizes = {
 // reverting one group at a time: wasm-bindgen 0.2.128 with the wgpu 30.0.1 it
 // requires +1,782, jpeg-encoder 0.7.1 +1,491, and the other thirteen crates
 // -48. The compressed figures stay inside their 0.5% compressor allowance.
-const ceilings = { raw: 2_346_352, gzip9: 1_102_663, brotli11: 916_737 };
+// Explicit destruction of retired render targets: 2,347,452 / 1,104,466 /
+// 917,602 locally on Rust 1.98.0 and Node 24.10.0 — +1,100 raw for the target
+// set's drop destroying its textures and a shared readback handle destroying
+// its buffer, which wgpu's WebGPU backend otherwise leaves to the JS garbage
+// collector.
+const ceilings = { raw: 2_347_452, gzip9: 1_102_663, brotli11: 916_737 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
