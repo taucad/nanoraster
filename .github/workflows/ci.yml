@@ -568,7 +568,15 @@ jobs:
           tar -xzf "tarballs/$(node -p "require('./tarballs/test-tarballs.json').packages.nanoraster.filename")" \
             -C tarballs/extracted
       - name: Render through the frozen wasm in Vitest browser mode
-        run: pnpm exec vitest run --config vitest.browser.config.ts
+        # DIAGNOSTIC ONLY (never merge): repeat WebKit to catch the map_async flake.
+        run: |
+          runs=1
+          if [ "$BROWSER" = webkit ]; then runs=15; fi
+          for i in $(seq 1 "$runs"); do
+            echo "::group::run $i"
+            pnpm exec vitest run --config vitest.browser.config.ts || { echo "::endgroup::"; echo "failed on run $i"; exit 1; }
+            echo "::endgroup::"
+          done
         env:
           BROWSER: ${{ matrix.browser }}
           NANORASTER_ROOT_PACKAGE: tarballs/extracted/package
