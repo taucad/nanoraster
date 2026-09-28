@@ -14,8 +14,6 @@ use std::{
 
 pub(crate) const MODE_TRIANGLES: u32 = 4;
 pub(crate) const MODE_LINES: u32 = 1;
-const MAX_ACCESSOR_VALUES: usize = 4_000_000;
-const MAX_TOTAL_ACCESSOR_VALUES: usize = 8_000_000;
 
 pub(crate) use crate::material::Material;
 use crate::texture::{MAX_UV_SETS, TextureStore};
@@ -216,29 +214,6 @@ impl Scene {
     }
 }
 
-fn validate_accessor_counts(
-    counts: impl IntoIterator<Item = (usize, usize)>,
-) -> Result<(), String> {
-    let mut total = 0_usize;
-    for (index, count) in counts {
-        if count > MAX_ACCESSOR_VALUES {
-            return Err(format!(
-                "accessor {index} count {count} exceeds {MAX_ACCESSOR_VALUES}"
-            ));
-        }
-        // Every count is already at most MAX_ACCESSOR_VALUES and the loop
-        // stops the first time the running total passes the ceiling, so the
-        // sum stays far below usize::MAX.
-        total += count;
-        if total > MAX_TOTAL_ACCESSOR_VALUES {
-            return Err(format!(
-                "declared accessor values exceed {MAX_TOTAL_ACCESSOR_VALUES}"
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn validate_document(document: &gltf::Document, bin: &[u8]) -> Result<(), String> {
     if document.animations().next().is_some() {
         return Err("animations are not supported".into());
@@ -246,12 +221,6 @@ fn validate_document(document: &gltf::Document, bin: &[u8]) -> Result<(), String
     if document.skins().next().is_some() {
         return Err("skins are not supported".into());
     }
-
-    validate_accessor_counts(
-        document
-            .accessors()
-            .map(|accessor| (accessor.index(), accessor.count())),
-    )?;
 
     let buffers: Vec<_> = document.buffers().collect();
     if buffers.len() > 1 {
@@ -272,9 +241,29 @@ fn validate_document(document: &gltf::Document, bin: &[u8]) -> Result<(), String
     Ok(())
 }
 
-fn validate_vec3(accessor: gltf::Accessor<'_>, semantic: &str) -> Result<(), String> {
+fn validate_vec3(accessor: &gltf::Accessor<'_>, semantic: &str) -> Result<(), String> {
     if accessor.data_type() != DataType::F32 || accessor.dimensions() != Dimensions::Vec3 {
         return Err(format!("{semantic} must be a float32 VEC3 accessor"));
+    }
+    Ok(())
+}
+
+fn validate_gpu_buffer_size(
+    count: usize,
+    element_bytes: usize,
+    semantic: &str,
+) -> Result<(), String> {
+    // The renderer requests wgpu's default limits, so a decoded accessor
+    // larger than one upload buffer cannot render even when sparse GLB data
+    // makes the source BIN small.
+    let maximum = wgpu::Limits::default().max_buffer_size;
+    if count
+        .checked_mul(element_bytes)
+        .is_none_or(|bytes| bytes as u64 > maximum)
+    {
+        return Err(format!(
+            "{semantic} decoded buffer exceeds GPU maxBufferSize ({maximum} bytes)"
+        ));
     }
     Ok(())
 }
@@ -562,10 +551,12 @@ fn decode_mesh(
         let position_accessor = primitive
             .get(&Semantic::Positions)
             .expect("validated primitive POSITION accessor");
-        validate_vec3(position_accessor, "POSITION")?;
+        validate_vec3(&position_accessor, "POSITION")?;
+        validate_gpu_buffer_size(position_accessor.count(), 12, "POSITION")?;
         let normal_accessor = primitive.get(&Semantic::Normals);
         if let Some(accessor) = normal_accessor.clone() {
-            validate_vec3(accessor, "NORMAL")?;
+            validate_vec3(&accessor, "NORMAL")?;
+            validate_gpu_buffer_size(accessor.count(), 12, "NORMAL")?;
         } else if mode == MODE_TRIANGLES {
             return Err("TRIANGLES primitive missing NORMAL".into());
         }
@@ -578,17 +569,39 @@ fn decode_mesh(
         {
             return Err("indices must be unsigned SCALAR values".into());
         }
+        let index_count = primitive
+            .indices()
+            .map_or(position_accessor.count(), |accessor| accessor.count());
+        if mode == MODE_LINES {
+            validate_gpu_buffer_size(index_count, 12, "segments")?;
+        } else {
+            validate_gpu_buffer_size(index_count, 4, "index")?;
+        }
+        let has_surface_attributes = primitive.attributes().any(|(semantic, _)| {
+            matches!(
+                semantic,
+                Semantic::Tangents | Semantic::TexCoords(_) | Semantic::Colors(_)
+            )
+        });
+        if has_surface_attributes {
+            validate_gpu_buffer_size(position_accessor.count(), 64, "surface attributes")?;
+        }
 
         let reader = primitive.reader(|buffer| (buffer.index() == 0).then_some(bin));
         let positions: Vec<f32> = reader
             .read_positions()
-            .expect("validated POSITION accessor in the embedded BIN buffer")
+            .ok_or("POSITION data exceeds BIN")?
             .flatten()
             .collect();
-        let normals: Vec<f32> = reader
-            .read_normals()
-            .map(|values| values.flatten().collect())
-            .unwrap_or_default();
+        let normals: Vec<f32> = if normal_accessor.is_some() {
+            reader
+                .read_normals()
+                .ok_or("NORMAL data exceeds BIN")?
+                .flatten()
+                .collect()
+        } else {
+            Vec::new()
+        };
         if positions.iter().any(|value| !value.is_finite()) {
             return Err("POSITION values must be finite".into());
         }
@@ -600,12 +613,6 @@ fn decode_mesh(
         }
 
         let vertex_count = positions.len() / 3;
-        let has_surface_attributes = primitive.attributes().any(|(semantic, _)| {
-            matches!(
-                semantic,
-                Semantic::Tangents | Semantic::TexCoords(_) | Semantic::Colors(_)
-            )
-        });
         let mut surface_attributes = vec![
             [0.0; 16];
             if has_surface_attributes {
@@ -705,10 +712,15 @@ fn decode_mesh(
         {
             return Err("anisotropy requires TANGENT or a normal texture".into());
         }
-        let indices: Vec<u32> = reader.read_indices().map_or_else(
-            || (0..vertex_count as u32).collect(),
-            |values| values.into_u32().collect(),
-        );
+        let indices: Vec<u32> = if primitive.indices().is_some() {
+            reader
+                .read_indices()
+                .ok_or("index data exceeds BIN")?
+                .into_u32()
+                .collect()
+        } else {
+            (0..vertex_count as u32).collect()
+        };
         let cardinality = if mode == MODE_TRIANGLES { 3 } else { 2 };
         if !indices.len().is_multiple_of(cardinality) {
             return Err(format!(
@@ -1344,33 +1356,50 @@ mod tests {
     }
 
     #[test]
-    fn declared_accessor_counts_are_bounded_before_decoding() {
-        assert!(validate_accessor_counts(vec![(0, MAX_ACCESSOR_VALUES)]).is_ok());
-        assert_eq!(
-            validate_accessor_counts(vec![(7, MAX_ACCESSOR_VALUES + 1)]).unwrap_err(),
-            format!(
-                "accessor 7 count {} exceeds {MAX_ACCESSOR_VALUES}",
-                MAX_ACCESSOR_VALUES + 1
-            )
-        );
-        assert!(
-            validate_accessor_counts(vec![
-                (0, MAX_ACCESSOR_VALUES),
-                (1, MAX_ACCESSOR_VALUES),
-                (2, 1)
-            ])
-            .unwrap_err()
-            .contains("declared accessor values")
-        );
-
-        let source = fixture(Layout::Packed, 5125, true);
+    fn large_backed_accessor_is_accepted_and_unbacked_accessor_is_rejected() {
+        let source = fixture(Layout::Packed, 5121, true);
         let parsed = gltf::binary::Glb::from_slice(&source).expect("fixture");
         let mut json: Value = serde_json::from_slice(&parsed.json).expect("json");
-        json["accessors"][0]["count"] = json!(MAX_ACCESSOR_VALUES + 1);
+        let mut bin = parsed.bin.expect("bin").into_owned();
+        let count = 7_729_248;
+        let offset = bin.len();
+        bin.extend((0..count).map(|index| (index % 3) as u8));
+        json["bufferViews"]
+            .as_array_mut()
+            .expect("views")
+            .push(json!({
+                "buffer": 0, "byteOffset": offset, "byteLength": count
+            }));
+        json["accessors"][2]["bufferView"] =
+            json!(json["bufferViews"].as_array().expect("views").len() - 1);
+        json["accessors"][2]["count"] = json!(count);
+        let duplicate = json["accessors"][2].clone();
+        json["accessors"]
+            .as_array_mut()
+            .expect("accessors")
+            .push(duplicate);
+        json["buffers"][0]["byteLength"] = json!(bin.len());
+        let scene = parse_glb(&glb(json.clone(), bin.clone())).expect("large backed accessor");
+        assert_eq!(scene.meshes[0].primitives[0].indices.len(), count);
+
+        json["accessors"][2]["count"] = json!(count + 3);
+        assert!(parse_glb(&glb(json, bin)).is_err());
+    }
+
+    #[test]
+    fn sparse_accessor_cannot_expand_past_the_gpu_buffer_limit() {
+        let source = fixture(Layout::Sparse, 5121, true);
+        let parsed = gltf::binary::Glb::from_slice(&source).expect("fixture");
+        let mut json: Value = serde_json::from_slice(&parsed.json).expect("json");
+        json["accessors"][0]
+            .as_object_mut()
+            .expect("POSITION accessor")
+            .remove("bufferView");
+        json["accessors"][0]["count"] = json!(30_000_000);
+        let error = parse_glb(&glb(json, parsed.bin.expect("bin").into_owned())).unwrap_err();
         assert!(
-            parse_glb(&glb(json, parsed.bin.expect("bin").into_owned()))
-                .unwrap_err()
-                .contains("accessor 0 count")
+            error.contains("POSITION decoded buffer exceeds GPU maxBufferSize"),
+            "{error}"
         );
     }
 

@@ -166,7 +166,11 @@ const sizes = {
 // set's drop destroying its textures and a shared readback handle destroying
 // its buffer, which wgpu's WebGPU backend otherwise leaves to the JS garbage
 // collector.
-const ceilings = { raw: 2_347_452, gzip9: 1_102_663, brotli11: 916_737 };
+// Large-backed-accessor capture: 2,348,238 / 1,097,244 / 918,096 on Rust
+// 1.98.0 and Node 26.8.1. The +786 raw bytes replace fixed accessor-count
+// ceilings with decoded GPU-buffer checks and explicit malformed-data errors;
+// compressed sizes remain inside the existing compressor allowances.
+const ceilings = { raw: 2_348_238, gzip9: 1_102_663, brotli11: 916_737 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
