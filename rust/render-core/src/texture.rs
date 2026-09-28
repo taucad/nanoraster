@@ -6,9 +6,12 @@ use crate::material::{number, vector};
 use serde_json::Value;
 use std::{collections::BTreeMap, io::Cursor, sync::OnceLock};
 
-pub(crate) const MAX_TEXTURE_PIXELS: usize = 16 * 1024 * 1024;
-const MAX_IMAGE_DIMENSION: u32 = 8192;
 pub(crate) const MAX_UV_SETS: usize = 4;
+
+fn max_texture_pixels() -> usize {
+    // Every decoded mip is packed into one u32 storage-buffer binding.
+    (wgpu::Limits::default().max_storage_buffer_binding_size / size_of::<u32>() as u64) as usize
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub(crate) struct TextureSlot {
@@ -32,12 +35,7 @@ pub(crate) struct TextureStore<'a> {
 
 fn image_size(width: u32, height: u32) -> Result<usize, String> {
     let pixels = u64::from(width) * u64::from(height);
-    if width == 0
-        || height == 0
-        || width > MAX_IMAGE_DIMENSION
-        || height > MAX_IMAGE_DIMENSION
-        || pixels > MAX_TEXTURE_PIXELS as u64
-    {
+    if width == 0 || height == 0 || pixels > max_texture_pixels() as u64 {
         return Err(format!(
             "image dimensions {width}x{height} exceed the texture budget"
         ));
@@ -60,7 +58,7 @@ fn decode(bytes: &[u8], mime: &str) -> Result<(u32, u32, Vec<u8>), String> {
         "image/png" => {
             let mut decoder = png::Decoder::new(Cursor::new(bytes));
             decoder.set_limits(png::Limits {
-                bytes: MAX_TEXTURE_PIXELS * 8,
+                bytes: max_texture_pixels() * 8,
             });
             decoder
                 .set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
@@ -91,8 +89,8 @@ fn decode(bytes: &[u8], mime: &str) -> Result<(u32, u32, Vec<u8>), String> {
                 zune_core::{colorspace::ColorSpace, options::DecoderOptions},
             };
             let options = DecoderOptions::default()
-                .set_max_width(MAX_IMAGE_DIMENSION as usize)
-                .set_max_height(MAX_IMAGE_DIMENSION as usize)
+                .set_max_width(max_texture_pixels())
+                .set_max_height(max_texture_pixels())
                 .jpeg_set_max_scans(64)
                 .jpeg_set_out_colorspace(ColorSpace::RGBA);
             let mut decoder = JpegDecoder::new_with_options(Cursor::new(bytes), options);
@@ -105,7 +103,7 @@ fn decode(bytes: &[u8], mime: &str) -> Result<(u32, u32, Vec<u8>), String> {
         "image/webp" => {
             let mut decoder = image_webp::WebPDecoder::new(Cursor::new(bytes))
                 .map_err(|e| format!("WebP: {e}"))?;
-            decoder.set_memory_limit(MAX_TEXTURE_PIXELS * 8);
+            decoder.set_memory_limit(max_texture_pixels() * 8);
             let (width, height) = decoder.dimensions();
             let count = image_size(width, height)?;
             if decoder.is_animated() {
@@ -209,8 +207,8 @@ impl<'a> TextureStore<'a> {
             w = (w / 2).max(1);
             h = (h / 2).max(1);
         }
-        if self.pixels.len() + count > MAX_TEXTURE_PIXELS {
-            return Err("decoded texture mip chains exceed the 16M-pixel budget".into());
+        if self.pixels.len() + count > max_texture_pixels() {
+            return Err("decoded texture mip chains exceed GPU storage-binding budget (maxStorageBufferBindingSize)".into());
         }
         let mut result = [self.pixels.len() as u32, width, height, 0];
         loop {
@@ -229,8 +227,14 @@ impl<'a> TextureStore<'a> {
             // Area box reduction includes the last row/column of odd-size maps.
             for y in 0..next_height {
                 for x in 0..next_width {
-                    let (x0, x1) = (x * width / next_width, (x + 1) * width / next_width);
-                    let (y0, y1) = (y * height / next_height, (y + 1) * height / next_height);
+                    let (x0, x1) = (
+                        (u64::from(x) * u64::from(width) / u64::from(next_width)) as u32,
+                        (u64::from(x + 1) * u64::from(width) / u64::from(next_width)) as u32,
+                    );
+                    let (y0, y1) = (
+                        (u64::from(y) * u64::from(height) / u64::from(next_height)) as u32,
+                        (u64::from(y + 1) * u64::from(height) / u64::from(next_height)) as u32,
+                    );
                     for channel in 0..4 {
                         let mut sum = 0.0;
                         for yy in y0..y1 {
@@ -361,15 +365,13 @@ mod tests {
             );
         }
         assert!(decode(&[], "image/svg+xml").is_err());
-        for dimensions in [
-            (0, 1),
-            (1, 0),
-            (8193, 1),
-            (8192, 8192),
-            (u32::MAX, u32::MAX),
-        ] {
+        for dimensions in [(0, 1), (1, 0), (8192, 8192), (u32::MAX, u32::MAX)] {
             assert!(image_size(dimensions.0, dimensions.1).is_err());
         }
+        assert_eq!(image_size(8193, 1), Ok(8193));
+        assert_eq!(image_size(4096, 4097), Ok(4096 * 4097));
+        assert_eq!(image_size(8192, 4096), Ok(max_texture_pixels()));
+        assert!(image_size(8192, 4097).is_err());
     }
 
     #[test]
@@ -529,7 +531,7 @@ mod tests {
         ] {
             assert!(store.slot(&info, true).is_err(), "{info}");
         }
-        store.pixels.resize(MAX_TEXTURE_PIXELS, 0);
+        store.pixels.resize(max_texture_pixels(), 0);
         store.images.clear();
         assert!(
             store
@@ -537,5 +539,30 @@ mod tests {
                 .unwrap_err()
                 .contains("budget")
         );
+    }
+
+    #[test]
+    fn wide_embedded_image_builds_mips_without_coordinate_overflow() {
+        let width = 100_000;
+        let bytes = encode_png(&Rendered {
+            width,
+            height: 1,
+            rgba: vec![255; width as usize * 4],
+        })
+        .unwrap();
+        let document = gltf::Document::from_json(
+            serde_json::from_value(serde_json::json!({
+                "asset": {"version":"2.0"},
+                "buffers":[{"byteLength":bytes.len()}],
+                "bufferViews":[{"buffer":0,"byteLength":bytes.len()}],
+                "images":[{"bufferView":0,"mimeType":"image/png"}]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut store = TextureStore::new(&document, &bytes);
+        store.image(0, false).unwrap();
+        assert!(store.pixels.len() > width as usize);
+        assert_eq!(store.pixels.last(), Some(&u32::MAX));
     }
 }
