@@ -227,8 +227,14 @@ impl<'a> TextureStore<'a> {
             // Area box reduction includes the last row/column of odd-size maps.
             for y in 0..next_height {
                 for x in 0..next_width {
-                    let (x0, x1) = (x * width / next_width, (x + 1) * width / next_width);
-                    let (y0, y1) = (y * height / next_height, (y + 1) * height / next_height);
+                    let (x0, x1) = (
+                        (u64::from(x) * u64::from(width) / u64::from(next_width)) as u32,
+                        (u64::from(x + 1) * u64::from(width) / u64::from(next_width)) as u32,
+                    );
+                    let (y0, y1) = (
+                        (u64::from(y) * u64::from(height) / u64::from(next_height)) as u32,
+                        (u64::from(y + 1) * u64::from(height) / u64::from(next_height)) as u32,
+                    );
                     for channel in 0..4 {
                         let mut sum = 0.0;
                         for yy in y0..y1 {
@@ -533,5 +539,30 @@ mod tests {
                 .unwrap_err()
                 .contains("budget")
         );
+    }
+
+    #[test]
+    fn wide_embedded_image_builds_mips_without_coordinate_overflow() {
+        let width = 100_000;
+        let bytes = encode_png(&Rendered {
+            width,
+            height: 1,
+            rgba: vec![255; width as usize * 4],
+        })
+        .unwrap();
+        let document = gltf::Document::from_json(
+            serde_json::from_value(serde_json::json!({
+                "asset": {"version":"2.0"},
+                "buffers":[{"byteLength":bytes.len()}],
+                "bufferViews":[{"buffer":0,"byteLength":bytes.len()}],
+                "images":[{"bufferView":0,"mimeType":"image/png"}]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut store = TextureStore::new(&document, &bytes);
+        store.image(0, false).unwrap();
+        assert!(store.pixels.len() > width as usize);
+        assert_eq!(store.pixels.last(), Some(&u32::MAX));
     }
 }
