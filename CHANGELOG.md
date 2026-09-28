@@ -1,3 +1,13 @@
+## 0.5.5 (2026-09-28)
+
+### 🩹 Fixes
+
+- Accept large backed GLB accessors and GPU-sized embedded textures during image capture ([#97](https://github.com/taucad/nanoraster/pull/97))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.5.4 (2026-09-26)
 
 ### 🩹 Fixes
