@@ -144,11 +144,15 @@ jobs:
           git commit --quiet -m "chore(release): nanoraster v$version"
           git push --force origin HEAD:refs/heads/release/next
 
+          # A version can be present in main's manifest without a published tag
+          # when its release CI failed. List commits from the latest actual tag.
+          published_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' main)
           {
             echo "version=$version"
             echo "previous_version=$previous_version"
+            echo "published_tag=$published_tag"
             echo 'commit_log<<LOGEOF'
-            git log "v$previous_version..main" --pretty='- %h %s' | head -100
+            git log "$published_tag..main" --pretty='- %h %s' | head -100
             echo 'LOGEOF'
           } >> "$GITHUB_OUTPUT"
 
@@ -159,19 +163,21 @@ jobs:
           TITLE: 'chore(release): nanoraster v${{ steps.generate.outputs.version }}'
           VERSION: ${{ steps.generate.outputs.version }}
           PREVIOUS_VERSION: ${{ steps.generate.outputs.previous_version }}
+          PUBLISHED_TAG: ${{ steps.generate.outputs.published_tag }}
           PLANS: ${{ steps.generate.outputs.plans }}
           COMMIT_LOG: ${{ steps.generate.outputs.commit_log }}
         run: |
           set -euo pipefail
           body=$(cat <<BODYEOF
-          Releases nanoraster **v${VERSION}** (from v${PREVIOUS_VERSION}). This is one root
+          Releases nanoraster **v${VERSION}** (from manifest v${PREVIOUS_VERSION};
+          latest published tag ${PUBLISHED_TAG}). This is one root
           release; CI materializes the seventeen registry packages — the root package and its
           sixteen native platform packages — at this version. The consumed Version Plans
           dictate the bump:
 
           ${PLANS}
 
-          Commits since v${PREVIOUS_VERSION}:
+          Commits since ${PUBLISHED_TAG} (the latest published tag):
 
           ${COMMIT_LOG}
 
