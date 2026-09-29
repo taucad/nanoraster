@@ -1047,21 +1047,23 @@ const validateAo = (ao: unknown): void => {
     assertRange(ao['distanceFalloff'], 'ao.distanceFalloff', [0.01, 1]);
 };
 
-const validatePresentation = (options: CameraCommonOptions): void => {
-  assertOptionalBoolean(options.surfaces, 'surfaces');
-  assertOptionalBoolean(options.lines, 'lines');
-  if (options.visiblePrimitives !== undefined) {
-    if (!isUnknownArray(options.visiblePrimitives)) {
-      throw new TypeError('visiblePrimitives must be an array');
+const validateVisiblePrimitives = (value: unknown, path: string): void => {
+  if (value !== undefined) {
+    if (!isUnknownArray(value)) {
+      throw new TypeError(`${path} must be an array`);
     }
     const seen = new Set<string>();
-    for (const [index, primitive] of options.visiblePrimitives.entries()) {
-      const name = `visiblePrimitives[${index}]`;
+    for (const [index, primitive] of value.entries()) {
+      const name = `${path}[${index}]`;
       if (!isRecord(primitive)) {
         throw new TypeError(`${name} must be an object`);
       }
       assertKnownKeys(primitive, primitiveRefKeys, name);
-      const values = [primitive.nodeIndex, primitive.meshIndex, primitive.primitiveIndex];
+      const values = [
+        primitive['nodeIndex'],
+        primitive['meshIndex'],
+        primitive['primitiveIndex'],
+      ] as number[];
       if (values.some((value) => !Number.isSafeInteger(value) || value < 0)) {
         throw new TypeError(`${name} indices must be non-negative safe integers`);
       }
@@ -1072,6 +1074,12 @@ const validatePresentation = (options: CameraCommonOptions): void => {
       seen.add(identity);
     }
   }
+};
+
+const validatePresentation = (options: CameraCommonOptions): void => {
+  assertOptionalBoolean(options.surfaces, 'surfaces');
+  assertOptionalBoolean(options.lines, 'lines');
+  validateVisiblePrimitives(options.visiblePrimitives, 'visiblePrimitives');
   if (options.sections === undefined) {
     return;
   }
@@ -1271,12 +1279,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
       if (options.sections !== undefined) {
         throw new TypeError(`views[${index}]: per-view visiblePrimitives with sections is unsupported`);
       }
-      try {
-        validatePresentation({ visiblePrimitives: visiblePrimitives as readonly RenderPrimitiveReference[] });
-      } catch (error) {
-        if (!(error instanceof TypeError)) throw error;
-        throw new TypeError(`views[${index}].${error.message}`, { cause: error });
-      }
+      validateVisiblePrimitives(visiblePrimitives, `views[${index}].visiblePrimitives`);
     }
     validateCamera(camera, `views[${index}].camera`);
     if (width !== undefined) {

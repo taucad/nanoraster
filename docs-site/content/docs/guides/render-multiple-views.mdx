@@ -112,11 +112,12 @@ tuple and returns a tuple even for one view, under the same
 **Labels per view.** Give an entry a `label` and that view is labelled. Omit
 it and the view is not. See [Format and annotate](format-and-annotate).
 
-**Shared-only settings.** `axes`, `scaleBar`, `background`, and `lighting`
-apply to the whole request. Presentation filters and section planes are shared
-too, so one plan renders one presented subject from several cameras. `camera`,
-`label`, and the four output fields vary per view. There is no shared partial
-camera or inheritance order.
+**Shared and per-view settings.** `axes`, `scaleBar`, `background`, `lighting`,
+`surfaces`, `lines`, and `sections` apply to the whole request. A view may set
+`visiblePrimitives` to draw and fit a different subject while sharing one
+parsed GLB. Omit it to inherit the shared selection. Per-view selection with
+`sections` is unsupported. `camera`, `label`, and the four output fields also
+vary per view. There is no shared partial camera or inheritance order.
 
 **Renders spread over time.** The plan call shares the device across views
 _within_ one call; [`createRenderer`](reuse-the-renderer) shares it across

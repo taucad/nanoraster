@@ -1445,7 +1445,7 @@ mod tests {
             &scene,
             &RenderOptions::default(),
             ImageFormat::Png,
-            &[selected.clone()],
+            std::slice::from_ref(&selected),
         )
         .expect("per-view selection");
         assert_eq!(

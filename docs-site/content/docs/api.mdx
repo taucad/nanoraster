@@ -398,6 +398,7 @@ types.
 ```typescript
 export type RenderImageView<Id extends string = string> = {
   readonly id: Id;
+  readonly visiblePrimitives?: readonly RenderPrimitiveReference[];
   readonly label?: string;
   readonly camera?: RenderCamera;
   readonly width?: number;
@@ -407,7 +408,10 @@ export type RenderImageView<Id extends string = string> = {
 };
 ```
 
-IDs must be unique within a request. The four per-view output overrides
+IDs must be unique within a request. `visiblePrimitives` draws and fits to
+this view's exact source instances; omit it to inherit the shared selection.
+An empty selection needs a fixed camera, and per-view selection with
+`sections` is unsupported. The four per-view output overrides
 default to the shared value, follow the same validation, and flow into that
 entry's filename and MIME type. A view also
 accepts `format: 'raw'`. An omitted `camera` means the default fitted camera.

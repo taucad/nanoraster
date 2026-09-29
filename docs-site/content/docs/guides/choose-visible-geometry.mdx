@@ -4,7 +4,8 @@ description: Show surfaces, authored lines, or exact glTF primitive instances wi
 ---
 
 Presentation filters decide which submitted primitives reach the draw plan.
-They do not rewrite the GLB, and they apply to every camera in a batch.
+They do not rewrite the GLB. Shared filters apply to every camera in a batch;
+each view may override `visiblePrimitives`.
 
 ## Switch surfaces and lines independently
 
@@ -54,6 +55,12 @@ const edges = await renderImage(glb, {
 A fitted camera frames the admitted surfaces and lines. If the request admits
 no geometry, fitted framing fails: there is no subject. A fixed camera may
 still render a background and annotations.
+
+For a batch of different parts, set `visiblePrimitives` on each view. The
+renderer validates each selection and fits its camera to that part while
+sharing one GLB parse and upload. Omit the view field to inherit the shared
+selection. Per-view selection with `sections` is unsupported until section
+caps can be prepared for each view.
 
 ## Resolve product identity before rendering
 

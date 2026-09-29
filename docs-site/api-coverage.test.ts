@@ -83,7 +83,7 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'timings',
     'views',
   ],
-  RenderImageView: ['id', 'label', 'camera', 'width', 'height', 'format', 'quality'],
+  RenderImageView: ['id', 'visiblePrimitives', 'label', 'camera', 'width', 'height', 'format', 'quality'],
   RenderAmbientOcclusion: ['radiusPixels', 'intensity', 'distanceFalloff'],
   RenderLightingRig: ['lights', 'ambient', 'environment', 'space', 'exposure'],
   RenderLight: ['direction', 'color'],
