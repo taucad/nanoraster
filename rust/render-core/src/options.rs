@@ -1561,6 +1561,26 @@ mod tests {
     }
 
     #[test]
+    fn a_batch_resolves_each_view_primitive_selection() {
+        let (_, _, views, _) = RenderImagesRequest::from_json(
+            r#"{"format":"png","views":[{"id":"part","visiblePrimitives":[{"nodeIndex":2,"meshIndex":1,"primitiveIndex":0}]},{"id":"empty","visiblePrimitives":[]},{"id":"shared"}]}"#,
+        )
+        .expect("parse")
+        .resolve()
+        .expect("resolve");
+        assert_eq!(
+            views[0].visible_primitives,
+            Some(vec![PrimitiveRef {
+                node_index: 2,
+                mesh_index: 1,
+                primitive_index: 0,
+            }])
+        );
+        assert_eq!(views[1].visible_primitives, Some(vec![]));
+        assert_eq!(views[2].visible_primitives, None);
+    }
+
+    #[test]
     fn an_image_request_without_a_format_is_rejected() {
         // The TS façade makes `format` required, so no default can be right
         // here: an absent format is a caller mistake, not a request for PNG.
