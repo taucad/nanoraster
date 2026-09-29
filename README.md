@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/nanoraster"><img src="https://img.shields.io/npm/v/nanoraster?logo=npm&logoColor=white&label=npm&color=cb3837" alt="npm version"></a>
   <a href="https://github.com/taucad/nanoraster/actions/workflows/ci.yml"><img src="https://github.com/taucad/nanoraster/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://tau.new"><img src="https://img.shields.io/badge/Tau-ecosystem-6d28d9" alt="Part of the Tau ecosystem"></a>
+  <a href="https://github.com/taucad/tau"><img src="https://img.shields.io/badge/Tau-ecosystem-6d28d9" alt="Part of the Tau ecosystem"></a>
 </p>
 
 Tiny headless WebGPU glTF renderer for deterministic PNG, WebP, JPEG, and raw RGBA output.
@@ -110,4 +110,4 @@ registry signatures with `npm audit signatures`.
 
 Apache-2.0. See [license](license) and [NOTICE](NOTICE) for bundled materials.
 
-Part of the [Tau ecosystem](https://tau.new).
+Part of the [Tau ecosystem](https://github.com/taucad/tau).

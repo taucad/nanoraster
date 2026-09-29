@@ -2,7 +2,7 @@
 export const TauAttributionFooter = (): React.JSX.Element => (
   <a
     className="order-first mb-3 text-xs text-fd-muted-foreground hover:text-fd-foreground"
-    href="https://tau.new"
+    href="https://github.com/taucad/tau"
   >
     Part of the Tau ecosystem
   </a>
