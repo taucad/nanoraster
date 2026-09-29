@@ -1,3 +1,13 @@
+## 0.5.6 (2026-09-29)
+
+### 🩹 Fixes
+
+- Add per-view primitive selection to batch rendering ([#99](https://github.com/taucad/nanoraster/pull/99))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.5.5 (2026-09-28)
 
 ### 🩹 Fixes
