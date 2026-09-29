@@ -39,9 +39,11 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // The standalone RGBA encoder adds its callable contract and four-field
 // options table to `api.mdx`; no separate guide is needed.
 // Optional AO adds one public three-field type and its usage to `api.mdx`.
+// Per-view primitive selection adds its API field and the selected-batch,
+// fitted-bounds, and section-exclusion rules to the API and two guides.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 3_311,
-  'guides/choose-visible-geometry.mdx': 340,
+  'api.mdx': 3_346,
+  'guides/choose-visible-geometry.mdx': 373,
   'guides/render-section-views.mdx': 360,
   'guides/format-and-annotate.mdx': 830,
   'guides/frame-the-model.mdx': 620,
@@ -50,7 +52,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'guides/place-the-camera.mdx': 739,
   'guides/render-for-llms.mdx': 500,
   'guides/render-in-the-browser.mdx': 740,
-  'guides/render-multiple-views.mdx': 660,
+  'guides/render-multiple-views.mdx': 677,
   'guides/reuse-the-renderer.mdx': 650,
   'guides/work-with-raw-pixels.mdx': 734,
   'how-it-works.mdx': 1_180,
@@ -58,7 +60,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'install.mdx': 740,
   'tutorial.mdx': 696,
 };
-const siteCeiling = 13_342;
+const siteCeiling = 13_454;
 
 const pages = globSync('**/*.mdx', { cwd: docsDir })
   .toSorted()

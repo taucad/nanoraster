@@ -269,6 +269,7 @@ pub struct RenderRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RenderImageViewRequest {
     pub id: String,
+    pub visible_primitives: Option<Vec<PrimitiveRefRequest>>,
     pub label: Option<String>,
     pub camera: Option<CameraRequest>,
     pub width: Option<u32>,
@@ -306,6 +307,8 @@ pub struct RenderImagesRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderView {
     pub id: String,
+    /// Per-view source primitive instances; `None` inherits the shared selection.
+    pub visible_primitives: Option<Vec<PrimitiveRef>>,
     pub label: Option<String>,
     pub camera: RenderCamera,
     pub width: Option<u32>,
@@ -474,6 +477,15 @@ impl RenderImagesRequest {
             validate_optional_label(view.label.as_deref(), &format!("views[{index}].label"))?;
             views.push(RenderView {
                 id: view.id.clone(),
+                visible_primitives: view.visible_primitives.as_ref().map(|refs| {
+                    refs.iter()
+                        .map(|r| PrimitiveRef {
+                            node_index: r.node_index,
+                            mesh_index: r.mesh_index,
+                            primitive_index: r.primitive_index,
+                        })
+                        .collect()
+                }),
                 label: view.label.clone(),
                 camera,
                 width: view.width,
@@ -1546,6 +1558,26 @@ mod tests {
             .to_string(),
             "parse: views[0]: annotated images must be at least 192x192"
         );
+    }
+
+    #[test]
+    fn a_batch_resolves_each_view_primitive_selection() {
+        let (_, _, views, _) = RenderImagesRequest::from_json(
+            r#"{"format":"png","views":[{"id":"part","visiblePrimitives":[{"nodeIndex":2,"meshIndex":1,"primitiveIndex":0}]},{"id":"empty","visiblePrimitives":[]},{"id":"shared"}]}"#,
+        )
+        .expect("parse")
+        .resolve()
+        .expect("resolve");
+        assert_eq!(
+            views[0].visible_primitives,
+            Some(vec![PrimitiveRef {
+                node_index: 2,
+                mesh_index: 1,
+                primitive_index: 0,
+            }])
+        );
+        assert_eq!(views[1].visible_primitives, Some(vec![]));
+        assert_eq!(views[2].visible_primitives, None);
     }
 
     #[test]

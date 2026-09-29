@@ -582,6 +582,9 @@ fn clock(now: Option<&TimingsClock>) -> f64 {
 fn resolved_view_options(options: &RenderOptions, view: &RenderView) -> RenderOptions {
     let mut view_options = options.clone();
     view_options.camera.clone_from(&view.camera);
+    if let Some(primitives) = &view.visible_primitives {
+        view_options.visible_primitives = Some(primitives.clone());
+    }
     view_options.label.clone_from(&view.label);
     if let Some(width) = view.width {
         view_options.width = width;
@@ -600,13 +603,22 @@ fn build_plan(
     format: ImageFormat,
     views: &[RenderView],
 ) -> Result<Vec<render::PlanEntry>, RenderError> {
-    scene
-        .validate_primitive_refs(options)
-        .map_err(RenderError::Parse)?;
     let mut plan = Vec::with_capacity(views.len());
     for view in views {
+        if options.sections.is_some() && view.visible_primitives.is_some() {
+            return Err(RenderError::Parse(format!(
+                "views[{}]: per-view visiblePrimitives with sections is unsupported",
+                view.id
+            )));
+        }
         let view_options = resolved_view_options(options, view);
         with_view_result(validate_options(&view_options), &view.id)?;
+        with_view_result(
+            scene
+                .validate_primitive_refs(&view_options)
+                .map_err(RenderError::Parse),
+            &view.id,
+        )?;
         let prepared = with_view_result(
             capture_overlay::prepare_view(scene, &view_options),
             &view.id,
@@ -792,6 +804,7 @@ impl Renderer {
 fn singular_view(options: &RenderOptions) -> RenderView {
     RenderView {
         id: String::new(),
+        visible_primitives: None,
         label: options.label.clone(),
         camera: options.camera.clone(),
         width: None,
@@ -994,6 +1007,7 @@ mod tests {
     fn view(id: &str) -> RenderView {
         RenderView {
             id: id.into(),
+            visible_primitives: None,
             label: None,
             camera: RenderCamera::default(),
             width: None,
@@ -1410,6 +1424,7 @@ mod tests {
         };
         let fixed_view = RenderView {
             id: "front".into(),
+            visible_primitives: None,
             label: None,
             camera: fixed.camera.clone(),
             width: None,
@@ -1417,6 +1432,44 @@ mod tests {
             format: None,
         };
         assert!(build_plan(&scene, &fixed, ImageFormat::Png, &[fixed_view]).is_ok());
+
+        let selected = RenderView {
+            visible_primitives: Some(vec![PrimitiveRef {
+                node_index: 0,
+                mesh_index: 0,
+                primitive_index: 0,
+            }]),
+            ..view("selected")
+        };
+        let plan = build_plan(
+            &scene,
+            &RenderOptions::default(),
+            ImageFormat::Png,
+            std::slice::from_ref(&selected),
+        )
+        .expect("per-view selection");
+        assert_eq!(
+            plan[0].options.visible_primitives,
+            selected.visible_primitives
+        );
+        let sectioned = RenderOptions {
+            sections: Some(Sections {
+                planes: vec![SectionPlane {
+                    point: [0.0; 3],
+                    normal: [1.0, 0.0, 0.0],
+                }],
+                clip_surfaces: true,
+                clip_lines: true,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            build_plan(&scene, &sectioned, ImageFormat::Png, &[selected])
+                .err()
+                .expect("per-view sections must reject")
+                .to_string(),
+            "parse: views[selected]: per-view visiblePrimitives with sections is unsupported"
+        );
     }
 
     #[test]

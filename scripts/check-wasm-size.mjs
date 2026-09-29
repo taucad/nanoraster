@@ -170,7 +170,10 @@ const sizes = {
 // 1.98.0 and Node 26.8.1. The +786 raw bytes replace fixed accessor-count
 // ceilings with decoded GPU-buffer checks and explicit malformed-data errors;
 // compressed sizes remain inside the existing compressor allowances.
-const ceilings = { raw: 2_348_238, gzip9: 1_102_663, brotli11: 916_737 };
+// Per-view primitive selection: 2,349,299 / 1,098,682 / 918,071 on the same
+// toolchain. +1,061 raw bytes carry the per-view reference list through
+// request resolution and validation; compressed sizes stay within allowance.
+const ceilings = { raw: 2_349_299, gzip9: 1_102_663, brotli11: 916_737 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.

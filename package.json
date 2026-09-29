@@ -106,8 +106,8 @@
     "@size-limit/file": "13.0.3",
     "@types/mdx": "2.0.14",
     "@types/node": "24.13.3",
-    "@vitest/browser-playwright": "4.1.10",
-    "@vitest/coverage-v8": "4.1.10",
+    "@vitest/browser-playwright": "4.1.11",
+    "@vitest/coverage-v8": "4.1.11",
     "binaryen": "132.0.0",
     "eslint": "9.32.0",
     "globals": "17.11.0",
@@ -124,7 +124,7 @@
     "tsdown": "0.22.14",
     "typescript": "5.9.3",
     "typescript-eslint": "8.61.1",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   },
   "napi": {
     "binaryName": "nanoraster",

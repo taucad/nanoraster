@@ -83,7 +83,7 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'timings',
     'views',
   ],
-  RenderImageView: ['id', 'label', 'camera', 'width', 'height', 'format', 'quality'],
+  RenderImageView: ['id', 'visiblePrimitives', 'label', 'camera', 'width', 'height', 'format', 'quality'],
   RenderAmbientOcclusion: ['radiusPixels', 'intensity', 'distanceFalloff'],
   RenderLightingRig: ['lights', 'ambient', 'environment', 'space', 'exposure'],
   RenderLight: ['direction', 'color'],
@@ -262,8 +262,8 @@ describe('static agent documentation', () => {
     }
 
     const apiHtml = resolve(output, 'docs/api.html');
-    // The public AO property table raises the generated page to 830,205 bytes.
-    expect(statSync(apiHtml).size).toBeLessThan(835_000);
+    // Public AO and per-view selection fields bring the generated page to 835,243 bytes.
+    expect(statSync(apiHtml).size).toBeLessThan(836_000);
 
     const optionsHtml = readFileSync(apiHtml, 'utf8');
     expect(optionsHtml).toContain('aria-label="RenderImageOptions properties"');

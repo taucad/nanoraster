@@ -297,6 +297,12 @@ export type RenderImageOptions = RenderImageSharedOptions & RenderCameraOptions;
 export type RenderImageView<Id extends string = string> = {
   /** Unique result and filename identity matching `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`. */
   readonly id: Id;
+  /**
+   * Exact source primitive instances to draw and fit for this view. Omit to
+   * inherit the shared selection. An empty array has no fitted bounds and
+   * requires a fixed camera. Per-view selection with sections is unsupported.
+   */
+  readonly visiblePrimitives?: readonly RenderPrimitiveReference[];
   /** Screen-upright caller-authored text rendered verbatim. Its presence draws this view's label. */
   readonly label?: string;
   /** Camera framing. Omit it for the default fitted three-quarter view. */
@@ -490,6 +496,9 @@ type StrictViews<Views extends readonly RenderImageView[]> = Views['length'] ext
   : {
       readonly [Index in keyof Views]: Views[Index] extends RenderImageView
         ? NoExtraKeys<Views[Index], RenderImageView> & {
+            readonly visiblePrimitives?: StrictVisiblePrimitives<
+              Views[Index] extends { readonly visiblePrimitives?: infer Primitives } ? Primitives : never
+            >;
             readonly camera?: StrictCamera<
               Views[Index] extends { readonly camera?: infer Camera } ? Camera : never
             >;
@@ -557,7 +566,16 @@ const pluralKeys = new Set([
   'views',
 ]);
 
-const viewKeys = new Set(['id', 'label', 'camera', 'width', 'height', 'format', 'quality']);
+const viewKeys = new Set([
+  'id',
+  'visiblePrimitives',
+  'label',
+  'camera',
+  'width',
+  'height',
+  'format',
+  'quality',
+]);
 
 const fitCameraKeys = new Set(['framing', 'direction', 'up', 'margin', 'projection']);
 
@@ -1029,21 +1047,23 @@ const validateAo = (ao: unknown): void => {
     assertRange(ao['distanceFalloff'], 'ao.distanceFalloff', [0.01, 1]);
 };
 
-const validatePresentation = (options: CameraCommonOptions): void => {
-  assertOptionalBoolean(options.surfaces, 'surfaces');
-  assertOptionalBoolean(options.lines, 'lines');
-  if (options.visiblePrimitives !== undefined) {
-    if (!isUnknownArray(options.visiblePrimitives)) {
-      throw new TypeError('visiblePrimitives must be an array');
+const validateVisiblePrimitives = (value: unknown, path: string): void => {
+  if (value !== undefined) {
+    if (!isUnknownArray(value)) {
+      throw new TypeError(`${path} must be an array`);
     }
     const seen = new Set<string>();
-    for (const [index, primitive] of options.visiblePrimitives.entries()) {
-      const name = `visiblePrimitives[${index}]`;
+    for (const [index, primitive] of value.entries()) {
+      const name = `${path}[${index}]`;
       if (!isRecord(primitive)) {
         throw new TypeError(`${name} must be an object`);
       }
       assertKnownKeys(primitive, primitiveRefKeys, name);
-      const values = [primitive.nodeIndex, primitive.meshIndex, primitive.primitiveIndex];
+      const values = [
+        primitive['nodeIndex'],
+        primitive['meshIndex'],
+        primitive['primitiveIndex'],
+      ] as number[];
       if (values.some((value) => !Number.isSafeInteger(value) || value < 0)) {
         throw new TypeError(`${name} indices must be non-negative safe integers`);
       }
@@ -1054,6 +1074,12 @@ const validatePresentation = (options: CameraCommonOptions): void => {
       seen.add(identity);
     }
   }
+};
+
+const validatePresentation = (options: CameraCommonOptions): void => {
+  assertOptionalBoolean(options.surfaces, 'surfaces');
+  assertOptionalBoolean(options.lines, 'lines');
+  validateVisiblePrimitives(options.visiblePrimitives, 'visiblePrimitives');
   if (options.sections === undefined) {
     return;
   }
@@ -1241,7 +1267,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     }
     assertNoLegacyCameraKeys(view, `views[${index}]`);
     assertKnownKeys(view, viewKeys, `views[${index}]`);
-    const { id, label, camera, width, height, format, quality } = view;
+    const { id, visiblePrimitives, label, camera, width, height, format, quality } = view;
     if (typeof id !== 'string' || !renderImageViewIdPattern.test(id)) {
       throw new TypeError(`views[${index}].id must match ${viewIdDescription}`);
     }
@@ -1249,6 +1275,12 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
       throw new TypeError(`views contains duplicate id ${JSON.stringify(id)}`);
     }
     ids.add(id);
+    if (visiblePrimitives !== undefined) {
+      if (options.sections !== undefined) {
+        throw new TypeError(`views[${index}]: per-view visiblePrimitives with sections is unsupported`);
+      }
+      validateVisiblePrimitives(visiblePrimitives, `views[${index}].visiblePrimitives`);
+    }
     validateCamera(camera, `views[${index}].camera`);
     if (width !== undefined) {
       assertRange(width, `views[${index}].width`, renderImageDimensionRange);
@@ -1277,6 +1309,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     }
     normalizedViews.push({
       id,
+      visiblePrimitives: visiblePrimitives as RenderImageView['visiblePrimitives'],
       label,
       camera: camera as RenderCamera | undefined,
       width: width as number | undefined,
