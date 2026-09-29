@@ -99,16 +99,20 @@ void renderImages(glb, { format: 'png', views: [{ id: 'selected', visiblePrimiti
 void renderImages(glb, { format: 'png', views: [{ id: 'empty', visiblePrimitives: [] }] });
 void renderImages(glb, {
   format: 'png',
-  views: [{
-    id: 'invalid',
-    visiblePrimitives: [{
-      nodeIndex: 0,
-      meshIndex: 0,
-      primitiveIndex: 0,
-      // @ts-expect-error deep unknown per-view primitive keys are rejected
-      componentId: 'part',
-    }],
-  }],
+  views: [
+    {
+      id: 'invalid',
+      visiblePrimitives: [
+        {
+          nodeIndex: 0,
+          meshIndex: 0,
+          primitiveIndex: 0,
+          // @ts-expect-error deep unknown per-view primitive keys are rejected
+          componentId: 'part',
+        },
+      ],
+    },
+  ],
 });
 expectTypeOf(renderModule.renderImageMaxSections).toEqualTypeOf<number>();
 
