@@ -1,6 +1,6 @@
 {
   "name": "nanoraster",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "Tiny headless WebGPU glTF renderer for deterministic PNG, WebP, JPEG, and raw RGBA output.",
   "keywords": [
     "gltf",
