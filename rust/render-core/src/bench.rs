@@ -194,6 +194,7 @@ pub async fn bench_multi_view(
 ) -> Result<serde_json::Value, RenderError> {
     let view = |id: &str, label: &str, direction: [f32; 3], up: [f32; 3]| RenderView {
         id: id.into(),
+        visible_primitives: None,
         label: Some(label.into()),
         camera: fit_camera(direction, up),
         width: None,

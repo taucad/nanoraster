@@ -632,6 +632,38 @@ describe('image request serialization', () => {
     });
   });
 
+  it('should serialize selected views and reject malformed refs or selected sections', () => {
+    const first = { nodeIndex: 0, meshIndex: 0, primitiveIndex: 0 };
+    const second = { nodeIndex: 1, meshIndex: 1, primitiveIndex: 0 };
+    expect(
+      parse(
+        toImagesRequestJson({
+          format: 'png',
+          visiblePrimitives: [first],
+          views: [
+            { id: 'inherited' },
+            { id: 'other', visiblePrimitives: [second] },
+            { id: 'empty', visiblePrimitives: [] },
+          ],
+        }),
+      )['views'],
+    ).toEqual([
+      { id: 'inherited' },
+      { id: 'other', visiblePrimitives: [second] },
+      { id: 'empty', visiblePrimitives: [] },
+    ]);
+    expect(() =>
+      toImagesRequestJson({ format: 'png', views: [{ id: 'bad', visiblePrimitives: [first, first] }] }),
+    ).toThrow('views[0].visiblePrimitives[1] duplicates an earlier primitive reference');
+    expect(() =>
+      toImagesRequestJson({
+        format: 'png',
+        sections: { planes: [{ point: [0, 0, 0], normal: [1, 0, 0] }] },
+        views: [{ id: 'empty', visiblePrimitives: [] }],
+      }),
+    ).toThrow('views[0]: per-view visiblePrimitives with sections is unsupported');
+  });
+
   it('should reject invalid per-view overrides and timings values by path', () => {
     const cases: readonly (readonly [Record<string, unknown>, string])[] = [
       [{ id: 'front', width: 15 }, 'views[0].width must be between 16 and 4096'],

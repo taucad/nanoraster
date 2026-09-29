@@ -297,6 +297,12 @@ export type RenderImageOptions = RenderImageSharedOptions & RenderCameraOptions;
 export type RenderImageView<Id extends string = string> = {
   /** Unique result and filename identity matching `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`. */
   readonly id: Id;
+  /**
+   * Exact source primitive instances to draw and fit for this view. Omit to
+   * inherit the shared selection. An empty array has no fitted bounds and
+   * requires a fixed camera. Per-view selection with sections is unsupported.
+   */
+  readonly visiblePrimitives?: readonly RenderPrimitiveReference[];
   /** Screen-upright caller-authored text rendered verbatim. Its presence draws this view's label. */
   readonly label?: string;
   /** Camera framing. Omit it for the default fitted three-quarter view. */
@@ -490,6 +496,9 @@ type StrictViews<Views extends readonly RenderImageView[]> = Views['length'] ext
   : {
       readonly [Index in keyof Views]: Views[Index] extends RenderImageView
         ? NoExtraKeys<Views[Index], RenderImageView> & {
+            readonly visiblePrimitives?: StrictVisiblePrimitives<
+              Views[Index] extends { readonly visiblePrimitives?: infer Primitives } ? Primitives : never
+            >;
             readonly camera?: StrictCamera<
               Views[Index] extends { readonly camera?: infer Camera } ? Camera : never
             >;
@@ -557,7 +566,16 @@ const pluralKeys = new Set([
   'views',
 ]);
 
-const viewKeys = new Set(['id', 'label', 'camera', 'width', 'height', 'format', 'quality']);
+const viewKeys = new Set([
+  'id',
+  'visiblePrimitives',
+  'label',
+  'camera',
+  'width',
+  'height',
+  'format',
+  'quality',
+]);
 
 const fitCameraKeys = new Set(['framing', 'direction', 'up', 'margin', 'projection']);
 
@@ -1241,7 +1259,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     }
     assertNoLegacyCameraKeys(view, `views[${index}]`);
     assertKnownKeys(view, viewKeys, `views[${index}]`);
-    const { id, label, camera, width, height, format, quality } = view;
+    const { id, visiblePrimitives, label, camera, width, height, format, quality } = view;
     if (typeof id !== 'string' || !renderImageViewIdPattern.test(id)) {
       throw new TypeError(`views[${index}].id must match ${viewIdDescription}`);
     }
@@ -1249,6 +1267,17 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
       throw new TypeError(`views contains duplicate id ${JSON.stringify(id)}`);
     }
     ids.add(id);
+    if (visiblePrimitives !== undefined) {
+      if (options.sections !== undefined) {
+        throw new TypeError(`views[${index}]: per-view visiblePrimitives with sections is unsupported`);
+      }
+      try {
+        validatePresentation({ visiblePrimitives: visiblePrimitives as readonly RenderPrimitiveReference[] });
+      } catch (error) {
+        if (!(error instanceof TypeError)) throw error;
+        throw new TypeError(`views[${index}].${error.message}`, { cause: error });
+      }
+    }
     validateCamera(camera, `views[${index}].camera`);
     if (width !== undefined) {
       assertRange(width, `views[${index}].width`, renderImageDimensionRange);
@@ -1277,6 +1306,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     }
     normalizedViews.push({
       id,
+      visiblePrimitives: visiblePrimitives as RenderImageView['visiblePrimitives'],
       label,
       camera: camera as RenderCamera | undefined,
       width: width as number | undefined,

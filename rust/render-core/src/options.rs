@@ -269,6 +269,7 @@ pub struct RenderRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RenderImageViewRequest {
     pub id: String,
+    pub visible_primitives: Option<Vec<PrimitiveRefRequest>>,
     pub label: Option<String>,
     pub camera: Option<CameraRequest>,
     pub width: Option<u32>,
@@ -306,6 +307,8 @@ pub struct RenderImagesRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderView {
     pub id: String,
+    /// Per-view source primitive instances; `None` inherits the shared selection.
+    pub visible_primitives: Option<Vec<PrimitiveRef>>,
     pub label: Option<String>,
     pub camera: RenderCamera,
     pub width: Option<u32>,
@@ -474,6 +477,15 @@ impl RenderImagesRequest {
             validate_optional_label(view.label.as_deref(), &format!("views[{index}].label"))?;
             views.push(RenderView {
                 id: view.id.clone(),
+                visible_primitives: view.visible_primitives.as_ref().map(|refs| {
+                    refs.iter()
+                        .map(|r| PrimitiveRef {
+                            node_index: r.node_index,
+                            mesh_index: r.mesh_index,
+                            primitive_index: r.primitive_index,
+                        })
+                        .collect()
+                }),
                 label: view.label.clone(),
                 camera,
                 width: view.width,
