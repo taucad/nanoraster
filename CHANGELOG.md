@@ -1,3 +1,13 @@
+## 0.5.7 (2026-09-29)
+
+### 🩹 Fixes
+
+- Link Tau attribution to the available Tau repository ([77a0553](https://github.com/taucad/nanoraster/commit/77a0553))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.5.6 (2026-09-29)
 
 ### 🩹 Fixes
