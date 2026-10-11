@@ -166,6 +166,12 @@ a parse error. Unknown optional extensions retain the glTF fallback behavior.
 remain authoritative for rendering. Authored line primitives remain the edge
 source; material shading does not replace them with image edge detection.
 
+Every `TRIANGLES` primitive must carry `NORMAL`. glTF lets a client derive
+flat normals when a primitive has none; NanoRaster does not, because only the
+producer knows which edges are creases and which faces are curved, so such a
+primitive fails with a `parse` error that says so. Exporters that omit normals
+unless asked, such as manifold-3d's, need them requested before export.
+
 ### Limits
 
 - Images must be embedded in GLB buffer views. External image URLs, KTX2/Basis

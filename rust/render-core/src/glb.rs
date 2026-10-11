@@ -558,7 +558,7 @@ fn decode_mesh(
             validate_vec3(&accessor, "NORMAL")?;
             validate_gpu_buffer_size(accessor.count(), 12, "NORMAL")?;
         } else if mode == MODE_TRIANGLES {
-            return Err("TRIANGLES primitive missing NORMAL".into());
+            return Err("TRIANGLES primitive missing NORMAL; the producer must author normals".into());
         }
         if let Some(accessor) = primitive.indices()
             && (accessor.dimensions() != Dimensions::Scalar
@@ -2258,7 +2258,7 @@ mod tests {
         missing_normal["meshes"][0]["primitives"][0]["attributes"] = json!({"POSITION": 0});
         assert_eq!(
             parse_glb(&glb(missing_normal, bin.clone())).unwrap_err(),
-            "TRIANGLES primitive missing NORMAL"
+            "TRIANGLES primitive missing NORMAL; the producer must author normals"
         );
 
         let mut invalid_cardinality = base.clone();

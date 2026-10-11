@@ -106,6 +106,10 @@ usually returns no adapter at all.
 **Distinguishing bad GLB from bad options.** Both surface as `parse`: both violate
 the input contract. `message` names which.
 
+**Triangles without normals.** A `TRIANGLES` primitive with no `NORMAL`
+attribute fails as `parse`. glTF permits it, but NanoRaster does not derive
+normals; author them in the exporter, where the crease angle is known.
+
 **A disposed renderer.** Calls on a disposed [`Renderer`](reuse-the-renderer)
 reject with code `gpu` and the message `gpu: renderer disposed`. Unlike other
 GPU-class faults, this one is permanent. Recreate the renderer; do not retry
