@@ -209,11 +209,12 @@ fn build_topology(
                 base
             })
             .collect::<Vec<_>>();
-        let vertex_count = mesh.manifold.as_ref().map_or(fallback_vertex_count, |_| {
-            mesh.primitives
-                .first()
-                .map_or(0, |primitive| primitive.positions.len() / 3)
-        });
+        let vertex_count = mesh
+            .manifold
+            .as_ref()
+            .map_or(fallback_vertex_count, |manifold| {
+                manifold.positions.len() / 3
+            });
         let mut positions = vec![Vec3::ZERO; vertex_count];
         let mut triangles = Vec::new();
         let mut half_edges = Vec::new();
@@ -228,7 +229,7 @@ fn build_topology(
             let (indices, local_positions, vertex_base) = match &mesh.manifold {
                 Some(manifold) => {
                     let range = manifold.primitive_ranges[primitive_slot].clone();
-                    (&manifold.indices[range], &mesh.primitives[0].positions, 0)
+                    (&manifold.indices[range], &manifold.positions, 0)
                 }
                 None => (
                     primitive.indices.as_slice(),

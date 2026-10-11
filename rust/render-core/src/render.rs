@@ -3300,6 +3300,46 @@ mod tests {
     }
 
     #[test]
+    fn synthesised_flat_normals_match_authored_face_normals() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let options = RenderOptions {
+            width: 96,
+            height: 96,
+            lines: false,
+            ..RenderOptions::default()
+        };
+        let mut synthesised = cube_scene();
+        let primitive = &mut synthesised.meshes[0].primitives[0];
+        primitive.normals.clear();
+        glb::flat_shade(primitive).expect("flat shade");
+        // Reference: the same corners with hand-authored axis normals.
+        let mut authored = synthesised.clone();
+        let primitive = &mut authored.meshes[0].primitives[0];
+        primitive.normals = primitive
+            .positions
+            .as_chunks::<9>()
+            .0
+            .iter()
+            .flat_map(|corners| {
+                let axis = (0..3)
+                    .find(|&k| corners[k] == corners[k + 3] && corners[k] == corners[k + 6])
+                    .expect("axis-aligned face");
+                let mut normal = [0.0; 3];
+                normal[axis] = corners[axis];
+                normal.repeat(3)
+            })
+            .collect();
+        let flat = render_test_scene(&mut renderer, synthesised, options.clone());
+        assert_eq!(
+            flat.rgba,
+            render_test_scene(&mut renderer, authored, options.clone()).rgba
+        );
+        let smooth = render_test_scene(&mut renderer, cube_scene(), options);
+        assert_ne!(flat.rgba, smooth.rgba);
+    }
+
+    #[test]
     fn ao_uses_opaque_depth_and_zero_intensity_keeps_baseline_pixels() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");

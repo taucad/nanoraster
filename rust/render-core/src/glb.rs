@@ -44,6 +44,9 @@ pub(crate) struct MeshAsset {
 #[derive(Debug, PartialEq)]
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct ManifoldTopology {
+    /// The indexed render POSITION stream `indices` address; flat shading may
+    /// de-index the draw primitives, so topology keeps its own copy.
+    pub(crate) positions: Vec<f32>,
     pub(crate) indices: Vec<u32>,
     pub(crate) primitive_ranges: Vec<Range<usize>>,
 }
@@ -511,9 +514,38 @@ fn decode_manifold(
         }
     }
     Ok(Some(ManifoldTopology {
+        positions: positions.clone(),
         indices,
         primitive_ranges,
     }))
+}
+
+/// glTF 2.0 gives a TRIANGLES primitive without NORMAL implicit flat normals.
+/// De-index it on the CPU so every corner carries its face normal: plain f32
+/// math keeps pixels byte-identical across backends, which a shader-derivative
+/// normal would not. A zero-area triangle gets +Z instead of NaN.
+pub(crate) fn flat_shade(primitive: &mut Primitive) -> Result<(), String> {
+    validate_gpu_buffer_size(primitive.indices.len(), 12, "POSITION")?;
+    if !primitive.surface_attributes.is_empty() {
+        validate_gpu_buffer_size(primitive.indices.len(), 64, "surface attributes")?;
+    }
+    let corners = std::mem::take(&mut primitive.indices);
+    let source = std::mem::take(&mut primitive.positions);
+    let attributes = std::mem::take(&mut primitive.surface_attributes);
+    let position = |index: u32| &source[index as usize * 3..index as usize * 3 + 3];
+    for triangle in corners.as_chunks::<3>().0 {
+        let [a, b, c] = triangle.map(|index| Vec3::from_slice(position(index)));
+        let normal = (b - a).cross(c - a).normalize_or(Vec3::Z);
+        for &index in triangle {
+            primitive.positions.extend_from_slice(position(index));
+            primitive.normals.extend_from_slice(&normal.to_array());
+            if let Some(attributes) = attributes.get(index as usize) {
+                primitive.surface_attributes.push(*attributes);
+            }
+        }
+    }
+    primitive.indices = (0..corners.len() as u32).collect();
+    Ok(())
 }
 
 fn decode_mesh(
@@ -557,9 +589,11 @@ fn decode_mesh(
         if let Some(accessor) = normal_accessor.clone() {
             validate_vec3(&accessor, "NORMAL")?;
             validate_gpu_buffer_size(accessor.count(), 12, "NORMAL")?;
-        } else if mode == MODE_TRIANGLES {
-            return Err("TRIANGLES primitive missing NORMAL".into());
         }
+        // Without NORMAL, glTF 2.0 says authored TANGENT must be ignored.
+        let tangent_accessor = primitive
+            .get(&Semantic::Tangents)
+            .filter(|_| normal_accessor.is_some() || mode == MODE_LINES);
         if let Some(accessor) = primitive.indices()
             && (accessor.dimensions() != Dimensions::Scalar
                 || !matches!(
@@ -577,12 +611,10 @@ fn decode_mesh(
         } else {
             validate_gpu_buffer_size(index_count, 4, "index")?;
         }
-        let has_surface_attributes = primitive.attributes().any(|(semantic, _)| {
-            matches!(
-                semantic,
-                Semantic::Tangents | Semantic::TexCoords(_) | Semantic::Colors(_)
-            )
-        });
+        let has_surface_attributes = tangent_accessor.is_some()
+            || primitive.attributes().any(|(semantic, _)| {
+                matches!(semantic, Semantic::TexCoords(_) | Semantic::Colors(_))
+            });
         if has_surface_attributes {
             validate_gpu_buffer_size(position_accessor.count(), 64, "surface attributes")?;
         }
@@ -624,7 +656,7 @@ fn decode_mesh(
         for attributes in &mut surface_attributes {
             attributes[12..].fill(1.0);
         }
-        if let Some(accessor) = primitive.get(&Semantic::Tangents) {
+        if let Some(accessor) = tangent_accessor.clone() {
             if accessor.data_type() != DataType::F32
                 || accessor.dimensions() != Dimensions::Vec4
                 || accessor.count() != vertex_count
@@ -707,7 +739,7 @@ fn decode_mesh(
             }
         }
         if material.anisotropy[0] > 0.0
-            && primitive.get(&Semantic::Tangents).is_none()
+            && tangent_accessor.is_none()
             && !material.textures[2].present()
         {
             return Err("anisotropy requires TANGENT or a normal texture".into());
@@ -761,6 +793,12 @@ fn decode_mesh(
     } else {
         (None, None)
     };
+    // After topology decoding, which needs the indexed POSITION stream.
+    for primitive in &mut primitives {
+        if primitive.mode == MODE_TRIANGLES && primitive.normals.is_empty() {
+            flat_shade(primitive)?;
+        }
+    }
     Ok((
         MeshAsset {
             source_index,
@@ -2247,6 +2285,106 @@ mod tests {
         }
     }
 
+    /// The manifold cube with NORMAL removed, optionally carrying COLOR_0 and
+    /// a TANGENT that glTF 2.0 says must then be ignored.
+    fn normalless_cube(colored: bool) -> Vec<u8> {
+        let source = manifold_cube_fixture(false);
+        let parsed = gltf::binary::Glb::from_slice(&source).expect("fixture");
+        let mut json: Value = serde_json::from_slice(&parsed.json).expect("json");
+        let mut bin = parsed.bin.expect("bin").into_owned();
+        let mut attributes = json!({"POSITION": 0});
+        if colored {
+            let colors: Vec<[f32; 4]> = (0..8).map(|i| [i as f32 / 7.0, 0.5, 0.25, 1.0]).collect();
+            let tangents = [[1.0f32, 0.0, 0.0, 1.0]; 8];
+            for (name, bytes) in [
+                ("COLOR_0", bytemuck::cast_slice::<_, u8>(&colors)),
+                ("TANGENT", bytemuck::cast_slice(&tangents)),
+            ] {
+                let view = append(&mut bin, bytes);
+                let views = json["bufferViews"].as_array_mut().expect("views");
+                views.push(json!({"buffer": 0, "byteOffset": view.0, "byteLength": view.1}));
+                let view = views.len() - 1;
+                let accessors = json["accessors"].as_array_mut().expect("accessors");
+                accessors.push(
+                    json!({"bufferView": view, "componentType": 5126, "count": 8, "type": "VEC4"}),
+                );
+                attributes[name] = json!(accessors.len() - 1);
+            }
+            json["buffers"][0]["byteLength"] = json!(bin.len());
+        }
+        json["meshes"][0]["primitives"][0]["attributes"] = attributes;
+        glb(json, bin)
+    }
+
+    #[test]
+    fn missing_normal_synthesises_flat_faces_and_keeps_manifold_topology() {
+        let scene = parse_glb_for_sections(&normalless_cube(false)).expect("flat cube");
+        let mesh = &scene.meshes[0];
+        let primitive = &mesh.primitives[0];
+        assert_eq!(primitive.indices, (0..36).collect::<Vec<_>>());
+        assert_eq!(primitive.positions.len(), 36 * 3);
+        for (corners, normals) in primitive
+            .positions
+            .as_chunks::<9>()
+            .0
+            .iter()
+            .zip(primitive.normals.as_chunks::<9>().0)
+        {
+            // Each cube face lies on the plane its axis normal points along.
+            let normal = Vec3::from_slice(&normals[..3]);
+            assert_eq!(normals[..3], normals[3..6]);
+            assert_eq!(normals[..3], normals[6..]);
+            assert_eq!(normal.abs().max_element(), 1.0);
+            for corner in corners.as_chunks::<3>().0 {
+                assert_eq!(Vec3::from_slice(corner).dot(normal), 1.0);
+            }
+        }
+        let manifold = mesh.manifold.as_ref().expect("EXT_mesh_manifold");
+        assert_eq!(manifold.positions, CUBE_POSITIONS.as_flattened());
+        assert_eq!(manifold.indices, CUBE_INDICES);
+
+        let options = RenderOptions {
+            sections: Some(crate::Sections {
+                planes: vec![crate::SectionPlane {
+                    point: [0.0; 3],
+                    normal: [1.0, 0.0, 0.0],
+                }],
+                clip_surfaces: true,
+                clip_lines: true,
+            }),
+            ..RenderOptions::default()
+        };
+        let caps = crate::section::build(&scene, &options).expect("section caps");
+        assert!(!caps.indices.is_empty());
+    }
+
+    #[test]
+    fn missing_normal_carries_color_drops_tangent_and_survives_degenerate_triangles() {
+        let scene = parse_glb(&normalless_cube(true)).expect("colored flat cube");
+        let primitive = &scene.meshes[0].primitives[0];
+        assert_eq!(primitive.surface_attributes.len(), 36);
+        for (corner, attributes) in CUBE_INDICES.iter().zip(&primitive.surface_attributes) {
+            assert_eq!(
+                attributes[..4],
+                [0.0; 4],
+                "TANGENT is ignored without NORMAL"
+            );
+            assert_eq!(attributes[12..], [*corner as f32 / 7.0, 0.5, 0.25, 1.0]);
+        }
+
+        let mut collapsed = Primitive {
+            source_index: 0,
+            mode: MODE_TRIANGLES,
+            positions: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            normals: Vec::new(),
+            surface_attributes: Vec::new(),
+            indices: vec![0, 1, 1],
+            material: Material::default(),
+        };
+        flat_shade(&mut collapsed).expect("degenerate triangle");
+        assert_eq!(collapsed.normals, [0.0, 0.0, 1.0].repeat(3));
+    }
+
     #[test]
     fn unsupported_geometry_and_material_semantics_fail_deterministically() {
         let source = fixture(Layout::Packed, 5125, true);
@@ -2256,9 +2394,10 @@ mod tests {
 
         let mut missing_normal = base.clone();
         missing_normal["meshes"][0]["primitives"][0]["attributes"] = json!({"POSITION": 0});
+        let flat = parse_glb(&glb(missing_normal, bin.clone())).expect("implicit flat normals");
         assert_eq!(
-            parse_glb(&glb(missing_normal, bin.clone())).unwrap_err(),
-            "TRIANGLES primitive missing NORMAL"
+            flat.meshes[0].primitives[0].normals,
+            [0.0, 0.0, 1.0].repeat(3)
         );
 
         let mut invalid_cardinality = base.clone();
