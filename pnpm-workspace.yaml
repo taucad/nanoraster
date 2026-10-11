@@ -10,8 +10,13 @@ allowBuilds:
 linkWorkspacePackages: true
 
 overrides:
-  'brace-expansion@>=5.0.0 <5.0.9': 5.0.9
+  'axios@>=1.13.0 <1.20.0': 1.20.0
+  'brace-expansion@<1.1.20': 1.1.20
+  'brace-expansion@>=4.0.0 <5.0.11': 5.0.11
   'js-yaml@>=4.0.0 <4.3.2': 4.3.2
   'minimatch@>=10.0.0 <10.2.3': 10.2.3
   'picomatch@>=4.0.0 <4.0.4': 4.0.4
+  'sharp@<0.35.5': 0.35.5
   'smol-toml@<=1.7.0': 1.7.1
+  'source-map-js@>=1.0.0 <1.2.2': 1.2.2
+  'tinypool@<2.1.2': 2.1.2
