@@ -24,7 +24,7 @@ try {
 ### 2. Split transient faults from input faults
 
 `isGpuFault` is true for the three codes that describe the device rather than
-the request. Those are the only codes worth a retry.
+the request, the only codes worth a retry.
 
 ```typescript
 try {
@@ -57,12 +57,9 @@ const renderWithRetry = async (glb: Uint8Array<ArrayBuffer>, attempts = 3): Prom
 };
 ```
 
-A retry loop on a `parse` failure never ends, so the guard checks the class
-before the attempt count.
+The class check comes first: retrying a `parse` failure never ends.
 
 ### 4. Keep the last good image
-
-A transient GPU fault should not blank the last good image.
 
 ```typescript
 let lastGood: RenderedImageFile | undefined;
@@ -105,6 +102,9 @@ usually returns no adapter at all.
 
 **Distinguishing bad GLB from bad options.** Both surface as `parse`: both violate
 the input contract. `message` names which.
+
+**Triangles without `NORMAL`.** These render with glTF's implicit flat normals,
+ignoring `TANGENT`; author normals for smooth curves.
 
 **A disposed renderer.** Calls on a disposed [`Renderer`](reuse-the-renderer)
 reject with code `gpu` and the message `gpu: renderer disposed`. Unlike other

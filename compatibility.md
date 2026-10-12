@@ -162,6 +162,12 @@ Anisotropy requires a tangent frame or a normal map with suitable UVs.
 semantics. Unknown required extensions and malformed material data fail with
 a parse error. Unknown optional extensions retain the glTF fallback behavior.
 
+A `TRIANGLES` primitive without `NORMAL` renders with the flat normals glTF
+2.0 defines for it, and its `TANGENT` is ignored. Parsing de-indexes the
+primitive on the CPU and gives each triangle its face normal; a shader
+derivative would differ between GPU backends. Author normals for smooth
+curved surfaces.
+
 `EXT_mesh_manifold` supplies exact section topology while base primitives
 remain authoritative for rendering. Authored line primitives remain the edge
 source; material shading does not replace them with image edge detection.

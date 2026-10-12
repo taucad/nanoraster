@@ -173,7 +173,11 @@ const sizes = {
 // Per-view primitive selection: 2,349,299 / 1,098,682 / 918,071 on the same
 // toolchain. +1,061 raw bytes carry the per-view reference list through
 // request resolution and validation; compressed sizes stay within allowance.
-const ceilings = { raw: 2_349_299, gzip9: 1_102_663, brotli11: 916_737 };
+// Implicit flat normals: 2,352,093 / 1,106,832 / 918,865 on Rust 1.98.0 and
+// Node 24.10.0, against 2,349,299 for main rebuilt on the same host. +2,794
+// raw bytes de-index TRIANGLES primitives without NORMAL, synthesise face
+// normals, and keep the indexed POSITION copy that manifold sections slice.
+const ceilings = { raw: 2_352_093, gzip9: 1_102_663, brotli11: 916_737 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
