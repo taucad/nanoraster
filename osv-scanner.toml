@@ -4,3 +4,8 @@
 id = "RUSTSEC-2026-0192"
 reason = "ttf-parser only parses the repository-pinned Geist font at build time; review when fontdue replaces it"
 ignoreUntil = 2027-02-15T00:00:00Z
+
+[[IgnoredVulns]]
+id = "GHSA-238p-pmpm-9mq7"
+reason = "katex only reaches the static docs site through mermaid, whose ^0.16 range excludes the 0.18 fix; drop once mermaid allows it"
+ignoreUntil = 2027-01-15T00:00:00Z
