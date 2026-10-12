@@ -1,3 +1,17 @@
+## 0.6.0 (2026-10-12)
+
+### 🚀 Features
+
+- Render triangle primitives without NORMAL with glTF's implicit flat normals instead of rejecting them ([#109](https://github.com/taucad/nanoraster/pull/109), [#108](https://github.com/taucad/nanoraster/issues/108))
+
+### 🩹 Fixes
+
+- Clear the high and critical npm audit advisories in development and docs dependencies ([#107](https://github.com/taucad/nanoraster/pull/107))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.5.7 (2026-09-29)
 
 ### 🩹 Fixes
