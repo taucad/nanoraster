@@ -1,0 +1,4 @@
+self-hosted-runner:
+  # The local-mac-trusted runner group serves only local-macos.yml on main.
+  labels:
+    - local-mac
