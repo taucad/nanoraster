@@ -177,7 +177,11 @@ const sizes = {
 // Node 24.10.0, against 2,349,299 for main rebuilt on the same host. +2,794
 // raw bytes de-index TRIANGLES primitives without NORMAL, synthesise face
 // normals, and keep the indexed POSITION copy that manifold sections slice.
-const ceilings = { raw: 2_352_093, gzip9: 1_102_663, brotli11: 916_737 };
+// Specular color conformance: 2,352,097 / 1,099,321 / 918,546 on Rust1.98.0,
+// Binaryen132 and Node26.8.1; same-host main is 2,352,093 / 1,099,304 / 918,865.
+// The four raw bytes admit the finite-f32 upper bound for specular color;
+// shaders and compressed allowances are unchanged.
+const ceilings = { raw: 2_352_097, gzip9: 1_102_663, brotli11: 916_737 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
