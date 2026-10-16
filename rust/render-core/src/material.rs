@@ -201,12 +201,13 @@ impl Material {
         result.misc[0] = number(&raw["normalTexture"], "scale", 1.0, -f32::MAX, f32::MAX)?;
         result.misc[1] = number(&raw["occlusionTexture"], "strength", 1.0, 0.0, 1.0)?;
         let e = &extensions["KHR_materials_specular"];
+        // KHR_materials_specular permits values above one; shading clamps IOR-derived F0.
         result.specular[..3].copy_from_slice(&vector(
             e,
             "specularColorFactor",
             [1.0; 3],
             0.0,
-            1.0,
+            f32::MAX,
         )?);
         result.specular[3] = number(e, "specularFactor", 1.0, 0.0, 1.0)?;
         result.transmission[0] = number(
