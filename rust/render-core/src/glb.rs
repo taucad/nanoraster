@@ -2071,6 +2071,22 @@ mod tests {
     }
 
     #[test]
+    fn material_admission_preserves_specular_color_above_one() {
+        for color in [[0.952, 0.979, 1.021], [1.0, 2.0, 3.0]] {
+            let (json, bin) = physical_fixture(
+                json!({"extensions":{"KHR_materials_specular":{"specularColorFactor":color}}}),
+                None,
+            );
+            let scene =
+                parse_glb(&glb(json, bin)).expect("KHR specular color has no unit upper bound");
+            assert_eq!(
+                scene.meshes[0].primitives[0].material.specular,
+                [color[0] as f32, color[1] as f32, color[2] as f32, 1.0]
+            );
+        }
+    }
+
+    #[test]
     fn physical_materials_fail_closed_on_invalid_factors_or_missing_attributes() {
         for material in [
             json!({"extensions":{"KHR_materials_ior":{"ior":0.5}}}),
@@ -2079,7 +2095,9 @@ mod tests {
             json!({"extensions":{"KHR_materials_clearcoat":{"clearcoatFactor":-0.1}}}),
             json!({"extensions":{"KHR_materials_iridescence":{"iridescenceThicknessMinimum":500}}}),
             json!({"extensions":{"KHR_materials_unlit":{},"KHR_materials_anisotropy":{}}}),
-            json!({"extensions":{"KHR_materials_specular":{"specularColorFactor":[1,2,3]}}}),
+            json!({"extensions":{"KHR_materials_specular":{"specularColorFactor":[1,-0.1,3]}}}),
+            json!({"extensions":{"KHR_materials_specular":{"specularColorFactor":[1,2]}}}),
+            json!({"extensions":{"KHR_materials_specular":{"specularFactor":1.021}}}),
             json!({"extensions":{"KHR_materials_transmission":{"transmissionFactor":"yes"}}}),
             json!({"extensions":{"KHR_materials_clearcoat":[]}}),
             json!({"extensions":{"KHR_materials_emissive_strength":{"emissiveStrength":1e100}}}),

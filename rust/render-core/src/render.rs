@@ -3663,6 +3663,37 @@ mod tests {
     }
 
     #[test]
+    fn specular_color_above_one_clamps_f0_in_the_shader() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let mut render = |factor| {
+            render_test_scene(
+                &mut renderer,
+                physical_sphere(Material {
+                    base_color: [0.55, 0.25, 0.12, 1.0],
+                    metallic: 0.0,
+                    roughness: 0.35,
+                    specular: [factor, factor, factor, 1.0],
+                    ..Material::default()
+                }),
+                physical_options(),
+            )
+        };
+        let unit = render(1.0);
+        let high = render(100.0);
+        let higher = render(200.0);
+        assert_ne!(
+            unit.rgba, high.rgba,
+            "factor must not be clamped before shading"
+        );
+        assert_eq!(
+            high.rgba, higher.rgba,
+            "IOR-derived F0 must saturate at one"
+        );
+        renderer.take_uncaptured().expect("no uncaptured GPU error");
+    }
+
+    #[test]
     fn large_emission_stays_finite_through_hdr_and_display() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
