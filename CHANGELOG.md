@@ -1,3 +1,14 @@
+## 0.6.1 (2026-10-17)
+
+### 🩹 Fixes
+
+- Clear the moderate and low OSV advisories in development and docs dependencies ([#112](https://github.com/taucad/nanoraster/pull/112))
+- Accept nonnegative KHR_materials_specular color factors above one, preserving native brass materials and the shader's energy-conserving Fresnel clamp. ([#116](https://github.com/taucad/nanoraster/pull/116))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.6.0 (2026-10-12)
 
 ### 🚀 Features
