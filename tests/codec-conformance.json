@@ -154,7 +154,7 @@
   },
   "sections": {
     "closed": {
-      "fnv": "2de6b64f235c1d06",
+      "fnv": "11d09fb896bc3af2",
       "sources": [
         {
           "certified": true,
@@ -174,7 +174,7 @@
       ]
     },
     "pinched": {
-      "fnv": "dc6d2767de9bc5bb",
+      "fnv": "d4611379bf44e57b",
       "sources": [
         {
           "certified": false,

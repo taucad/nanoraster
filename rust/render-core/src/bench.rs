@@ -171,12 +171,14 @@ fn section_fingerprints() -> Result<serde_json::Value, RenderError> {
         ("pinched", surface_scene(pinched_positions, pinched)),
     ] {
         let geometry = crate::section::build(&scene, &options)?;
+        // Cap positions and plane coordinates, not the hatch colours: those
+        // pass through the host's `powf`, which differs between platform
+        // math libraries and is outside the section geometry being gated.
         let mut bytes = Vec::new();
-        for floats in [
-            &geometry.vertices,
-            &geometry.boundaries,
-            &geometry.open_chains,
-        ] {
+        for vertex in geometry.vertices.as_chunks::<15>().0 {
+            bytes.extend(vertex[..5].iter().flat_map(|value| value.to_le_bytes()));
+        }
+        for floats in [&geometry.boundaries, &geometry.open_chains] {
             bytes.extend(floats.iter().flat_map(|value| value.to_le_bytes()));
         }
         bytes.extend(

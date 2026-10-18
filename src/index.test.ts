@@ -243,7 +243,17 @@ describe('renderImages', () => {
         sceneUploads: 1,
         targetAllocations: 0,
         views: [{ id: 'front', render: 1, overlay: 0, encode: 3 }],
-        sections: [{ plane: 0, nodeIndex: 0, meshIndex: 0, primitiveIndex: 0, certified: false, closedLoops: 20, openChains: 1 }],
+        sections: [
+          {
+            plane: 0,
+            nodeIndex: 0,
+            meshIndex: 0,
+            primitiveIndex: 0,
+            certified: false,
+            closedLoops: 20,
+            openChains: 1,
+          },
+        ],
       }),
     });
 
@@ -266,7 +276,17 @@ describe('renderImages', () => {
       sceneUploads: 1,
       targetAllocations: 0,
       views: [{ id: 'front', render: 1, overlay: 0, encode: 3 }],
-      sections: [{ plane: 0, nodeIndex: 0, meshIndex: 0, primitiveIndex: 0, certified: false, closedLoops: 20, openChains: 1 }],
+      sections: [
+        {
+          plane: 0,
+          nodeIndex: 0,
+          meshIndex: 0,
+          primitiveIndex: 0,
+          certified: false,
+          closedLoops: 20,
+          openChains: 1,
+        },
+      ],
     });
     expect(results[0].file.name).toBe('render-front.png');
   });
@@ -285,7 +305,17 @@ describe('renderImages', () => {
       sceneUploads: 1,
       targetAllocations: 0,
       views: [{ id: 'front', render: 1, overlay: 0, encode: 3 }],
-      sections: [{ plane: 0, nodeIndex: 0, meshIndex: 0, primitiveIndex: 0, certified: false, closedLoops: 20, openChains: 1 }],
+      sections: [
+        {
+          plane: 0,
+          nodeIndex: 0,
+          meshIndex: 0,
+          primitiveIndex: 0,
+          certified: false,
+          closedLoops: 20,
+          openChains: 1,
+        },
+      ],
     };
     for (const timings of [
       'not json',

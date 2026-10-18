@@ -4,19 +4,21 @@
 
 The package has no compatibility commitments before its first stable release.
 
-- Sections no longer fail on topology. Open seams, sliver or
-  index-collapsed triangles, non-manifold or inconsistently oriented edges,
-  non-manifold vertex links, ambiguous shell ownership and multi-shell work
-  ceilings used to return a `sections: topology:` or `sections: cap:` `parse`
-  error. Such a source now renders: its closed cut loops are filled and its
-  open chains are stroked in `#DD003F`.
+- Sections no longer fail on topology. A source with an open seam, a sliver or
+  index-collapsed triangle, a non-manifold or inconsistently oriented edge, a
+  non-manifold vertex link, ambiguous shell ownership or a multi-shell work
+  ceiling renders instead of returning a `sections: topology:` or
+  `sections: cap:` `parse` error. Its closed cut loops are filled and its open
+  chains are stroked in `#DD003F`.
 - Only an incomplete index list, an index past the vertex data, a non-finite
   position and a coordinate beyond the fixed-point range still fail. A plane
   with more overlapping cap regions than the pair ceiling is capped without
   overlap stripes, and a true cut ring smaller than the fixed-point quantum is
-  dropped. Callers that detected open meshes by the error read
-  `timings.sections` instead: `certified: false` or a non-zero `openChains`
-  marks them.
+  dropped. `timings.sections` replaces the error as the signal:
+  `certified: false` says a source was sliced directly rather than capped
+  exactly, and `openChains` counts its cut chains that did not close. Neither
+  alone proves the mesh is open; a closed but pinched solid is uncertified
+  with no open chains.
 - `RenderTimings` gains a required `sections` array of
   `RenderSectionSourceTimings` (`plane`, `nodeIndex`, `meshIndex`,
   `primitiveIndex`, `certified`, `closedLoops`, `openChains`). It is empty

@@ -273,8 +273,9 @@ describe('static agent documentation', () => {
     }
 
     const apiHtml = resolve(output, 'docs/api.html');
-    // Public AO and per-view selection fields bring the generated page to 835,243 bytes.
-    expect(statSync(apiHtml).size).toBeLessThan(836_000);
+    // Public AO and per-view selection fields bring the generated page to 835,243 bytes;
+    // the per-source section timings table brings it to 855,064.
+    expect(statSync(apiHtml).size).toBeLessThan(856_000);
 
     const optionsHtml = readFileSync(apiHtml, 'utf8');
     expect(optionsHtml).toContain('aria-label="RenderImageOptions properties"');

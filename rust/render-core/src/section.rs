@@ -1077,8 +1077,34 @@ struct GroupCut {
     outlines: Vec<Segment>,
     /// Open or branched chains, stroked in the open-chain colour.
     open_chains: Vec<Segment>,
-    closed_loops: usize,
-    open_chain_count: usize,
+    /// `(source, closed loops, open chains)`, each loop and chain counted
+    /// under the source that contributes most of its length.
+    counts: Vec<(PrimitiveRef, usize, usize)>,
+}
+
+impl GroupCut {
+    fn count(
+        &mut self,
+        segments: impl Iterator<Item = Segment>,
+        contributions: &SegmentContributions,
+        fallback: PrimitiveRef,
+        closed: bool,
+    ) {
+        let source = dominant(segments, contributions).map_or(fallback, |(source, _)| source);
+        let index = self
+            .counts
+            .iter()
+            .position(|entry| entry.0 == source)
+            .unwrap_or_else(|| {
+                self.counts.push((source, 0, 0));
+                self.counts.len() - 1
+            });
+        if closed {
+            self.counts[index].1 += 1;
+        } else {
+            self.counts[index].2 += 1;
+        }
+    }
 }
 
 fn build_plane(
@@ -1109,8 +1135,7 @@ fn build_plane(
             Some(cut) => cut,
             None => loose_cut(group, basis, normal, plane_index)?,
         };
-        if cut.closed_loops + cut.open_chain_count > 0 {
-            let source = group.triangles[0].source;
+        for &(source, closed_loops, open_chains) in &cut.counts {
             let report =
                 reports
                     .entry((source_key(source), certified))
@@ -1121,8 +1146,8 @@ fn build_plane(
                         closed_loops: 0,
                         open_chains: 0,
                     });
-            report.closed_loops += cut.closed_loops;
-            report.open_chains += cut.open_chain_count;
+            report.closed_loops += closed_loops;
+            report.open_chains += open_chains;
         }
         open_boundaries.extend(cut.outlines);
         open_chains.extend(cut.open_chains);
@@ -1289,7 +1314,14 @@ fn exact_cut(
             .flat_map(contour_segments),
     );
     cut.outlines.extend(open.into_iter().filter(in_plane_only));
-    cut.closed_loops = rings.len();
+    for ring in &rings {
+        cut.count(
+            contour_segments(ring),
+            &segments,
+            group.triangles[0].source,
+            true,
+        );
+    }
     cut.regions = fill_regions(group.owner, &rings, &segments, fallback_color);
     Ok(cut)
 }
@@ -1309,8 +1341,13 @@ fn loose_cut(
     }
     let graph = segments.iter().map(|entry| entry.0).collect::<Vec<_>>();
     let loops = cut_loops(&graph, plane_index, group.triangles[0].source)?;
-    cut.closed_loops = loops.rings.len();
-    cut.open_chain_count = loops.chains;
+    let fallback = group.triangles[0].source;
+    for ring in &loops.rings {
+        cut.count(contour_segments(ring), &segments, fallback, true);
+    }
+    for chain in &loops.chains {
+        cut.count(chain.iter().copied(), &segments, fallback, false);
+    }
     cut.open_chains = loops.open;
     if !loops.rings.is_empty() {
         // One owner, so one region: the even-odd fill of every loop, coloured
@@ -1440,8 +1477,8 @@ fn crossing(left: (Vec3, f32), right: (Vec3, f32)) -> Vec3 {
 struct CutLoops {
     rings: Vec<IntContour<i64>>,
     open: Vec<Segment>,
-    /// Connected components of `open`.
-    chains: usize,
+    /// Connected components of `open`, in order of their lowest point.
+    chains: Vec<Vec<Segment>>,
 }
 
 /// Split a welded cut graph into closed loops and open chains. Dangling
@@ -1516,13 +1553,20 @@ fn cut_loops(
             points.binary_search(&b).expect("chain point"),
         );
     }
-    let chain_count = (0..points.len())
-        .filter(|&index| chains.find(index) == index)
-        .count();
+    let mut chain_of = vec![usize::MAX; points.len()];
+    let mut grouped = Vec::<Vec<Segment>>::new();
+    for &segment in &open {
+        let root = chains.find(points.binary_search(&segment.0).expect("chain point"));
+        if chain_of[root] == usize::MAX {
+            chain_of[root] = grouped.len();
+            grouped.push(Vec::new());
+        }
+        grouped[chain_of[root]].push(segment);
+    }
     Ok(CutLoops {
         rings,
         open,
-        chains: chain_count,
+        chains: grouped,
     })
 }
 
@@ -1835,8 +1879,17 @@ fn half_open_hit(
 }
 
 fn dominant_color(shape: &[IntContour<i64>], segments: &SegmentContributions) -> Option<[f32; 4]> {
-    let mut totals = Vec::<((usize, usize, usize), [f32; 4], f64)>::new();
-    for segment in shape.iter().flat_map(contour_segments) {
+    dominant(shape.iter().flat_map(contour_segments), segments).map(|(_, color)| color)
+}
+
+/// The source, with its colour, that contributes the most cut length to
+/// `cut`; ties go to the lowest source.
+fn dominant(
+    cut: impl Iterator<Item = Segment>,
+    segments: &SegmentContributions,
+) -> Option<(PrimitiveRef, [f32; 4])> {
+    let mut totals = Vec::<(PrimitiveRef, [f32; 4], f64)>::new();
+    for segment in cut {
         let Some(index) = segments
             .binary_search_by_key(&segment, |entry| entry.0)
             .ok()
@@ -1844,11 +1897,17 @@ fn dominant_color(shape: &[IntContour<i64>], segments: &SegmentContributions) ->
             continue;
         };
         for contribution in &segments[index].1 {
-            let key = source_key(contribution.source);
-            if let Some(entry) = totals.iter_mut().find(|entry| entry.0 == key) {
+            if let Some(entry) = totals
+                .iter_mut()
+                .find(|entry| entry.0 == contribution.source)
+            {
                 entry.2 += contribution.length;
             } else {
-                totals.push((key, contribution.base_color, contribution.length));
+                totals.push((
+                    contribution.source,
+                    contribution.base_color,
+                    contribution.length,
+                ));
             }
         }
     }
@@ -1857,9 +1916,9 @@ fn dominant_color(shape: &[IntContour<i64>], segments: &SegmentContributions) ->
         .max_by(|left, right| {
             left.2
                 .total_cmp(&right.2)
-                .then_with(|| right.0.cmp(&left.0))
+                .then_with(|| source_key(right.0).cmp(&source_key(left.0)))
         })
-        .map(|(_, color, _)| color)
+        .map(|(source, color, _)| (source, color))
 }
 
 /// Closed degree-two components become rings; a branched component yields its
@@ -2682,7 +2741,7 @@ mod tests {
                 ((50, 50), (60, 50))
             ]
         );
-        assert_eq!(loops.chains, 2);
+        assert_eq!(loops.chains.len(), 2);
 
         // A chord splits the square into two faces, both filled, none open.
         let mut theta = square.to_vec();
@@ -2691,7 +2750,7 @@ mod tests {
         let loops = cut_loops(&theta, 0, TEST_SOURCE).expect("theta");
         assert_eq!(loops.rings.len(), 2);
         assert!(loops.open.is_empty());
-        assert_eq!(loops.chains, 0);
+        assert_eq!(loops.chains.len(), 0);
 
         // Two squares joined by a bridge: both fill, the bridge stays open.
         let mut dumbbell = square.to_vec();
@@ -2706,7 +2765,7 @@ mod tests {
         let loops = cut_loops(&dumbbell, 0, TEST_SOURCE).expect("dumbbell");
         assert_eq!(loops.rings.len(), 2);
         assert_eq!(loops.open, vec![((10, 0), (20, 0))]);
-        assert_eq!(loops.chains, 1);
+        assert_eq!(loops.chains.len(), 1);
     }
 
     #[test]
@@ -2766,6 +2825,34 @@ mod tests {
                 open_chains: 1,
             }]
         );
+    }
+
+    #[test]
+    fn primitives_sliced_together_report_their_own_loops_and_chains() {
+        // Two open triangles in one instance fail admission alone and are
+        // sliced together; each chain is reported under its own primitive.
+        let mut scene = triangle_scene(
+            vec![-1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+            vec![0, 1, 2],
+        );
+        let mut second = triangle_primitive(
+            vec![-1.0, 3.0, 0.0, 1.0, 3.0, 0.0, 1.0, 4.0, 0.0],
+            vec![0, 1, 2],
+        );
+        second.source_index = 1;
+        scene.meshes[0].primitives.push(second);
+        let geometry = build(&scene, &section_options()).expect("two open primitives");
+        let report = |primitive_index| SectionSourceReport {
+            plane: 0,
+            source: PrimitiveRef {
+                primitive_index,
+                ..TEST_SOURCE
+            },
+            certified: false,
+            closed_loops: 0,
+            open_chains: 1,
+        };
+        assert_eq!(geometry.sources, vec![report(0), report(1)]);
     }
 
     #[test]
