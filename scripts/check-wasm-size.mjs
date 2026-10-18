@@ -181,7 +181,15 @@ const sizes = {
 // Binaryen132 and Node26.8.1; same-host main is 2,352,093 / 1,099,304 / 918,865.
 // The four raw bytes admit the finite-f32 upper bound for specular color;
 // shaders and compressed allowances are unchanged.
-const ceilings = { raw: 2_352_097, gzip9: 1_102_663, brotli11: 916_737 };
+// Never-refused section caps: 2,399,074 / 1,127,642 / 932,631 on Rust 1.98.0,
+// Binaryen 132 and Node 24.20.0, against 2,351,372 / 1,106,786 / 919,499 for
+// main rebuilt on the same host (+47,702 raw). The bytes are the direct
+// triangle slice and loop/chain split for uncertified sources, the open-chain
+// stroke and per-source section timings, and the linear-time admission
+// (counting-sorted half-edges, flat vertex-link tables, bucketed component
+// edges, a swept overlap broad phase). Each ceiling adds main's measured
+// host-to-ceiling offset to the branch figure.
+const ceilings = { raw: 2_399_799, gzip9: 1_123_519, brotli11: 929_869 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.

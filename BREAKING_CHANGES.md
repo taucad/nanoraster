@@ -4,6 +4,25 @@
 
 The package has no compatibility commitments before its first stable release.
 
+- Sections no longer fail on topology. Open seams, sliver or
+  index-collapsed triangles, non-manifold or inconsistently oriented edges,
+  non-manifold vertex links, ambiguous shell ownership and multi-shell work
+  ceilings used to return a `sections: topology:` or `sections: cap:` `parse`
+  error. Such a source now renders: its closed cut loops are filled and its
+  open chains are stroked in `#DD003F`.
+- Only an incomplete index list, an index past the vertex data, a non-finite
+  position and a coordinate beyond the fixed-point range still fail. A plane
+  with more overlapping cap regions than the pair ceiling is capped without
+  overlap stripes, and a true cut ring smaller than the fixed-point quantum is
+  dropped. Callers that detected open meshes by the error read
+  `timings.sections` instead: `certified: false` or a non-zero `openChains`
+  marks them.
+- `RenderTimings` gains a required `sections` array of
+  `RenderSectionSourceTimings` (`plane`, `nodeIndex`, `meshIndex`,
+  `primitiveIndex`, `certified`, `closedLoops`, `openChains`). It is empty
+  without sections. Exact snapshots of timings and consumers enumerating its
+  keys must add it.
+
 - Top-level `phi`, `theta`, `up`, `projection`, and `margin` are replaced by a
   tagged `camera`. Fitted cameras use Cartesian `direction` and `up`; fixed
   cameras use `position`, `target`, and `up` with field of view or orthographic

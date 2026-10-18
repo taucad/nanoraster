@@ -580,6 +580,20 @@ order.
 
 <auto-type-table path="./props.ts" name="RenderViewTimings" caption="RenderViewTimings properties" />
 
+### `RenderSectionSourceTimings`
+
+How one plane capped one source primitive it cuts, in
+[`RenderTimings`](#rendertimings) `sections`. `certified` is `false` when the
+source was sliced directly; `openChains` counts the cut outlines that do not
+close. [Cut section views](guides/render-section-views#read-the-cap) explains
+both.
+
+<auto-type-table
+  path="./props.ts"
+  name="RenderSectionSourceTimings"
+  caption="RenderSectionSourceTimings properties"
+/>
+
 ### `imageMimeTypes`
 
 The readonly runtime map from output format to emitted MIME type.

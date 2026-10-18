@@ -332,6 +332,26 @@ pub struct RenderViewTimings {
     pub encode: f64,
 }
 
+/// How one source was capped on one section plane. Sources that a plane does
+/// not cut are omitted. An uncertified source is never an error: its closed
+/// loops are filled and its open chains are outlined.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderSectionSourceTimings {
+    /// Index into `sections.planes`.
+    pub plane: usize,
+    pub node_index: usize,
+    pub mesh_index: usize,
+    pub primitive_index: usize,
+    /// Whether the source certified as closed manifold shells and was capped
+    /// exactly; `false` means it was sliced directly.
+    pub certified: bool,
+    /// Closed cut loops found on this plane (filled).
+    pub closed_loops: usize,
+    /// Open or branched cut chains found on this plane (outlined, unfilled).
+    pub open_chains: usize,
+}
+
 /// Batch setup/resource evidence recorded without changing the render path.
 /// The resource counters attribute acquisitions to the timed call, so a
 /// warm renderer reports zero device requests while the one-shot sugar
@@ -355,6 +375,8 @@ pub struct RenderBatchTimings {
     pub scene_uploads: u32,
     pub target_allocations: u32,
     pub views: Vec<RenderViewTimings>,
+    /// Per plane and cut source, in plane then source order.
+    pub sections: Vec<RenderSectionSourceTimings>,
 }
 
 impl RenderBatchTimings {
@@ -690,6 +712,19 @@ async fn run_plan(
                     render: stages.render,
                     overlay: stages.overlay,
                     encode: stages.encode,
+                })
+                .collect(),
+            sections: presentation
+                .sections
+                .iter()
+                .map(|report| RenderSectionSourceTimings {
+                    plane: report.plane,
+                    node_index: report.source.node_index,
+                    mesh_index: report.source.mesh_index,
+                    primitive_index: report.source.primitive_index,
+                    certified: report.certified,
+                    closed_loops: report.closed_loops,
+                    open_chains: report.open_chains,
                 })
                 .collect(),
         }
@@ -1683,13 +1718,13 @@ mod tests {
             let benchmark = pollster::block_on(bench::bench_multi_view(FIXTURE, 192, 192, &clock))
                 .expect("multi-view benchmark");
             assert_eq!(benchmark["variants"].as_array().map(Vec::len), Some(8));
-            // The gear fixture's cap faces are not watertight, so the run
-            // reports the certification it lost rather than failing.
-            assert!(
-                benchmark["sectionsSkipped"]
-                    .as_str()
-                    .is_some_and(|reason| reason.ends_with("has an open material seam"))
-            );
+            // The gear fixture's cap faces are not watertight, so the plane
+            // slices it directly instead of losing the section leg.
+            let sections = benchmark["variants"][0]["batch"]["timings"]["sections"]
+                .as_array()
+                .expect("section reports");
+            assert!(!sections.is_empty());
+            assert!(sections.iter().all(|report| report["certified"] == false));
             assert!(
                 benchmark["variants"][0]["batch"]["timings"]["capBuild"]
                     .as_f64()
@@ -1747,8 +1782,29 @@ mod tests {
                 overlay: 0.0,
                 encode: 4.0,
             }],
+            sections: vec![RenderSectionSourceTimings {
+                plane: 0,
+                node_index: 2,
+                mesh_index: 1,
+                primitive_index: 0,
+                certified: false,
+                closed_loops: 20,
+                open_chains: 1,
+            }],
         };
         let json: serde_json::Value = serde_json::from_str(&timings.to_json()).expect("valid JSON");
+        assert_eq!(
+            json["sections"][0],
+            serde_json::json!({
+                "plane": 0,
+                "nodeIndex": 2,
+                "meshIndex": 1,
+                "primitiveIndex": 0,
+                "certified": false,
+                "closedLoops": 20,
+                "openChains": 1,
+            })
+        );
         assert_eq!(json["parse"], 1.5);
         assert_eq!(json["capBuild"], 0.5);
         assert_eq!(json["adapterDeviceRequests"], 0);

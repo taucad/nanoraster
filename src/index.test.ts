@@ -243,6 +243,7 @@ describe('renderImages', () => {
         sceneUploads: 1,
         targetAllocations: 0,
         views: [{ id: 'front', render: 1, overlay: 0, encode: 3 }],
+        sections: [{ plane: 0, nodeIndex: 0, meshIndex: 0, primitiveIndex: 0, certified: false, closedLoops: 20, openChains: 1 }],
       }),
     });
 
@@ -265,6 +266,7 @@ describe('renderImages', () => {
       sceneUploads: 1,
       targetAllocations: 0,
       views: [{ id: 'front', render: 1, overlay: 0, encode: 3 }],
+      sections: [{ plane: 0, nodeIndex: 0, meshIndex: 0, primitiveIndex: 0, certified: false, closedLoops: 20, openChains: 1 }],
     });
     expect(results[0].file.name).toBe('render-front.png');
   });
@@ -283,6 +285,7 @@ describe('renderImages', () => {
       sceneUploads: 1,
       targetAllocations: 0,
       views: [{ id: 'front', render: 1, overlay: 0, encode: 3 }],
+      sections: [{ plane: 0, nodeIndex: 0, meshIndex: 0, primitiveIndex: 0, certified: false, closedLoops: 20, openChains: 1 }],
     };
     for (const timings of [
       'not json',
@@ -291,6 +294,10 @@ describe('renderImages', () => {
       JSON.stringify({ ...valid, views: 'front' }),
       JSON.stringify({ ...valid, views: [{ ...valid.views[0], encode: '3' }] }),
       JSON.stringify({ ...valid, views: [{ ...valid.views[0], id: 7 }] }),
+      JSON.stringify({ ...valid, sections: undefined }),
+      JSON.stringify({ ...valid, sections: [7] }),
+      JSON.stringify({ ...valid, sections: [{ ...valid.sections[0], certified: 'no' }] }),
+      JSON.stringify({ ...valid, sections: [{ ...valid.sections[0], openChains: '1' }] }),
     ]) {
       plural.mockResolvedValue({ images: [new Uint8Array([1])], timings });
       await expect(

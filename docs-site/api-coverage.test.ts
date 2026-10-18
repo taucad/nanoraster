@@ -41,6 +41,7 @@ const tableNames = [
   'AdapterInfo',
   'RenderTimings',
   'RenderViewTimings',
+  'RenderSectionSourceTimings',
 ] as const;
 const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
   RenderedImageFile: ['name', 'bytes', 'mimeType', 'width', 'height'],
@@ -103,8 +104,18 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'sceneUploads',
     'targetAllocations',
     'views',
+    'sections',
   ],
   RenderViewTimings: ['id', 'render', 'overlay', 'encode'],
+  RenderSectionSourceTimings: [
+    'plane',
+    'nodeIndex',
+    'meshIndex',
+    'primitiveIndex',
+    'certified',
+    'closedLoops',
+    'openChains',
+  ],
 };
 const defaults = {
   width: '768',

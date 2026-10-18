@@ -6,6 +6,7 @@ export type {
   RenderedImageFile,
   RenderTimings,
   RenderViewTimings,
+  RenderSectionSourceTimings,
   RenderWorld,
   RenderWorldAxis,
   RenderFailureCode,

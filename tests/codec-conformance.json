@@ -152,5 +152,37 @@
       "fnv": "f7b179042b2acf0b"
     }
   },
+  "sections": {
+    "closed": {
+      "fnv": "2de6b64f235c1d06",
+      "sources": [
+        {
+          "certified": true,
+          "closedLoops": 1,
+          "openChains": 0
+        }
+      ]
+    },
+    "open": {
+      "fnv": "72fcb42a2af4fb08",
+      "sources": [
+        {
+          "certified": false,
+          "closedLoops": 0,
+          "openChains": 1
+        }
+      ]
+    },
+    "pinched": {
+      "fnv": "dc6d2767de9bc5bb",
+      "sources": [
+        {
+          "certified": false,
+          "closedLoops": 1,
+          "openChains": 0
+        }
+      ]
+    }
+  },
   "width": 320
 }
