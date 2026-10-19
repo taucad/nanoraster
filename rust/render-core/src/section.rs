@@ -1085,12 +1085,12 @@ struct GroupCut {
 impl GroupCut {
     fn count(
         &mut self,
-        segments: impl Iterator<Item = Segment>,
+        cut: &[Segment],
         contributions: &SegmentContributions,
         fallback: PrimitiveRef,
         closed: bool,
     ) {
-        let source = dominant(segments, contributions).map_or(fallback, |(source, _)| source);
+        let source = dominant(cut, contributions).map_or(fallback, |(source, _)| source);
         let index = self
             .counts
             .iter()
@@ -1315,12 +1315,8 @@ fn exact_cut(
     );
     cut.outlines.extend(open.into_iter().filter(in_plane_only));
     for ring in &rings {
-        cut.count(
-            contour_segments(ring),
-            &segments,
-            group.triangles[0].source,
-            true,
-        );
+        let ring = contour_segments(ring).collect::<Vec<_>>();
+        cut.count(&ring, &segments, group.triangles[0].source, true);
     }
     cut.regions = fill_regions(group.owner, &rings, &segments, fallback_color);
     Ok(cut)
@@ -1343,10 +1339,11 @@ fn loose_cut(
     let loops = cut_loops(&graph, plane_index, group.triangles[0].source)?;
     let fallback = group.triangles[0].source;
     for ring in &loops.rings {
-        cut.count(contour_segments(ring), &segments, fallback, true);
+        let ring = contour_segments(ring).collect::<Vec<_>>();
+        cut.count(&ring, &segments, fallback, true);
     }
     for chain in &loops.chains {
-        cut.count(chain.iter().copied(), &segments, fallback, false);
+        cut.count(chain, &segments, fallback, false);
     }
     cut.open_chains = loops.open;
     if !loops.rings.is_empty() {
@@ -1879,17 +1876,15 @@ fn half_open_hit(
 }
 
 fn dominant_color(shape: &[IntContour<i64>], segments: &SegmentContributions) -> Option<[f32; 4]> {
-    dominant(shape.iter().flat_map(contour_segments), segments).map(|(_, color)| color)
+    let cut = shape.iter().flat_map(contour_segments).collect::<Vec<_>>();
+    dominant(&cut, segments).map(|(_, color)| color)
 }
 
 /// The source, with its colour, that contributes the most cut length to
 /// `cut`; ties go to the lowest source.
-fn dominant(
-    cut: impl Iterator<Item = Segment>,
-    segments: &SegmentContributions,
-) -> Option<(PrimitiveRef, [f32; 4])> {
+fn dominant(cut: &[Segment], segments: &SegmentContributions) -> Option<(PrimitiveRef, [f32; 4])> {
     let mut totals = Vec::<(PrimitiveRef, [f32; 4], f64)>::new();
-    for segment in cut {
+    for &segment in cut {
         let Some(index) = segments
             .binary_search_by_key(&segment, |entry| entry.0)
             .ok()
@@ -3179,6 +3174,36 @@ mod tests {
     }
 
     #[test]
+    fn a_shell_inside_another_shells_bounds_but_outside_its_solid_keeps_its_own_owner() {
+        // An inverted cube sits inside the tetrahedron's bounding box but
+        // outside the tetrahedron, so ray casting rejects the containment.
+        let mut scene = shell_scene(1, &[(Vec3::ZERO, 4.0, false)]);
+        let mut cavity = cube_primitive(0, Vec3::splat(3.0), 0.2, [0.5; 4]);
+        for triangle in cavity.indices.as_chunks_mut::<3>().0 {
+            triangle.swap(1, 2);
+        }
+        let primitive = &mut scene.meshes[0].primitives[0];
+        let offset = u32::try_from(primitive.positions.len() / 3).expect("small fixture");
+        primitive.positions.extend_from_slice(&cavity.positions);
+        primitive.normals.extend_from_slice(&cavity.normals);
+        primitive
+            .indices
+            .extend(cavity.indices.into_iter().map(|index| index + offset));
+        let mut options = section_options();
+        options.sections.as_mut().expect("sections").planes[0].point = [0.5, 0.0, 0.0];
+        let topology = build_topology(
+            &scene,
+            &options,
+            1.0e-6,
+            &options.sections.clone().expect("sections").planes,
+        )
+        .expect("separate shells");
+        assert_eq!(topology.groups.len(), 2);
+        assert!(topology.groups.iter().all(|group| group.certified));
+        assert_ne!(topology.groups[0].owner, topology.groups[1].owner);
+    }
+
+    #[test]
     fn touching_shell_ownership_falls_back_to_direct_slices() {
         let mut scene = cube_scene(1);
         let mut touching = cube_primitive(0, Vec3::X * 0.7, 0.3, [0.5; 4]);
@@ -3959,6 +3984,8 @@ mod tests {
             Some((20, 0, 30, 10)),
             Some((5, 5, 25, 15)),
             Some((10, 0, 20, 10)),
+            // Overlaps region 0 across x only.
+            Some((1, 20, 4, 30)),
         ];
         assert_eq!(
             overlapping_pairs(&overlapping),
