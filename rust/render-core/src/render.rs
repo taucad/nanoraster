@@ -4156,13 +4156,11 @@ mod tests {
                         solid[..3] != [255; 3] && a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > 2)
                     })
                     .count();
-                if changed > 0 {
-                    leaks.push((line_width, elevation.to_degrees().round(), changed));
-                }
+                leaks.push((line_width, elevation.to_degrees().round(), changed));
             }
         }
         assert!(
-            leaks.is_empty(),
+            leaks.iter().all(|&(_, _, changed)| changed == 0),
             "hidden edges showed through (width, elevation°, pixels): {leaks:?}"
         );
     }
