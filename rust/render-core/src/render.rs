@@ -947,6 +947,14 @@ fn create_pipeline_pair(
         bias: if wireframe {
             wgpu::DepthBiasState {
                 constant: 2,
+                // Any slope margin still lets a hidden edge lying just behind a
+                // nearly coplanar face show through. The exact alternative is a
+                // spine test (Cole & Finkelstein, "Two Fast Methods for
+                // High-Quality Line Visibility", TVCG 2010): read the AO pass's
+                // opaque depth in `fs_line` at the stroke's centre line and
+                // discard when the surface is nearer, so the whole stroke width
+                // takes its spine's visibility and this bias can drop to the
+                // constant. It needs that depth pass whenever lines draw.
                 slope_scale: line_width_px * 0.5,
                 clamp: 0.01,
             }
