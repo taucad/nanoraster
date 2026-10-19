@@ -44,9 +44,18 @@ const parseTimings = (json: string): RenderTimings => {
     return value;
   };
 
+  const boolean = (value: unknown, name: string): boolean => {
+    if (typeof value !== 'boolean') {
+      throw new TypeError(`renderer contract violation: ${name} must be a boolean`);
+    }
+    return value;
+  };
+
   const raw = object(JSON.parse(json), 'timings');
-  if (!Array.isArray(raw['views'])) {
-    throw new TypeError('renderer contract violation: timings.views must be an array');
+  for (const key of ['views', 'sections']) {
+    if (!Array.isArray(raw[key])) {
+      throw new TypeError(`renderer contract violation: timings.${key} must be an array`);
+    }
   }
   return {
     parse: number(raw['parse'], 'timings.parse'),
@@ -60,7 +69,7 @@ const parseTimings = (json: string): RenderTimings => {
     presentationBuilds: number(raw['presentationBuilds'], 'timings.presentationBuilds'),
     sceneUploads: number(raw['sceneUploads'], 'timings.sceneUploads'),
     targetAllocations: number(raw['targetAllocations'], 'timings.targetAllocations'),
-    views: raw['views'].map((value, index) => {
+    views: (raw['views'] as unknown[]).map((value, index) => {
       const view = object(value, `timings.views[${index}]`);
       if (typeof view['id'] !== 'string') {
         throw new TypeError(`renderer contract violation: timings.views[${index}].id must be a string`);
@@ -70,6 +79,19 @@ const parseTimings = (json: string): RenderTimings => {
         render: number(view['render'], `timings.views[${index}].render`),
         overlay: number(view['overlay'], `timings.views[${index}].overlay`),
         encode: number(view['encode'], `timings.views[${index}].encode`),
+      };
+    }),
+    sections: (raw['sections'] as unknown[]).map((value, index) => {
+      const name = `timings.sections[${index}]`;
+      const section = object(value, name);
+      return {
+        plane: number(section['plane'], `${name}.plane`),
+        nodeIndex: number(section['nodeIndex'], `${name}.nodeIndex`),
+        meshIndex: number(section['meshIndex'], `${name}.meshIndex`),
+        primitiveIndex: number(section['primitiveIndex'], `${name}.primitiveIndex`),
+        certified: boolean(section['certified'], `${name}.certified`),
+        closedLoops: number(section['closedLoops'], `${name}.closedLoops`),
+        openChains: number(section['openChains'], `${name}.openChains`),
       };
     }),
   };

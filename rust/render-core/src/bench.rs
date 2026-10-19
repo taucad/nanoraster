@@ -96,7 +96,117 @@ pub fn bench_fixture_encodes(
     bench_encodes(&fixture_frame(width, height), now)
 }
 
-/// GPU-independent codec fixtures used to prove native/wasm byte parity.
+/// One mesh instance of `positions` and `indices` in a GPU-free scene.
+fn surface_scene(positions: Vec<f32>, indices: Vec<u32>) -> crate::glb::Scene {
+    crate::glb::Scene {
+        meshes: vec![crate::glb::MeshAsset {
+            source_index: 0,
+            manifold: None,
+            primitives: vec![crate::glb::Primitive {
+                source_index: 0,
+                mode: crate::glb::MODE_TRIANGLES,
+                normals: positions.clone(),
+                positions,
+                indices,
+                surface_attributes: Vec::new(),
+                material: crate::glb::Material {
+                    base_color: [0.35, 0.55, 0.85, 1.0],
+                    metallic: 0.0,
+                    roughness: 1.0,
+                    ..crate::glb::Material::default()
+                },
+            }],
+        }],
+        instances: vec![crate::glb::MeshInstance {
+            source_node_index: 0,
+            mesh_index: 0,
+            model: glam::Mat4::IDENTITY,
+            normal_matrix: glam::Mat4::IDENTITY,
+        }],
+        topology_diagnostics: Vec::new(),
+        texture_pixels: vec![u32::MAX],
+        bounds: None,
+    }
+}
+
+/// Section cap geometry fingerprints, CPU only: the exact path on a closed
+/// box, and the direct slice on an open box and on two boxes pinched at one
+/// vertex, cut by an oblique plane so every crossing is interpolated.
+fn section_fingerprints() -> Result<serde_json::Value, RenderError> {
+    const CORNERS: [f32; 24] = [
+        -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, 1.0,
+        -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0,
+    ];
+    const FACES: [u32; 36] = [
+        0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5, 0, 1, 5, 0, 5, 4,
+        3, 7, 6, 3, 6, 2,
+    ];
+    let open = FACES[..6].iter().chain(&FACES[12..]).copied().collect();
+    let mut pinched_positions = CORNERS.to_vec();
+    pinched_positions.extend(CORNERS.iter().map(|corner| corner + 2.0));
+    let pinched = FACES
+        .iter()
+        .copied()
+        .chain(
+            FACES
+                .iter()
+                .map(|index| if *index == 0 { 6 } else { index + 8 }),
+        )
+        .collect();
+    let options = RenderOptions {
+        sections: Some(Sections {
+            planes: vec![SectionPlane {
+                point: [0.1, 0.2, 0.05],
+                normal: [1.0, 0.4, 0.2],
+            }],
+            clip_surfaces: true,
+            clip_lines: true,
+        }),
+        ..Default::default()
+    };
+    let mut report = serde_json::json!({});
+    for (name, scene) in [
+        ("closed", surface_scene(CORNERS.to_vec(), FACES.to_vec())),
+        ("open", surface_scene(CORNERS.to_vec(), open)),
+        ("pinched", surface_scene(pinched_positions, pinched)),
+    ] {
+        let geometry = crate::section::build(&scene, &options)?;
+        // Cap positions and plane coordinates, not the hatch colours: those
+        // pass through the host's `powf`, which differs between platform
+        // math libraries and is outside the section geometry being gated.
+        let mut bytes = Vec::new();
+        for vertex in geometry.vertices.as_chunks::<15>().0 {
+            bytes.extend(vertex[..5].iter().flat_map(|value| value.to_le_bytes()));
+        }
+        for floats in [&geometry.boundaries, &geometry.open_chains] {
+            bytes.extend(floats.iter().flat_map(|value| value.to_le_bytes()));
+        }
+        bytes.extend(
+            geometry
+                .indices
+                .iter()
+                .flat_map(|index| index.to_le_bytes()),
+        );
+        report[name] = serde_json::json!({
+            "fnv": format!("{:016x}", fnv64(&bytes)),
+            "sources": geometry
+                .sources
+                .iter()
+                .map(|source| {
+                    serde_json::json!({
+                        "certified": source.certified,
+                        "closedLoops": source.closed_loops,
+                        "openChains": source.open_chains,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        });
+    }
+    Ok(report)
+}
+
+/// GPU-independent codec and section fixtures used to prove native/wasm byte
+/// parity.
 pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
     let (width, height) = (320u32, 240u32);
     let base = fixture_frame(width, height);
@@ -139,6 +249,7 @@ pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
         "width": width,
         "height": height,
         "base": codec_fingerprints(&base)?,
+        "sections": section_fingerprints()?,
     });
     for bits in 1..8 {
         let options = RenderOptions {
@@ -161,31 +272,10 @@ pub fn codec_conformance() -> Result<serde_json::Value, RenderError> {
     Ok(report)
 }
 
-/// The section leg of the multi-view benchmark, if this model can carry one.
-///
-/// Cap build is a shared batch stage worth timing, so the benchmark cuts the
-/// model when it can. Certification is fail-closed, though, and plenty of
-/// exported meshes are not watertight — the gear fixture's flat cap faces
-/// leave 72 unfilled sliver loops, so it is one of them. A benchmark that
-/// hard-failed on those would be unusable on most real models, so an
-/// uncertified model runs its remaining stages and reports the reason instead.
-fn certified_sections(glb: &[u8], requested: Sections) -> (Option<Sections>, Option<String>) {
-    // The same certification `prepare_presentation` runs, minus the GPU.
-    let options = RenderOptions {
-        sections: Some(requested.clone()),
-        ..Default::default()
-    };
-    match crate::glb::parse_glb_for_sections(glb)
-        .map_err(RenderError::Parse)
-        .and_then(|scene| crate::section::build(&scene, &options))
-    {
-        Ok(_) => (Some(requested), None),
-        Err(error) => (None, Some(error.to_string())),
-    }
-}
-
 /// Compare six separate renders with one six-view batch for every annotation
-/// combination, cutting the model with one section plane where it certifies.
+/// combination, cutting the model with one section plane. Section caps never
+/// refuse, so every model carries the plane; the timings report whether each
+/// cut source was capped exactly or sliced directly.
 pub async fn bench_multi_view(
     glb: &[u8],
     width: u32,
@@ -209,17 +299,14 @@ pub async fn bench_multi_view(
         view("top", "Top", [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
         view("bottom", "Bottom", [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]),
     ];
-    let (sections, sections_skipped) = certified_sections(
-        glb,
-        Sections {
-            planes: vec![SectionPlane {
-                point: [0.0; 3],
-                normal: [1.0, 0.0, 0.0],
-            }],
-            clip_surfaces: true,
-            clip_lines: true,
-        },
-    );
+    let sections = Some(Sections {
+        planes: vec![SectionPlane {
+            point: [0.0; 3],
+            normal: [1.0, 0.0, 0.0],
+        }],
+        clip_surfaces: true,
+        clip_lines: true,
+    });
     let mut variants = Vec::new();
     for bits in 0..8 {
         let axes = bits & 1 != 0;
@@ -294,7 +381,6 @@ pub async fn bench_multi_view(
         "width": width,
         "height": height,
         "viewCount": views.len(),
-        "sectionsSkipped": sections_skipped,
         "variants": variants,
     }))
 }
@@ -389,6 +475,19 @@ mod tests {
         let first = codec_conformance().expect("conformance");
         let second = codec_conformance().expect("conformance");
         assert_eq!(first, second);
+        let sources = |fixture: &str| first["sections"][fixture]["sources"].clone();
+        assert_eq!(
+            sources("closed"),
+            serde_json::json!([{ "certified": true, "closedLoops": 1, "openChains": 0 }])
+        );
+        assert_eq!(
+            sources("open"),
+            serde_json::json!([{ "certified": false, "closedLoops": 0, "openChains": 1 }])
+        );
+        assert_eq!(
+            sources("pinched"),
+            serde_json::json!([{ "certified": false, "closedLoops": 1, "openChains": 0 }])
+        );
         assert_ne!(first["base"]["pixelFnv"], first["include1"]["pixelFnv"]);
         for fixture in [
             "base", "include1", "include2", "include3", "include4", "include5", "include6",
@@ -415,40 +514,6 @@ mod tests {
             serde_json::from_str(include_str!("../../../tests/codec-conformance.json"))
                 .expect("committed fingerprints");
         assert_eq!(codec_conformance().expect("conformance"), expected);
-    }
-
-    /// The benchmark's section leg follows certification, which is fail-closed:
-    /// a watertight model keeps the plane, and the gear fixture — whose flat
-    /// cap faces leave unfilled sliver loops — records why it lost it instead
-    /// of failing the whole run.
-    #[test]
-    fn the_section_leg_follows_certification() {
-        let requested = Sections {
-            planes: vec![SectionPlane {
-                point: [0.0; 3],
-                normal: [1.0, 0.0, 0.0],
-            }],
-            clip_surfaces: true,
-            clip_lines: true,
-        };
-        let (certified, skipped) = certified_sections(
-            include_bytes!("../../../tests/fixtures/racing-drone-section-repro.glb"),
-            requested.clone(),
-        );
-        assert_eq!(certified, Some(requested.clone()));
-        assert_eq!(skipped, None);
-
-        let (certified, skipped) = certified_sections(
-            include_bytes!("../../../tests/fixtures/gear-12.glb"),
-            requested,
-        );
-        assert_eq!(certified, None);
-        assert_eq!(
-            skipped.as_deref(),
-            Some(
-                "parse: sections: topology: source node 0/mesh 0/primitive 0 has an open material seam"
-            )
-        );
     }
 
     #[test]

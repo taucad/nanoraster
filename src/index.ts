@@ -50,6 +50,7 @@ export type {
   RenderOrbit,
   RenderTimings,
   RenderViewTimings,
+  RenderSectionSourceTimings,
   RenderedImage,
   RenderedImages,
   RenderedImagesResult,

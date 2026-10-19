@@ -41,6 +41,7 @@ const tableNames = [
   'AdapterInfo',
   'RenderTimings',
   'RenderViewTimings',
+  'RenderSectionSourceTimings',
 ] as const;
 const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
   RenderedImageFile: ['name', 'bytes', 'mimeType', 'width', 'height'],
@@ -103,8 +104,18 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'sceneUploads',
     'targetAllocations',
     'views',
+    'sections',
   ],
   RenderViewTimings: ['id', 'render', 'overlay', 'encode'],
+  RenderSectionSourceTimings: [
+    'plane',
+    'nodeIndex',
+    'meshIndex',
+    'primitiveIndex',
+    'certified',
+    'closedLoops',
+    'openChains',
+  ],
 };
 const defaults = {
   width: '768',
@@ -262,8 +273,9 @@ describe('static agent documentation', () => {
     }
 
     const apiHtml = resolve(output, 'docs/api.html');
-    // Public AO and per-view selection fields bring the generated page to 835,243 bytes.
-    expect(statSync(apiHtml).size).toBeLessThan(836_000);
+    // Public AO and per-view selection fields bring the generated page to 835,243 bytes;
+    // the per-source section timings table brings it to 860,310 on CI (855,064 locally).
+    expect(statSync(apiHtml).size).toBeLessThan(861_000);
 
     const optionsHtml = readFileSync(apiHtml, 'utf8');
     expect(optionsHtml).toContain('aria-label="RenderImageOptions properties"');

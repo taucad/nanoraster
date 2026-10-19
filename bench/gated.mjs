@@ -50,7 +50,10 @@ const report = {
   // geometry, framing, authored edges and codec conformance remain fixed.
   // v8: captured room IBL, integrated GGX and PBR Neutral replace the
   // analytic lighting/ACES profile. Glass uses bicubic HDR mip filtering.
-  name: 'gear-parse-raster-encode-512x384-v8',
+  // v9: codecConformance gained CPU section-cap fingerprints (exact and
+  // directly sliced sources) for the native/wasm byte-identity gate. Rendered
+  // pixels and every codec fingerprint are untouched.
+  name: 'gear-parse-raster-encode-512x384-v9',
   adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,

@@ -150,12 +150,22 @@ struct GpuCap {
     index_count: u32,
 }
 
+/// World-space fat-line segments drawn in one flat colour.
+struct GpuStroke {
+    segments: wgpu::Buffer,
+    count: u32,
+    material: wgpu::BindGroup,
+}
+
 pub(crate) struct PresentationBuffers {
     cap: Option<GpuCap>,
-    boundary: Option<wgpu::Buffer>,
-    boundary_count: u32,
-    boundary_material: Option<wgpu::BindGroup>,
+    /// Cap outlines, in black.
+    boundary: Option<GpuStroke>,
+    /// Open cut chains of uncertified sources, in the open-chain colour.
+    open_chains: Option<GpuStroke>,
     identity_object: Option<wgpu::BindGroup>,
+    /// Per plane and source section outcome, reported through timings.
+    pub(crate) sections: Vec<crate::section::SectionSourceReport>,
 }
 
 /// Render targets plus readback for one output size. The two readback buffers
@@ -1966,62 +1976,73 @@ impl Renderer {
             }),
             index_count: geometry.indices.len() as u32,
         });
-        if geometry.boundaries.is_empty() {
-            return Ok(PresentationBuffers {
-                cap,
-                boundary: None,
-                boundary_count: 0,
-                boundary_material: None,
-                identity_object: None,
-            });
-        }
-
-        let boundary = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("section boundaries"),
-            contents: bytemuck::cast_slice(&geometry.boundaries),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let material = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("section boundary material"),
-            contents: bytemuck::cast_slice(
-                &Material {
-                    base_color: [0.0, 0.0, 0.0, 1.0],
-                    ..Material::default()
+        let stroke = |label: &str, segments: &[f32], color: [f32; 4]| {
+            (!segments.is_empty()).then(|| {
+                let material = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(label),
+                    contents: bytemuck::cast_slice(
+                        &Material {
+                            base_color: color,
+                            ..Material::default()
+                        }
+                        .uniform(),
+                    ),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                GpuStroke {
+                    segments: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(label),
+                        contents: bytemuck::cast_slice(segments),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    }),
+                    count: (segments.len() / 6) as u32,
+                    material: device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some(label),
+                        layout: &self.state.prim_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: material.as_entire_binding(),
+                        }],
+                    }),
                 }
-                .uniform(),
-            ),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let identity = [
-            Mat4::IDENTITY.to_cols_array(),
-            Mat4::IDENTITY.to_cols_array(),
-        ]
-        .concat();
-        let object = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("section boundary object"),
-            contents: bytemuck::cast_slice(&identity),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        Ok(PresentationBuffers {
-            cap,
-            boundary: Some(boundary),
-            boundary_count: (geometry.boundaries.len() / 6) as u32,
-            boundary_material: Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("section boundary material"),
-                layout: &self.state.prim_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: material.as_entire_binding(),
-                }],
-            })),
-            identity_object: Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            })
+        };
+        let boundary = stroke(
+            "section boundaries",
+            &geometry.boundaries,
+            [0.0, 0.0, 0.0, 1.0],
+        );
+        let open_chains = stroke(
+            "section open chains",
+            &geometry.open_chains,
+            crate::section::srgb_hex(crate::section::OPEN_CHAIN_SRGB),
+        );
+        let identity_object = (boundary.is_some() || open_chains.is_some()).then(|| {
+            let identity = [
+                Mat4::IDENTITY.to_cols_array(),
+                Mat4::IDENTITY.to_cols_array(),
+            ]
+            .concat();
+            let object = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("section boundary object"),
+                contents: bytemuck::cast_slice(&identity),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("section boundary object"),
                 layout: &self.state.object_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: object.as_entire_binding(),
                 }],
-            })),
+            })
+        });
+        Ok(PresentationBuffers {
+            cap,
+            boundary,
+            open_chains,
+            identity_object,
+            sections: geometry.sources,
         })
     }
 
@@ -2289,7 +2310,8 @@ impl Renderer {
                     )
                 })
             }))
-            || presentation.boundary.is_some();
+            || presentation.boundary.is_some()
+            || presentation.open_chains.is_some();
         let pipeline_index =
             self.ensure_pipelines(line_width_px(options), wireframe, scene.texture_mask);
         let state = &self.state;
@@ -2645,16 +2667,17 @@ impl Renderer {
                 pass.set_pipeline(&pair.line);
                 draw_lines(&mut pass, scene, options);
             }
-            if let (Some(boundary), Some(material), Some(object)) = (
-                &presentation.boundary,
-                &presentation.boundary_material,
-                &presentation.identity_object,
-            ) {
-                pass.set_pipeline(&pair.line);
-                pass.set_bind_group(1, material, &[]);
-                pass.set_bind_group(2, object, &[]);
-                pass.set_vertex_buffer(0, boundary.slice(..));
-                pass.draw(0..8, 0..presentation.boundary_count);
+            if let Some(object) = &presentation.identity_object {
+                for stroke in [&presentation.boundary, &presentation.open_chains]
+                    .into_iter()
+                    .flatten()
+                {
+                    pass.set_pipeline(&pair.line);
+                    pass.set_bind_group(1, &stroke.material, &[]);
+                    pass.set_bind_group(2, object, &[]);
+                    pass.set_vertex_buffer(0, stroke.segments.slice(..));
+                    pass.draw(0..8, 0..stroke.count);
+                }
             }
         }
         let readback = &targets.readback[slot];
@@ -4846,6 +4869,22 @@ mod tests {
                 .iter()
                 .any(|pixel| pixel[0] < 240)
         );
+        let open_chain = |rendered: &Rendered| {
+            rendered
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|pixel| pixel[0] > 180 && pixel[1] < 40 && pixel[2] < 100)
+                .count()
+        };
+        assert_eq!(open_chain(&cut), 0);
+        // Without its +z face the cube is open where the plane crosses it: the
+        // cut is stroked as an open chain instead of being refused.
+        let mut open_box = cube_scene();
+        open_box.meshes[0].primitives[0].indices.drain(6..12);
+        let open = render_test_scene(&mut renderer, open_box, options.clone());
+        assert!(open_chain(&open) > 100);
 
         let blank = render_test_scene(
             &mut renderer,

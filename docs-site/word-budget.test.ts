@@ -41,8 +41,10 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // Optional AO adds one public three-field type and its usage to `api.mdx`.
 // Per-view primitive selection adds its API field and the selected-batch,
 // fitted-bounds, and section-exclusion rules to the API and two guides.
+// Never-refused section caps add the per-source section timings type to
+// `api.mdx`; the section guide trades its refusal note for the open-chain rule.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 3_346,
+  'api.mdx': 3_390,
   'guides/choose-visible-geometry.mdx': 373,
   'guides/render-section-views.mdx': 360,
   'guides/format-and-annotate.mdx': 830,
@@ -60,7 +62,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'install.mdx': 740,
   'tutorial.mdx': 696,
 };
-const siteCeiling = 13_454;
+const siteCeiling = 13_500;
 
 const pages = globSync('**/*.mdx', { cwd: docsDir })
   .toSorted()

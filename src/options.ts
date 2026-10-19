@@ -400,6 +400,33 @@ export type RenderViewTimings = {
 };
 
 /**
+ * How one section plane capped one source primitive it cuts. Sources the
+ * plane does not reach are omitted. An uncertified source is never an error.
+ *
+ * @public
+ */
+export type RenderSectionSourceTimings = {
+  /** Index into `sections.planes`. */
+  readonly plane: number;
+  /** Source node index of the cut primitive instance. */
+  readonly nodeIndex: number;
+  /** Source mesh index referenced by the node. */
+  readonly meshIndex: number;
+  /** Source primitive index within the mesh. */
+  readonly primitiveIndex: number;
+  /**
+   * `true` when the source certified as closed, consistently oriented
+   * manifold shells and was capped exactly; `false` when it was sliced
+   * directly, filling its closed loops and outlining its open chains.
+   */
+  readonly certified: boolean;
+  /** Closed cut loops on this plane, each filled with the striped cap. */
+  readonly closedLoops: number;
+  /** Open or branched cut chains on this plane, outlined and left unfilled. */
+  readonly openChains: number;
+};
+
+/**
  * Stage timings for one timed plan call. The fields map onto the render
  * pipeline's stages and reports the resources acquired by this call.
  *
@@ -430,6 +457,8 @@ export type RenderTimings = {
   readonly targetAllocations: number;
   /** Per-view render/overlay/encode timings in plan order. */
   readonly views: readonly RenderViewTimings[];
+  /** Section outcome per plane and cut source, in plane then source order. Empty without sections. */
+  readonly sections: readonly RenderSectionSourceTimings[];
 };
 
 type NoExtraKeys<Value, Shape> = Value & Record<Exclude<keyof Value, keyof Shape>, never>;

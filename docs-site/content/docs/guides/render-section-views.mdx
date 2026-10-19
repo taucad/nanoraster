@@ -48,20 +48,17 @@ uncut and produces no caps. Disabling `clipLines` leaves authored lines uncut.
 ## Read the cap
 
 Closed orientable surfaces receive striped material-colour caps and black
-outlines. Overlaps are red with yellow cross-stripes.
+outlines. Overlaps are red with yellow cross-stripes. Tangent planes may yield
+only an outline. nanoraster pairs duplicated glTF seams but does not repair
+meshes.
 
-A successful render contains every true cap. Unsupported topology and
-fixed-precision overflow return source-and-plane `parse` errors. Tangent planes
-may yield only an outline. nanoraster pairs duplicated glTF seams but does not
-repair meshes.
-
-### Contract note: sub-quantum ring collapse
-
-If a true cut ring collapses below three fixed-grid points, the render fails
-rather than returning a partial cap. The named `sections: cap:` diagnostic
-says `true cut ring collapsed below three quantized points`. The diagnostic
-includes the source and plane. Rescale the model, or move the cut beyond that
-quantum.
+Sections never refuse a mesh. An open, cracked or non-manifold source is
+sliced directly: every loop that closes on the plane is filled, nested loops
+by the even-odd rule, and every open chain is drawn in `#DD003F` at the
+outline width over an unfilled region. Only malformed indices, non-finite
+positions and coordinates beyond the fixed-point range return `parse` errors.
+With `timings: true`, `sections` reports each cut source's
+[loop and chain counts](../api#rendersectionsourcetimings).
 
 A valid `EXT_mesh_manifold` mesh supplies exact topology. Base primitives still
 control rendering, materials, and visibility. Hatch direction follows the

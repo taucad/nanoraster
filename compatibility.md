@@ -169,7 +169,9 @@ derivative would differ between GPU backends. Author normals for smooth
 curved surfaces.
 
 `EXT_mesh_manifold` supplies exact section topology while base primitives
-remain authoritative for rendering. Authored line primitives remain the edge
+remain authoritative for rendering. A section never refuses a mesh: a source
+that does not certify as closed manifold shells is sliced directly, its closed
+cut loops filled and its open chains stroked in `#DD003F`. Authored line primitives remain the edge
 source; material shading does not replace them with image edge detection.
 
 ### Limits
