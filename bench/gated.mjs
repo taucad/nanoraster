@@ -53,7 +53,10 @@ const report = {
   // v9: codecConformance gained CPU section-cap fingerprints (exact and
   // directly sliced sources) for the native/wasm byte-identity gate. Rendered
   // pixels and every codec fingerprint are untouched.
-  name: 'gear-parse-raster-encode-512x384-v9',
+  // v10: the wireframe surface bias drops its extra pixel of slope margin to
+  // half the stroke width, so hidden edges that end on a face's outline no
+  // longer tick through it. Edge pixels near such outlines change on purpose.
+  name: 'gear-parse-raster-encode-512x384-v10',
   adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,

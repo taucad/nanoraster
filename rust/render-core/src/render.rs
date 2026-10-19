@@ -934,7 +934,11 @@ fn create_pipeline_pair(
     // surface back by its own screen-space depth slope times the stroke's
     // half-width covers exactly that overhang at any resolution; `clamp`
     // bounds the push on near-tangent surfaces so hidden edges behind them
-    // stay hidden. Surface-only renders use the unbiased state.
+    // stay hidden. The half-width is the whole margin: depth is tested per
+    // sample, so nothing beyond the stroke needs covering, and any extra push
+    // shows a hidden edge that ends on a face's boundary (the far flank edges
+    // of a gear tooth) as a tick past its outline. Surface-only renders use
+    // the unbiased state.
     let mesh_depth_state = Some(wgpu::DepthStencilState {
         format: DEPTH_FORMAT,
         depth_write_enabled: Some(true),
@@ -943,7 +947,7 @@ fn create_pipeline_pair(
         bias: if wireframe {
             wgpu::DepthBiasState {
                 constant: 2,
-                slope_scale: line_width_px * 0.5 + 1.0,
+                slope_scale: line_width_px * 0.5,
                 clamp: 0.01,
             }
         } else {
@@ -4063,6 +4067,104 @@ mod tests {
                 "exercise partial coverage, not just opaque pixels"
             );
         }
+    }
+
+    /// A cube with its edges as a line primitive; `hidden` keeps the three edges that meet at the
+    /// corner facing away from a camera in the +X/+Z quadrant.
+    fn cube_with_edges(hidden: bool) -> glb::Scene {
+        let mut scene = cube_scene();
+        let corners = scene.meshes[0].primitives[0].positions.clone();
+        let mut indices = vec![1, 2, 2, 3, 4, 5, 5, 6, 6, 7, 7, 4, 1, 5, 2, 6, 3, 7];
+        if hidden {
+            indices.extend([0, 1, 0, 3, 0, 4]);
+        }
+        scene.meshes[0].primitives.push(glb::Primitive {
+            source_index: 1,
+            mode: glb::MODE_LINES,
+            positions: corners,
+            indices,
+            normals: Vec::new(),
+            surface_attributes: Vec::new(),
+            material: glb::Material {
+                base_color: [1.0, 0.0, 0.0, 1.0],
+                metallic: 0.0,
+                roughness: 1.0,
+                ..Material::default()
+            },
+        });
+        scene
+    }
+
+    #[test]
+    fn hidden_edges_ending_on_a_face_boundary_leave_no_trace() {
+        // An edge behind a face that ends on the face's boundary (the far flank edges of a gear
+        // tooth) shows through for as long as the surface bias exceeds what the stroke needs.
+        // Inside the solid's silhouette, hidden edges must change no pixel at any grazing angle or
+        // stroke width.
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let mut leaks = Vec::new();
+        for line_width in [1.0, 3.0] {
+            for elevation in [10.0_f32, 20.0, 35.0] {
+                let (elevation, azimuth) = (elevation.to_radians(), 30.0_f32.to_radians());
+                let direction = Vec3::new(
+                    azimuth.sin() * elevation.cos(),
+                    elevation.sin(),
+                    azimuth.cos() * elevation.cos(),
+                );
+                let options = RenderOptions {
+                    width: 256,
+                    height: 256,
+                    line_width,
+                    background: Some([1.0; 4]),
+                    camera: RenderCamera::Fixed {
+                        position: (direction * 10.0).to_array(),
+                        target: [0.0; 3],
+                        up: [0.0, 1.0, 0.0],
+                        projection: CameraProjection::Orthographic {
+                            vertical_span: Some(4.0),
+                            zoom: 1.0,
+                        },
+                        clipping: Some(crate::ClipPlanes {
+                            near: 5.0,
+                            far: 15.0,
+                        }),
+                    },
+                    ..RenderOptions::default()
+                };
+                // A hidden edge's own stroke can overhang the silhouette at an outline
+                // corner whatever the bias; a tick through a face lies inside it.
+                let solid = render_test_scene(
+                    &mut renderer,
+                    cube_scene(),
+                    RenderOptions {
+                        lines: false,
+                        ..options.clone()
+                    },
+                );
+                let visible =
+                    render_test_scene(&mut renderer, cube_with_edges(false), options.clone());
+                let all = render_test_scene(&mut renderer, cube_with_edges(true), options);
+                let changed = solid
+                    .rgba
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(visible.rgba.as_chunks::<4>().0)
+                    .zip(all.rgba.as_chunks::<4>().0)
+                    .filter(|((solid, a), b)| {
+                        solid[..3] != [255; 3] && a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > 2)
+                    })
+                    .count();
+                if changed > 0 {
+                    leaks.push((line_width, elevation.to_degrees().round(), changed));
+                }
+            }
+        }
+        assert!(
+            leaks.is_empty(),
+            "hidden edges showed through (width, elevation°, pixels): {leaks:?}"
+        );
     }
 
     #[test]
