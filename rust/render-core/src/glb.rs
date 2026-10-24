@@ -80,10 +80,12 @@ pub(crate) struct Scene {
 }
 
 impl Scene {
+    // Keep visitors specialized: fitted-camera reductions walk every draw index.
+    // Dynamic dispatch here prevents the compiler from optimizing those hot loops.
     fn visit_positions(
         &self,
         options: Option<&RenderOptions>,
-        visit: &mut dyn FnMut(Vec3),
+        visit: &mut impl FnMut(Vec3),
     ) -> Result<bool, String> {
         let mut any = false;
         for instance in &self.instances {
@@ -112,7 +114,7 @@ impl Scene {
     pub(crate) fn for_each_position(
         &self,
         options: &RenderOptions,
-        visit: &mut dyn FnMut(Vec3),
+        visit: &mut impl FnMut(Vec3),
     ) -> Result<bool, String> {
         self.visit_positions(Some(options), visit)
     }
@@ -121,7 +123,7 @@ impl Scene {
     pub(crate) fn for_each_surface_position(
         &self,
         options: &RenderOptions,
-        visit: &mut dyn FnMut(Vec3),
+        visit: &mut impl FnMut(Vec3),
     ) -> Result<bool, String> {
         let mut any = false;
         for instance in &self.instances {
@@ -147,7 +149,7 @@ impl Scene {
         Ok(any)
     }
 
-    fn for_each_draw_position(&self, visit: &mut dyn FnMut(Vec3)) -> Result<bool, String> {
+    fn for_each_draw_position(&self, visit: &mut impl FnMut(Vec3)) -> Result<bool, String> {
         self.visit_positions(None, visit)
     }
 
@@ -2645,6 +2647,23 @@ mod tests {
             bounds: None,
         };
         assert!(scene.for_each_draw_position(&mut drop).is_err());
+        let mut visited = false;
+        assert!(
+            scene
+                .for_each_position(&RenderOptions::default(), &mut |_| visited = true)
+                .is_err()
+        );
+        assert!(!visited, "non-finite positions must not reach the visitor");
+        let hidden = RenderOptions {
+            surfaces: false,
+            ..RenderOptions::default()
+        };
+        assert!(
+            !scene
+                .for_each_position(&hidden, &mut |_| visited = true)
+                .unwrap()
+        );
+        assert!(!visited, "hidden geometry must not reach the visitor");
 
         assert!(std::panic::catch_unwind(|| fixture(Layout::Packed, 0, true)).is_err());
     }

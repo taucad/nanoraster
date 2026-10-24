@@ -195,7 +195,11 @@ const sizes = {
 // raw bytes include native-depth AO reconstruction and resolution-aware filtering;
 // native-only opt-in profiling is absent from WASM. Preserve the existing
 // host-to-ceiling offsets and compressor tolerance, adding only measured deltas.
-const ceilings = { raw: 2_411_774, gzip9: 1_127_535, brotli11: 933_972 };
+// Specialized position visitors: same-host 9faf078 2,410,465 / 1,123,918 /
+// 936,253; candidate 2,413,094 / 1,124,902 / 937,578. Monomorphizing the
+// fitted-camera loops adds 2,629 raw / 984 gzip-9 / 1,325 Brotli-11 bytes.
+// Preserve existing headroom; no new percentage allowance.
+const ceilings = { raw: 2_414_403, gzip9: 1_128_519, brotli11: 935_297 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
