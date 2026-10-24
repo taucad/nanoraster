@@ -91,7 +91,6 @@ pub(crate) struct SceneBuffers {
     gpu_instances: Vec<GpuInstance>,
     texture_pixels: wgpu::Buffer,
     texture_mask: u32,
-    transmission: bool,
 }
 
 /// Scene handle: parsed CPU geometry plus its GPU buffers. The parsed half is
@@ -168,9 +167,12 @@ pub(crate) struct PresentationBuffers {
     pub(crate) sections: Vec<crate::section::SectionSourceReport>,
 }
 
-/// Render targets plus readback for one output size. The two readback buffers
-/// ping-pong so the plan executor can submit view N+1 while view N's buffer is
-/// still mapped for the CPU.
+/// Render targets for one output size. A second readback buffer is acquired
+/// only when the executor overlaps two views of this target set.
+#[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+#[path = "profile.rs"]
+mod profile;
+
 struct SizedTargets {
     width: u32,
     height: u32,
@@ -182,11 +184,11 @@ struct SizedTargets {
     opaque_mips: wgpu::TextureView,
     transmission: bool,
     ao: Option<AoTargets>,
-    composite_view: wgpu::TextureView,
+    composite_view: Option<wgpu::TextureView>,
     depth_view: wgpu::TextureView,
     resolve_texture: wgpu::Texture,
     resolve_view: wgpu::TextureView,
-    readback: [Arc<Readback>; 2],
+    readback: Vec<Arc<Readback>>,
     unpadded_bytes_per_row: u32,
     padded_bytes_per_row: u32,
 }
@@ -203,10 +205,12 @@ impl Drop for SizedTargets {
             &self.hdr_msaa,
             &self.opaque_view,
             &self.opaque_mips,
-            &self.composite_view,
             &self.depth_view,
             &self.resolve_view,
         ];
+        if let Some(composite) = &self.composite_view {
+            views.push(composite);
+        }
         if let Some(ao) = &self.ao {
             views.extend([
                 &ao.depth_view,
@@ -233,6 +237,74 @@ impl std::ops::Deref for Readback {
     }
 }
 
+impl Readback {
+    fn new(device: &wgpu::Device, size: u64) -> Self {
+        Self(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        }))
+    }
+}
+
+fn validate_target_extent(
+    width: u32,
+    height: u32,
+    limits: &wgpu::Limits,
+) -> Result<(), RenderError> {
+    if width > limits.max_texture_dimension_2d || height > limits.max_texture_dimension_2d {
+        return Err(RenderError::Gpu(format!(
+            "requested {width}x{height} exceeds device maxTextureDimension2D {}",
+            limits.max_texture_dimension_2d
+        )));
+    }
+    let readback = u64::from(width).div_ceil(64) * 256 * u64::from(height);
+    if readback > limits.max_buffer_size {
+        return Err(RenderError::Gpu(format!(
+            "requested readback {readback} bytes exceeds device maxBufferSize {}",
+            limits.max_buffer_size
+        )));
+    }
+    Ok(())
+}
+
+fn composite_target(device: &wgpu::Device, size: wgpu::Extent3d) -> wgpu::TextureView {
+    device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("composite HDR"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: HDR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+        .create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+impl SizedTargets {
+    // A view retains its buffer until mapping and CPU consumption finish, even
+    // after resize retires its target set. Never copy into an in-flight buffer.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    fn acquire_readback(&mut self, device: &wgpu::Device) -> usize {
+        if let Some(index) = self
+            .readback
+            .iter()
+            .position(|buffer| Arc::strong_count(buffer) == 1)
+        {
+            return index;
+        }
+        let index = self.readback.len();
+        self.readback.push(Arc::new(Readback::new(
+            device,
+            u64::from(self.padded_bytes_per_row) * u64::from(self.height),
+        )));
+        index
+    }
+}
+
 impl Drop for Readback {
     fn drop(&mut self) {
         self.0.destroy();
@@ -242,6 +314,8 @@ impl Drop for Readback {
 /// One submitted view awaiting readback. Owns clones of the wgpu handles it
 /// needs so target-cache turnover cannot invalidate it.
 struct InFlightView {
+    #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+    probe: Option<profile::Probe>,
     buffer: Arc<Readback>,
     receiver: futures_channel::oneshot::Receiver<Result<(), wgpu::BufferAsyncError>>,
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -295,13 +369,12 @@ struct DeviceState {
     ao_pipelines: Option<AoPipelines>,
     /// Last-used target set, keyed on (width, height).
     targets: Option<SizedTargets>,
-    /// Next readback slot; alternates so at most one view is ever in flight
-    /// against a mapped buffer.
-    slot: usize,
 }
 
 /// Persistent GPU half: one adapter/device/pipeline set reused across calls.
 pub struct Renderer {
+    #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+    profile: std::cell::RefCell<Vec<serde_json::Value>>,
     state: DeviceState,
     lost: Arc<AtomicBool>,
     uncaptured: Arc<Mutex<Option<String>>>,
@@ -1409,6 +1482,16 @@ impl DeviceState {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("render-core"),
+                required_limits: wgpu::Limits {
+                    max_texture_dimension_2d: adapter
+                        .limits()
+                        .max_texture_dimension_2d
+                        .min(crate::options::MAX_DIMENSION),
+                    max_buffer_size: adapter.limits().max_buffer_size.min(256 * 1024 * 1024),
+                    ..Default::default()
+                },
+                #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+                required_features: profile::features(&adapter),
                 ..Default::default()
             })
             .await
@@ -1627,6 +1710,16 @@ impl DeviceState {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let scene_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -1702,7 +1795,6 @@ impl DeviceState {
             pipelines: Vec::new(),
             ao_pipelines: None,
             targets: None,
-            slot: 0,
         })
     }
 }
@@ -1713,6 +1805,8 @@ impl Renderer {
         let uncaptured = Arc::new(Mutex::new(None));
         let state = DeviceState::new(power, &lost, &uncaptured).await?;
         Ok(Self {
+            #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+            profile: Default::default(),
             state,
             lost,
             uncaptured,
@@ -1732,6 +1826,12 @@ impl Renderer {
         self.state.device.destroy();
     }
 
+    /// Drain native, opt-in benchmark diagnostics. Absent from published builds.
+    #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+    pub fn take_profile(&self) -> Vec<serde_json::Value> {
+        self.profile.take()
+    }
+
     pub(crate) fn counters(&self) -> Counters {
         self.counters
     }
@@ -1745,6 +1845,15 @@ impl Renderer {
             u64::from(targets.width) * u64::from(targets.height) > MAX_RETAINED_TARGET_PIXELS
         });
         if oversized {
+            #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+            if self
+                .state
+                .device
+                .features()
+                .contains(wgpu::Features::TIMESTAMP_QUERY)
+            {
+                self.profile.borrow_mut().push(serde_json::json!({"event":"trim", "retired": self.state.targets.as_ref().map(profile::ledger)}));
+            }
             self.state.targets = None;
         }
     }
@@ -1939,11 +2048,6 @@ impl Renderer {
             .collect();
 
         SceneBuffers {
-            transmission: scene
-                .meshes
-                .iter()
-                .flat_map(|mesh| &mesh.primitives)
-                .any(|p| p.material.transmission[0] > 0.0),
             gpu_assets,
             gpu_instances,
             texture_mask: scene.meshes.iter().flat_map(|mesh| &mesh.primitives).fold(
@@ -2115,11 +2219,31 @@ impl Renderer {
 
     /// Keep the last-used target set; recreate on size change (R15 mixed-size
     /// plans cycle it within one job).
-    fn ensure_targets(&mut self, width: u32, height: u32, transmission: bool, ao: bool) {
-        if matches!(&self.state.targets, Some(targets) if targets.width == width && targets.height == height && targets.transmission == transmission && targets.ao.is_some() == ao)
+    fn ensure_targets(
+        &mut self,
+        width: u32,
+        height: u32,
+        transmission: bool,
+        ao: bool,
+        transparency: bool,
+    ) {
+        if let Some(targets) = &mut self.state.targets
+            && targets.width == width
+            && targets.height == height
+            && targets.transmission == transmission
+            && targets.ao.is_some() == ao
         {
+            if targets.composite_view.is_some() != transparency {
+                if let Some(old) = targets.composite_view.take() {
+                    old.texture().destroy();
+                }
+                targets.composite_view =
+                    transparency.then(|| composite_target(&self.state.device, targets.extent));
+            }
             return;
         }
+        #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+        let retired = self.state.targets.as_ref().map(profile::ledger);
         self.counters.target_allocations += 1;
         let device = &self.state.device;
         // Render targets: MSAA color + depth, single-sample sRGB resolve target.
@@ -2150,10 +2274,15 @@ impl Renderer {
         });
         let ao_targets = ao.then(|| {
             let texture = |label, format, usage| {
+                let mut size = extent;
+                if width * height > 1_048_576 && format == wgpu::TextureFormat::Rgba8Unorm {
+                    size.width = width.div_ceil(2);
+                    size.height = height.div_ceil(2);
+                }
                 device
                     .create_texture(&wgpu::TextureDescriptor {
                         label: Some(label),
-                        size: extent,
+                        size,
                         mip_level_count: 1,
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
@@ -2242,14 +2371,9 @@ impl Renderer {
             .collect();
         let opaque_view = opaque_levels[0].clone();
         let opaque_mips = opaque_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let composite_view = hdr_texture(
-            "composite HDR",
-            1,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        );
+        let composite_view = transparency.then(|| composite_target(device, extent));
 
-        // Readback buffers with 256-byte-aligned rows; two so the executor can
-        // keep one view in flight while the previous one is mapped.
+        // Start with one readback. Overlapping views acquire another on demand.
         let unpadded_bytes_per_row = width * 4;
         let padded_bytes_per_row = unpadded_bytes_per_row
             .div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
@@ -2257,14 +2381,10 @@ impl Renderer {
         // Native renderers cross threads, so this is an `Arc`; wasm handles are
         // not `Send`, which is harmless on the single-threaded browser.
         #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
-        let readback = std::array::from_fn(|_| {
-            Arc::new(Readback(device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("readback"),
-                size: (padded_bytes_per_row * height) as u64,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            })))
-        });
+        let readback = vec![Arc::new(Readback::new(
+            device,
+            u64::from(padded_bytes_per_row) * u64::from(height),
+        ))];
 
         self.state.targets = Some(SizedTargets {
             width,
@@ -2285,7 +2405,18 @@ impl Renderer {
             unpadded_bytes_per_row,
             padded_bytes_per_row,
         });
-        self.state.slot = 0;
+        #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+        if self
+            .state
+            .device
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY)
+        {
+            let acquired = profile::ledger(self.state.targets.as_ref().expect("targets"));
+            self.profile.borrow_mut().push(serde_json::json!({"event":"target-turnover", "retired":retired,
+                "acquired":acquired, "overlapBytes":retired.as_ref().and_then(|v| v["targetBytes"].as_u64()).unwrap_or(0)
+                    + acquired["targetBytes"].as_u64().unwrap()}));
+        }
     }
 
     /// Submit one view's render pass and readback copy without waiting for it.
@@ -2298,82 +2429,11 @@ impl Renderer {
         presentation: &PresentationBuffers,
         entry: &PlanEntry,
     ) -> Result<InFlightView, RenderError> {
+        #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+        let started = std::time::Instant::now();
         let options = &entry.options;
         let ao_active = options.ao.is_some_and(|ao| ao.intensity > 0.0);
-        self.ensure_targets(options.width, options.height, scene.transmission, ao_active);
-        if ao_active {
-            self.ensure_ao_pipelines(scene.texture_mask);
-        }
-        // Bias surfaces only when line geometry actually draws this view:
-        // enabled model edges that survive `visiblePrimitives`, or a section
-        // boundary (drawn unconditionally). Keying on `options.lines` alone —
-        // or on line geometry the selection excludes — would fork the bytes of
-        // otherwise identical renders. This mirrors the line pass's own draw
-        // condition below; the two must stay in step.
-        let wireframe = (options.lines
-            && scene.gpu_instances.iter().any(|instance| {
-                let asset = &scene.gpu_assets[instance.mesh_index];
-                asset.lines.iter().any(|lines| {
-                    primitive_selected(
-                        options,
-                        instance.source_node_index,
-                        asset.source_mesh_index,
-                        lines.source_primitive_index,
-                    )
-                })
-            }))
-            || presentation.boundary.is_some()
-            || presentation.open_chains.is_some();
-        let pipeline_index =
-            self.ensure_pipelines(line_width_px(options), wireframe, scene.texture_mask);
-        let state = &self.state;
-        let targets = state.targets.as_ref().expect("targets ensured above");
-        let pair = &state.pipelines[pipeline_index].1;
-        let slot = state.slot;
-
         let camera = entry.prepared.camera;
-        let frame_data = frame_uniform(camera, options);
-        state
-            .queue
-            .write_buffer(&state.frame_buffer, 0, bytemuck::cast_slice(&frame_data));
-
-        let mut encoder = state
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("render"),
-            });
-        let scene_group =
-            |opaque: &wgpu::TextureView, composite: &wgpu::TextureView, ao: &wgpu::TextureView| {
-                state.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("capture material resources"),
-                    layout: &state.scene_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: scene.texture_pixels.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(opaque),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(&state.scene_sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::TextureView(composite),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: wgpu::BindingResource::TextureView(ao),
-                        },
-                    ],
-                })
-            };
-        let empty_resources = scene_group(&state.empty_scene, &state.empty_scene, &state.empty_ao);
-        let transmission_resources =
-            scene_group(&targets.opaque_mips, &state.empty_scene, &state.empty_ao);
         let mut opaque = Vec::new();
         let mut transparent = Vec::new();
         if options.surfaces {
@@ -2403,6 +2463,106 @@ impl Renderer {
         transparent.sort_by(|left, right| left.0.total_cmp(&right.0));
         let has_transparency = !transparent.is_empty();
         let has_transmission = transparent.iter().any(|(_, _, mesh)| mesh.transmission);
+        validate_target_extent(options.width, options.height, &self.state.device.limits())?;
+        self.ensure_targets(
+            options.width,
+            options.height,
+            has_transmission,
+            ao_active,
+            has_transparency,
+        );
+        if ao_active {
+            self.ensure_ao_pipelines(scene.texture_mask);
+        }
+        // Bias surfaces only when line geometry actually draws this view:
+        // enabled model edges that survive `visiblePrimitives`, or a section
+        // boundary (drawn unconditionally). Keying on `options.lines` alone —
+        // or on line geometry the selection excludes — would fork the bytes of
+        // otherwise identical renders. This mirrors the line pass's own draw
+        // condition below; the two must stay in step.
+        let wireframe = (options.lines
+            && scene.gpu_instances.iter().any(|instance| {
+                let asset = &scene.gpu_assets[instance.mesh_index];
+                asset.lines.iter().any(|lines| {
+                    primitive_selected(
+                        options,
+                        instance.source_node_index,
+                        asset.source_mesh_index,
+                        lines.source_primitive_index,
+                    )
+                })
+            }))
+            || presentation.boundary.is_some()
+            || presentation.open_chains.is_some();
+        let pipeline_index =
+            self.ensure_pipelines(line_width_px(options), wireframe, scene.texture_mask);
+        let slot = self
+            .state
+            .targets
+            .as_mut()
+            .expect("targets ensured")
+            .acquire_readback(&self.state.device);
+        let state = &self.state;
+        let targets = state.targets.as_ref().expect("targets ensured above");
+        let pair = &state.pipelines[pipeline_index].1;
+        #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+        let mut probe = profile::Probe::new(
+            &state.device,
+            || serde_json::json!({"id":entry.id,"allocations":profile::ledger(targets)}),
+            started,
+        );
+
+        let frame_data = frame_uniform(camera, options);
+        state
+            .queue
+            .write_buffer(&state.frame_buffer, 0, bytemuck::cast_slice(&frame_data));
+
+        let mut encoder = state
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("render"),
+            });
+        let scene_group = |opaque: &wgpu::TextureView,
+                           composite: &wgpu::TextureView,
+                           ao: &wgpu::TextureView| {
+            state.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("capture material resources"),
+                layout: &state.scene_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: scene.texture_pixels.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(opaque),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&state.scene_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(composite),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(ao),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(if ao.texture().width() > 1 {
+                            &targets.ao.as_ref().expect("AO").depth_view
+                        } else {
+                            &state.empty_scene
+                        }),
+                    },
+                ],
+            })
+        };
+        let empty_resources = scene_group(&state.empty_scene, &state.empty_scene, &state.empty_ao);
+        let transmission_resources =
+            scene_group(&targets.opaque_mips, &state.empty_scene, &state.empty_ao);
         // Each surface draws once. Transmission samples the retained opaque
         // HDR image; compositing precedes the sole display transform.
         for stage in 0..if has_transparency { 2 } else { 1 } {
@@ -2411,6 +2571,8 @@ impl Renderer {
                     let resources = scene_group(&levels[0], &state.empty_scene, &state.empty_ao);
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("transmission mip"),
+                        #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+                        timestamp_writes: probe.as_mut().map(|p| p.pass("transmission mip")),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &levels[1],
                             depth_slice: None,
@@ -2442,7 +2604,7 @@ impl Renderer {
                     resolve_target: Some(if stage == 0 {
                         &targets.opaque_view
                     } else {
-                        &targets.composite_view
+                        targets.composite_view.as_ref().expect("transparent target")
                     }),
                     ops: wgpu::Operations {
                         load: if stage == 0 {
@@ -2469,6 +2631,15 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
+                #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+                timestamp_writes: probe.as_mut().map(|p| {
+                    p.pass(if stage == 0 {
+                        "opaque HDR"
+                    } else {
+                        "transmission and alpha"
+                    })
+                }),
+                #[cfg(not(all(feature = "bench", not(target_arch = "wasm32"))))]
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
@@ -2525,6 +2696,9 @@ impl Renderer {
                 radius,
                 ao.distance_falloff,
             ]);
+            ao_frame[37] = options.width as f32 / ao_targets.estimate_view.texture().width() as f32;
+            ao_frame[38] =
+                options.height as f32 / ao_targets.estimate_view.texture().height() as f32;
             ao_frame[36] =
                 f32::from(camera_projection_kind(&options.camera) == Projection::Orthographic);
             state
@@ -2533,6 +2707,8 @@ impl Renderer {
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("AO opaque depth"),
+                    #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+                    timestamp_writes: probe.as_mut().map(|p| p.pass("AO opaque depth")),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &ao_targets.depth_view,
                         depth_slice: None,
@@ -2611,6 +2787,8 @@ impl Renderer {
                 });
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some(label),
+                    #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+                    timestamp_writes: probe.as_mut().map(|p| p.pass(label)),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: output,
                         depth_slice: None,
@@ -2630,7 +2808,7 @@ impl Renderer {
         let final_resources = scene_group(
             &state.empty_scene,
             if has_transparency {
-                &targets.composite_view
+                targets.composite_view.as_ref().expect("transparent target")
             } else {
                 &targets.opaque_view
             },
@@ -2659,6 +2837,11 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
+                #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+                timestamp_writes: probe
+                    .as_mut()
+                    .map(|p| p.pass("display transform and exact edges")),
+                #[cfg(not(all(feature = "bench", not(target_arch = "wasm32"))))]
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
@@ -2710,7 +2893,15 @@ impl Renderer {
             },
             targets.extent,
         );
+        #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+        if let Some(probe) = &probe {
+            probe.resolve(&mut encoder);
+        }
         let submission = state.queue.submit(Some(encoder.finish()));
+        #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+        if let Some(probe) = &mut probe {
+            probe.map();
+        }
 
         let (sender, receiver) = futures_channel::oneshot::channel();
         readback
@@ -2720,6 +2911,8 @@ impl Renderer {
             });
 
         let in_flight = InFlightView {
+            #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+            probe,
             buffer: readback.clone(),
             receiver,
             submission,
@@ -2727,7 +2920,6 @@ impl Renderer {
             unpadded_bytes_per_row: targets.unpadded_bytes_per_row,
             padded_bytes_per_row: targets.padded_bytes_per_row,
         };
-        self.state.slot ^= 1;
         Ok(in_flight)
     }
 
@@ -2789,6 +2981,16 @@ impl Renderer {
             .flatten()
             .ok_or(RenderError::Gpu("map_async: callback dropped".into()))?
             .map_err(|error| map_error(error, self.take_uncaptured().err()))?;
+        #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+        if let Some(probe) = &view.probe {
+            let mut receipt = probe.read(self.state.queue.get_timestamp_period())?;
+            let copy_started = std::time::Instant::now();
+            let image = self.read_back(&view)?;
+            receipt["cpuReadbackCopyMs"] =
+                serde_json::json!(copy_started.elapsed().as_secs_f64() * 1000.0);
+            self.profile.borrow_mut().push(receipt);
+            return Ok(image);
+        }
         self.read_back(&view)
     }
 
@@ -2836,6 +3038,11 @@ impl Renderer {
         plan: &[PlanEntry],
         now: Option<&(dyn Fn() -> f64 + Sync)>,
     ) -> Result<(Vec<Vec<u8>>, Vec<ViewTimings>), RenderError> {
+        if plan.len() == 1
+            && let Some(targets) = &mut self.state.targets
+        {
+            targets.readback.truncate(1);
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.execute_plan_native(scene, presentation, plan, now)
@@ -3505,6 +3712,127 @@ mod tests {
             wall_error as f64 / 8_100.0 < 3.0,
             "AO falsely darkened the planar millimetre-scale wall"
         );
+    }
+
+    #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+    #[test]
+    fn profiling_preserves_pixels_and_drains_receipts() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let image = render_test_scene(&mut renderer, cube_scene(), physical_options());
+        let hash = image.rgba.iter().fold(0xcbf29ce484222325u64, |h, b| {
+            (h ^ u64::from(*b)).wrapping_mul(0x100000001b3)
+        });
+        println!("profile image hash: {hash}");
+        let receipts = renderer.take_profile();
+        assert!(renderer.take_profile().is_empty(), "diagnostics must drain");
+        if renderer
+            .state
+            .device
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY)
+        {
+            let frame = receipts
+                .iter()
+                .find(|r| r.get("passes").is_some())
+                .expect("frame receipt");
+            assert!(frame["gpuSpanMs"].as_f64().unwrap() > 0.0);
+            assert!(frame["allocations"]["targetBytes"].as_u64().unwrap() > 0);
+            let child =
+                std::process::Command::new(std::env::current_exe().expect("test executable"))
+                    .args([
+                        "--exact",
+                        "render::tests::profiling_preserves_pixels_and_drains_receipts",
+                        "--nocapture",
+                    ])
+                    .env("NANORASTER_GPU_PROFILE", "0")
+                    .output()
+                    .expect("query-free child");
+            let stderr = String::from_utf8_lossy(&child.stderr);
+            assert!(child.status.success(), "{stderr}");
+            assert!(
+                String::from_utf8_lossy(&child.stdout)
+                    .contains(&format!("profile image hash: {hash}")),
+                "profiling changed pixels"
+            );
+        } else {
+            assert!(
+                receipts.is_empty(),
+                "query-free invocation retained diagnostics"
+            );
+        }
+    }
+
+    #[test]
+    fn large_ao_preserves_native_depth_and_edges_and_has_no_frame_history() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let scene = glb::parse_glb(include_bytes!("../../../tests/fixtures/gear-12.glb"))
+            .expect("gear fixture");
+        let options = RenderOptions {
+            width: 1537,
+            height: 865,
+            ao: Some(crate::AmbientOcclusion {
+                radius_pixels: None,
+                intensity: 3.0,
+                distance_falloff: 0.2,
+            }),
+            ..RenderOptions::default()
+        };
+        let first = render_test_scene(&mut renderer, scene.clone(), options.clone());
+        let targets = renderer.state.targets.as_ref().unwrap();
+        let ao = targets.ao.as_ref().unwrap();
+        assert_eq!(
+            (
+                ao.depth_view.texture().width(),
+                ao.depth_view.texture().height()
+            ),
+            (1537, 865)
+        );
+        assert_eq!(
+            (
+                ao.estimate_view.texture().width(),
+                ao.estimate_view.texture().height()
+            ),
+            (769, 433)
+        );
+        assert_eq!(targets.depth_view.texture().sample_count(), MSAA_SAMPLES);
+        let off = render_test_scene(
+            &mut renderer,
+            scene.clone(),
+            RenderOptions {
+                ao: None,
+                ..options.clone()
+            },
+        );
+        // AO cannot affect final geometric coverage; exact black authored lines
+        // remain black because the edge pass follows the surface composition.
+        let mut black = 0;
+        for (a, b) in first
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(off.rgba.as_chunks::<4>().0)
+        {
+            assert_eq!(a[3], b[3]);
+            if b[..3] == [0, 0, 0] && b[3] == 255 {
+                assert_eq!(a, b);
+                black += 1;
+            }
+        }
+        assert!(black > 100, "fixture must exercise authored CAD edges");
+        let repeated = render_test_scene(&mut renderer, scene.clone(), options.clone());
+        assert_eq!(
+            first.rgba, repeated.rgba,
+            "AO must not rely on temporal history"
+        );
+        renderer.trim_targets();
+        assert_eq!(
+            first.rgba,
+            render_test_scene(&mut renderer, scene, options).rgba
+        );
+        renderer.take_uncaptured().expect("large AO validation");
     }
 
     #[test]
@@ -5397,6 +5725,8 @@ mod tests {
             let (sender, receiver) = futures_channel::oneshot::channel();
             sender.send(Err(wgpu::BufferAsyncError)).unwrap();
             let view = InFlightView {
+                #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+                probe: None,
                 buffer: Arc::new(Readback(renderer.state.device.create_buffer(
                     &wgpu::BufferDescriptor {
                         label: Some("failed map"),
@@ -5447,6 +5777,8 @@ mod tests {
         let submission = renderer.state.queue.submit(Some(commands));
         let (_sender, receiver) = futures_channel::oneshot::channel();
         let view = InFlightView {
+            #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+            probe: None,
             buffer: Arc::new(Readback(readback)),
             receiver,
             submission,
@@ -5492,6 +5824,8 @@ mod tests {
         assert!(renderer.take_uncaptured().is_err());
         let (_sender, receiver) = futures_channel::oneshot::channel();
         let view = InFlightView {
+            #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
+            probe: None,
             buffer: Arc::new(Readback(readback)),
             receiver,
             submission,
@@ -5552,6 +5886,170 @@ mod tests {
     }
 
     #[test]
+    fn requested_extents_respect_the_initialized_device_limits() {
+        let limits = wgpu::Limits {
+            max_texture_dimension_2d: 8192,
+            max_buffer_size: 256 * 1024 * 1024,
+            ..Default::default()
+        };
+        assert!(validate_target_extent(8192, 8192, &limits).is_ok());
+        assert!(
+            validate_target_extent(8193, 16, &limits)
+                .unwrap_err()
+                .to_string()
+                .contains("maxTextureDimension2D")
+        );
+        let small = wgpu::Limits {
+            max_buffer_size: 128 * 1024 * 1024,
+            ..limits
+        };
+        assert!(
+            validate_target_extent(8192, 8192, &small)
+                .unwrap_err()
+                .to_string()
+                .contains("maxBufferSize")
+        );
+        assert!(validate_target_extent(768, 432, &small).is_ok());
+    }
+
+    #[test]
+    fn conditional_targets_follow_visible_surfaces_and_preserve_pixels() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let opaque = cube_scene();
+        let expected = render_test_scene(&mut renderer, opaque.clone(), physical_options());
+        assert!(
+            renderer
+                .state
+                .targets
+                .as_ref()
+                .unwrap()
+                .composite_view
+                .is_none()
+        );
+        for transmission in [false, true] {
+            let mut transparent = opaque.clone();
+            let material = &mut transparent.meshes[0].primitives[0].material;
+            if transmission {
+                material.transmission[0] = 0.8;
+            } else {
+                material.base_color[3] = 0.4;
+                material.alpha_mode = 2.0;
+            }
+            let actual = render_test_scene(&mut renderer, transparent.clone(), physical_options());
+            let targets = renderer.state.targets.as_ref().unwrap();
+            assert!(targets.composite_view.is_some());
+            assert_eq!(targets.transmission, transmission);
+            let mut cold =
+                pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                    .expect("cold renderer");
+            assert_eq!(
+                actual.rgba,
+                render_test_scene(&mut cold, transparent.clone(), physical_options()).rgba
+            );
+            let hidden = RenderOptions {
+                surfaces: false,
+                ..physical_options()
+            };
+            render_test_scene(&mut renderer, transparent, hidden);
+            let targets = renderer.state.targets.as_ref().unwrap();
+            assert!(targets.composite_view.is_none());
+            assert!(!targets.transmission);
+            assert_eq!(
+                expected.rgba,
+                render_test_scene(&mut renderer, opaque.clone(), physical_options()).rgba
+            );
+        }
+    }
+
+    #[test]
+    fn overlapping_readbacks_survive_resize_and_only_allocate_when_busy() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let mut scene = Scene::new(cube_scene());
+        let options = physical_options();
+        let presentation = renderer
+            .prepare_presentation(&scene.parsed, &options)
+            .expect("presentation");
+        let make_entry = |options: RenderOptions| PlanEntry {
+            id: "overlap".into(),
+            format: ImageFormat::Raw,
+            prepared: crate::capture_overlay::prepare_view(&scene.parsed, &options)
+                .expect("camera"),
+            options,
+        };
+        let entry = make_entry(options.clone());
+        let resized = make_entry(RenderOptions {
+            width: 127,
+            height: 85,
+            ..options
+        });
+        let buffers = renderer.ensure_uploaded(&mut scene).expect("upload");
+        let first = renderer
+            .begin_view(buffers, &presentation, &entry)
+            .expect("first");
+        assert_eq!(renderer.state.targets.as_ref().unwrap().readback.len(), 1);
+        let second = renderer
+            .begin_view(buffers, &presentation, &entry)
+            .expect("second");
+        assert_eq!(renderer.state.targets.as_ref().unwrap().readback.len(), 2);
+        assert!(!Arc::ptr_eq(&first.buffer, &second.buffer));
+        let expected = renderer.finish_view_blocking(first).expect("first pixels");
+        let third = renderer
+            .begin_view(buffers, &presentation, &resized)
+            .expect("resize");
+        assert_eq!(renderer.state.targets.as_ref().unwrap().readback.len(), 1);
+        assert_eq!(
+            expected.rgba,
+            renderer
+                .finish_view_blocking(second)
+                .expect("retired pixels")
+                .rgba
+        );
+        let resized_pixels = renderer
+            .finish_view_blocking(third)
+            .expect("resized pixels");
+        assert_eq!((resized_pixels.width, resized_pixels.height), (127, 85));
+        let fourth = renderer
+            .begin_view(buffers, &presentation, &resized)
+            .expect("reuse");
+        assert_eq!(renderer.state.targets.as_ref().unwrap().readback.len(), 1);
+        assert_eq!(
+            resized_pixels.rgba,
+            renderer
+                .finish_view_blocking(fourth)
+                .expect("reused pixels")
+                .rgba
+        );
+        renderer.take_uncaptured().expect("validation");
+    }
+
+    #[cfg(feature = "bench")]
+    #[test]
+    fn opaque_single_targets_do_not_reserve_transparency_or_overlap_storage() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        renderer.ensure_targets(768, 432, false, false, false);
+        let ledger = profile::ledger(renderer.state.targets.as_ref().expect("targets"));
+        assert_eq!(
+            ledger["readbackBytes"].as_array().unwrap().len(),
+            1,
+            "a single view has no overlapping readback"
+        );
+        assert!(
+            !ledger["textures"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|t| t["label"] == "composite HDR"),
+            "opaque output resolves directly into opaque HDR"
+        );
+    }
+
+    #[test]
     fn pipeline_and_target_caches_reuse_and_evict() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
@@ -5578,31 +6076,31 @@ mod tests {
                 .any(|(key, _)| *key == u64::from(2.0f32.to_bits() << 1 | 1))
         );
 
-        renderer.ensure_targets(320, 240, false, false);
+        renderer.ensure_targets(320, 240, false, false, false);
         assert_eq!(renderer.counters.target_allocations, 1);
-        renderer.ensure_targets(320, 240, false, false);
+        renderer.ensure_targets(320, 240, false, false, false);
         assert_eq!(renderer.counters.target_allocations, 1);
-        renderer.ensure_targets(640, 480, false, false);
+        renderer.ensure_targets(640, 480, false, false, false);
         assert_eq!(renderer.counters.target_allocations, 2);
         // The retention guard keeps ordinary sizes and evicts oversized ones.
         renderer.trim_targets();
         assert!(renderer.state.targets.is_some());
-        renderer.ensure_targets(4096, 4096, false, false);
+        renderer.ensure_targets(4096, 4096, false, false, false);
         renderer.trim_targets();
         assert!(renderer.state.targets.is_none());
         // Nothing retained: trimming again is a no-op.
         renderer.trim_targets();
         assert!(renderer.state.targets.is_none());
 
-        renderer.ensure_targets(640, 480, false, false);
+        renderer.ensure_targets(640, 480, false, false, false);
         let targets = renderer.state.targets.as_ref().expect("targets");
-        assert_eq!(targets.readback.len(), 2);
+        assert_eq!(targets.readback.len(), 1);
         assert_eq!(targets.unpadded_bytes_per_row, 640 * 4);
         assert_eq!(
             targets.padded_bytes_per_row % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
             0
         );
-        renderer.ensure_targets(640, 480, false, true);
+        renderer.ensure_targets(640, 480, false, true, false);
         assert!(
             renderer
                 .state
@@ -5613,7 +6111,7 @@ mod tests {
                 .is_some()
         );
         assert_eq!(renderer.counters.target_allocations, 5);
-        renderer.ensure_targets(640, 480, false, true);
+        renderer.ensure_targets(640, 480, false, true, false);
         assert_eq!(renderer.counters.target_allocations, 5);
         renderer.ensure_ao_pipelines(0);
         let pipeline_sets = renderer.counters.pipeline_sets;

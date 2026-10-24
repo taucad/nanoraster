@@ -120,6 +120,30 @@ produce the same bytes. Pin the preset when the request, not the default,
 should say how the image was lit.
 [Determinism](../how-it-works#determinism) covers either.
 
+## Ambient occlusion
+
+The default radius is 1% of the output diagonal (at least four
+pixels), intensity is 3, and distance falloff is 0.2. These values are resolved
+for each invocation, not global renderer settings:
+
+```typescript
+const image = await renderImage(glb, {
+  format: 'png',
+  width: 7680,
+  height: 4320,
+  ao: { radiusPixels: 32, intensity: 2, distanceFalloff: 0.2 },
+});
+```
+
+Outputs above 1,048,576 pixels estimate and filter AO at half linear resolution,
+then reconstruct with native-resolution depth. Smaller outputs keep full-resolution
+AO. Beauty and authored CAD edges remain at the requested resolution. The two
+filters use only the current image; repeated captures need no temporal warmup.
+
+The maximum dimension is 8192, subject to the initialized adapter's texture and
+buffer limits and available memory. A square 8192×8192 export has substantially
+higher storage and encoding costs than standard 7680×4320 8K.
+
 ## Variations
 
 **Lighting is shared across a batch.** `renderImages` takes one rig for the

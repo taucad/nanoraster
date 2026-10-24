@@ -441,7 +441,7 @@ Pass `ao: {}` to add screen-space contact shadows to opaque surfaces. Omit it
 to skip the depth and full-screen passes. The optional fields tune the radius
 in output pixels, visibility exponent, and distance rejection. AO uses the
 same profile for every view in a batch and leaves authored material factors
-unchanged.
+unchanged. See [AO defaults and output limits](guides/light-the-subject#ambient-occlusion).
 
 <auto-type-table
   path="./props.ts"
@@ -674,7 +674,7 @@ drift.
 
 | Export                                | Runtime value                             | Unit or syntax              | Affected field              |
 | ------------------------------------- | ----------------------------------------- | --------------------------- | --------------------------- |
-| `renderImageDimensionRange`           | `readonly [16, 4096]`                     | pixels                      | `width`, `height`           |
+| `renderImageDimensionRange`           | `readonly [16, 8192]`                     | pixels                      | `width`, `height`           |
 | `renderImageQualityRange`             | `readonly [0, 1]`                         | normalised encoder quality  | `quality`                   |
 | `renderImageMarginRange`              | `readonly [0, 0.5]`                       | minimum empty fraction      | `camera.margin`             |
 | `renderImageVerticalFieldOfViewRange` | `readonly [1, 179]`                       | degrees                     | `verticalFieldOfView`       |

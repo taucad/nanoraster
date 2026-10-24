@@ -1115,7 +1115,7 @@ mod tests {
                 ..Default::default()
             },
             RenderOptions {
-                height: 4097,
+                height: 8193,
                 ..Default::default()
             },
             RenderOptions {

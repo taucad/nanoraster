@@ -51,6 +51,7 @@ struct Prim {
 @group(3) @binding(2) var scene_sampler: sampler;
 @group(3) @binding(3) var composite_scene: texture_2d<f32>;
 @group(3) @binding(4) var ao_scene: texture_2d<f32>;
+@group(3) @binding(5) var ao_view_depth: texture_2d<f32>;
 
 struct Object {
     model: mat4x4<f32>,
@@ -265,10 +266,32 @@ fn vs_screen(@builtin(vertex_index) index: u32) -> ScreenOut {
 fn fs_mip(in: ScreenOut) -> @location(0) vec4<f32> {
     return textureSampleLevel(opaque_scene, scene_sampler, in.uv, 0.0);
 }
+// Reconstruct reduced AO with native depth; full-size AO retains its direct sample.
+fn reconstructed_ao(uv: vec2<f32>) -> f32 {
+    let size = vec2<f32>(textureDimensions(ao_scene));
+    if (all(size == frame.viewport.xy) || size.x <= 1.0) { return textureSampleLevel(ao_scene,scene_sampler,uv,0.0).r; }
+    let full_size = vec2<f32>(textureDimensions(ao_view_depth));
+    let z=textureLoad(ao_view_depth,vec2<i32>(uv*full_size),0).r;
+    if (z == 0.0) { return 1.0; }
+    let coordinate=uv*size-0.5;
+    let base=vec2<i32>(floor(coordinate));
+    let fraction=fract(coordinate);
+    var sum=0.0; var weight_sum=0.0;
+    for(var y=0; y<2; y++) { for(var x=0; x<2; x++) {
+        let cell=clamp(base+vec2<i32>(x,y),vec2<i32>(0),vec2<i32>(size)-1);
+        let sample_pixel=vec2<i32>((vec2<f32>(cell)+0.5)*full_size/size);
+        let sample_z=textureLoad(ao_view_depth,sample_pixel,0).r;
+        let bilinear=select(1.0-fraction.x,fraction.x,x==1)*select(1.0-fraction.y,fraction.y,y==1);
+        let weight=bilinear*exp(-abs(sample_z-z)/max(abs(z)*0.002,1e-7))*select(0.0,1.0,sample_z!=0.0);
+        sum+=textureLoad(ao_scene,cell,0).r*weight; weight_sum+=weight;
+    }}
+    if (weight_sum<0.0001) { return 1.0; }
+    return sum/weight_sum;
+}
 @fragment
 fn fs_screen(in: ScreenOut) -> @location(0) vec4<f32> {
     let color = textureSampleLevel(composite_scene, scene_sampler, in.uv, 0.0);
-    let visibility = pow(textureSampleLevel(ao_scene, scene_sampler, in.uv, 0.0).r, frame.ao_control.x);
+    let visibility = pow(reconstructed_ao(in.uv), frame.ao_control.x);
     let display = tone_map(color.rgb / max(color.a, 0.000001), frame.exposure) * visibility;
     let alpha = color.a + frame.background.a * (1.0 - color.a);
     let premultiplied = display * color.a + frame.background.rgb * frame.background.a * (1.0 - color.a);

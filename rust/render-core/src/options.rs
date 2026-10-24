@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, de, de::DeserializeOwned};
 use std::collections::HashSet;
 
 pub(crate) const MIN_DIMENSION: u32 = 16;
-pub(crate) const MAX_DIMENSION: u32 = 4096;
+pub(crate) const MAX_DIMENSION: u32 = 8_192;
 pub(crate) const ANNOTATED_MIN_DIMENSION: u32 = 192;
 const MAX_LIGHT_COLOR: f32 = 32.0;
 const MAX_AMBIENT: f32 = 4.0;
@@ -1170,6 +1170,37 @@ mod tests {
     }
 
     #[test]
+    fn eight_k_extent_is_admitted_and_larger_extents_are_rejected() {
+        let (single, _) =
+            RenderRequest::from_json(r#"{"format":"png","width":8192,"height":8192}"#)
+                .unwrap()
+                .resolve()
+                .unwrap();
+        assert_eq!((single.width, single.height), (8192, 8192));
+        let (_, _, views, _) = RenderImagesRequest::from_json(
+            r#"{"format":"png","views":[{"id":"max","width":8192,"height":8192}]}"#,
+        )
+        .unwrap()
+        .resolve()
+        .unwrap();
+        assert_eq!((views[0].width, views[0].height), (Some(8192), Some(8192)));
+        assert!(
+            RenderRequest::from_json(r#"{"format":"png","width":8193}"#)
+                .unwrap()
+                .resolve()
+                .is_err()
+        );
+        assert!(
+            RenderImagesRequest::from_json(
+                r#"{"format":"png","views":[{"id":"over","height":8193}]}"#
+            )
+            .unwrap()
+            .resolve()
+            .is_err()
+        );
+    }
+
+    #[test]
     fn singular_defaults_annotations_off() {
         let (options, format) = RenderRequest::from_json(r#"{"format":"png"}"#)
             .expect("parse")
@@ -1766,11 +1797,11 @@ mod tests {
         let cases = [
             (
                 r#"{"format":"png","views":[{"id":"front","width":15}]}"#,
-                "parse: views[0].width 15 outside 16..=4096",
+                "parse: views[0].width 15 outside 16..=8192",
             ),
             (
-                r#"{"format":"png","views":[{"id":"front","height":4097}]}"#,
-                "parse: views[0].height 4097 outside 16..=4096",
+                r#"{"format":"png","views":[{"id":"front","height":8193}]}"#,
+                "parse: views[0].height 8193 outside 16..=8192",
             ),
             (
                 r#"{"format":"png","views":[{"id":"front","quality":1.5}]}"#,

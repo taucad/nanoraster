@@ -101,6 +101,32 @@ test('wasm AO changes contact shading without changing zero-intensity pixels', a
   expect(await render_image(glb, JSON.stringify({ ...options, ao: {} }))).toEqual(on);
 });
 
+test('reduced AO keeps native coverage and survives resize without history', async () => {
+  const renderer = await Renderer.create();
+  const options = { width: 1537, height: 865, format: 'raw', ao: {} };
+  try {
+    const first = await renderer.render_image(glb, JSON.stringify(options));
+    const off = await renderer.render_image(glb, JSON.stringify({ ...options, ao: undefined }));
+    await renderer.render_image(glb, JSON.stringify({ ...options, width: 192, height: 192 }));
+    const repeated = await renderer.render_image(glb, JSON.stringify(options));
+    expect(first.byteLength).toBe(1537 * 865 * 4);
+    expect(first.every((value, i) => value === repeated[i])).toBe(true);
+    let sameCoverage = true;
+    let cleanBlackEdges = 0;
+    for (let i = 0; i < first.length; i += 4) {
+      if (first[i + 3] !== off[i + 3]) sameCoverage = false;
+      if (off[i] === 0 && off[i + 1] === 0 && off[i + 2] === 0 && off[i + 3] === 255) {
+        if (first[i] !== 0 || first[i + 1] !== 0 || first[i + 2] !== 0) sameCoverage = false;
+        cleanBlackEdges++;
+      }
+    }
+    expect(sameCoverage).toBe(true);
+    expect(cleanBlackEdges).toBeGreaterThan(100);
+  } finally {
+    renderer.dispose();
+  }
+});
+
 test('fitted perspective keeps the gear contained and legible through wide fields of view', async () => {
   const boundsAt = async (verticalFieldOfView) => {
     const bytes = await render_image(

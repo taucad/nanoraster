@@ -189,7 +189,13 @@ const sizes = {
 // (counting-sorted half-edges, flat vertex-link tables, bucketed component
 // edges, a swept overlap broad phase). Each ceiling adds main's measured
 // host-to-ceiling offset to the branch figure.
-const ceilings = { raw: 2_404_153, gzip9: 1_125_436, brotli11: 931_343 };
+// Conditional target/readback storage, bounded AO and 8K admission: same-host
+// e1fd0d1 baseline 2,402,844 / 1,121,819 / 933,624; candidate 2,410,465 /
+// 1,123,918 / 936,253 (Rust 1.98.0, Binaryen 132, Node 26.8.1). The +7,621
+// raw bytes include native-depth AO reconstruction and resolution-aware filtering;
+// native-only opt-in profiling is absent from WASM. Preserve the existing
+// host-to-ceiling offsets and compressor tolerance, adding only measured deltas.
+const ceilings = { raw: 2_411_774, gzip9: 1_127_535, brotli11: 933_972 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.

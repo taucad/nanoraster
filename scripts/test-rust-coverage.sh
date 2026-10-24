@@ -38,7 +38,9 @@ cd "$REPO_ROOT"
 # silently uncompiled: its code counts, and its tests run.
 # Tests share the CI GPU. Bound simultaneous shader compilation by serializing
 # separate cases; explicit concurrency inside individual tests remains.
-cargo llvm-cov \
+# Exercise native opt-in timing/ledger collection. Its regression also runs an
+# independent query-free child to verify that instrumentation changes no pixels.
+NANORASTER_GPU_PROFILE=1 cargo llvm-cov \
   --manifest-path rust/Cargo.toml \
   --workspace \
   --all-features \
