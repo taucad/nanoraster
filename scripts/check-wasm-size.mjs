@@ -208,7 +208,12 @@ const sizes = {
 // 940,752. The +1,808 raw bytes are the request-scoped index list construction
 // and traversal; no dependency/profile/API change. Preserve the prior 331-byte
 // raw headroom; compressed outputs remain within their existing allowances.
-const ceilings = { raw: 2_422_493, gzip9: 1_130_374, brotli11: 938_044 };
+// Reuse unique indices for annotation fitting (Rust 1.99.1): same-host raw
+// 2,422,430 -> 2,422,511 (+81), gzip-9 1,128,323 and Brotli-11 941,364.
+// The existing request-scoped list replaces repeated draw-index projections;
+// native and WASM output remains exact. Admit only the measured raw delta,
+// preserving 63 bytes of headroom and the existing compressed allowances.
+const ceilings = { raw: 2_422_574, gzip9: 1_130_374, brotli11: 938_044 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.

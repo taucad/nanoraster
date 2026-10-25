@@ -114,7 +114,7 @@ pub(crate) fn prepare_view_with_positions(
     let label = options.label.clone();
     let mut layout = measure_layout(options, label.as_deref())?;
     if options.camera.is_fit() {
-        camera = overlay_safe_camera(scene, options, camera, &layout)?;
+        camera = overlay_safe_camera(positions, options, camera, &layout)?;
     }
 
     let (scale_width_px, scale_label, scale_font_px) = if let Some(rect) = layout.scale {
@@ -304,7 +304,7 @@ fn measure_layout(
 }
 
 fn overlay_safe_camera(
-    scene: &Scene,
+    positions: &mut UniquePositions<'_>,
     options: &RenderOptions,
     mut camera: CameraState,
     layout: &OverlayLayout,
@@ -316,7 +316,7 @@ fn overlay_safe_camera(
     if overlays.is_empty() {
         return Ok(camera);
     }
-    let envelope = projected_envelope(scene, options, camera, options.width, options.height)?;
+    let envelope = projected_envelope(positions, options, camera, options.width, options.height)?;
     let center = Vec2::new(options.width as f32 * 0.5, options.height as f32 * 0.5);
     // Keep one device pixel beyond the declared guard so floating-point
     // projection at the exact analytical boundary cannot fail the final
@@ -382,7 +382,7 @@ fn ratio(numerator: f32, denominator: f32) -> f32 {
 }
 
 fn projected_envelope(
-    scene: &Scene,
+    positions: &mut UniquePositions<'_>,
     options: &RenderOptions,
     camera: CameraState,
     width: u32,
@@ -396,7 +396,7 @@ fn projected_envelope(
         f32::NEG_INFINITY,
     );
     let mut error = None;
-    let any = scene
+    let any = positions
         .for_each_position(options, &mut |position| {
             if error.is_some() {
                 return;
@@ -1424,7 +1424,7 @@ mod tests {
         };
         let annotated = prepare_view(&scene(), &annotated_options).expect("annotated view");
         let envelope = projected_envelope(
-            &scene(),
+            &mut UniquePositions::new(&scene()),
             &annotated_options,
             annotated.camera,
             annotated_options.width,
@@ -1440,6 +1440,157 @@ mod tests {
         .flatten()
         {
             assert!(!intersects(envelope, rect, annotated.layout.guard as f32));
+        }
+    }
+
+    #[test]
+    fn annotation_fit_matches_full_draw_index_reference() {
+        let mut sources = vec![
+            crate::glb::parse_glb(include_bytes!("../../../tests/fixtures/gear-12.glb"))
+                .expect("gear"),
+            crate::glb::parse_glb(include_bytes!(
+                "../../../tests/fixtures/interleaved-instanced-lines.glb"
+            ))
+            .expect("instances"),
+        ];
+        for extent in [1.0e-9, 1.0, 1.0e9] {
+            let mut source = scaled_scene(extent);
+            source.meshes[0].primitives[0].indices = vec![7, 0, 7, 1, 2, 0, 3, 4, 5, 6];
+            source.meshes[0].primitives[0]
+                .positions
+                .extend([f32::NAN; 3]);
+            let mut instance = source.instances[0].clone();
+            instance.source_node_index = 1;
+            instance.model = Mat4::from_scale_rotation_translation(
+                Vec3::new(-1.0, 2.0, 0.5),
+                glam::Quat::from_rotation_z(0.7),
+                Vec3::new(3.0, -1.0, 0.2) * extent,
+            );
+            source.instances.push(instance);
+            source.bounds = None;
+            sources.push(source);
+        }
+        for scene in &sources {
+            let mut unique = UniquePositions::new(scene);
+            let mut reference = UniquePositions::all(scene);
+            for projection in [Projection::Perspective, Projection::Orthographic] {
+                for direction in [[1.0, 2.0, 3.0], [-1.0, 0.0, 0.0]] {
+                    for (width, height) in [(768, 432), (5120, 2880)] {
+                        let options = RenderOptions {
+                            width,
+                            height,
+                            label: Some("Exact annotation envelope".into()),
+                            axes: true,
+                            scale_bar: true,
+                            ..fit_options(direction, [0.0, 1.0, 0.0], projection)
+                        };
+                        let unadjusted = camera_state(scene, &options);
+                        let envelope_bits = |bounds: (f32, f32, f32, f32)| {
+                            [bounds.0, bounds.1, bounds.2, bounds.3].map(f32::to_bits)
+                        };
+                        assert_eq!(
+                            envelope_bits(
+                                projected_envelope(
+                                    &mut unique,
+                                    &options,
+                                    unadjusted,
+                                    width,
+                                    height
+                                )
+                                .expect("unique envelope")
+                            ),
+                            envelope_bits(
+                                projected_envelope(
+                                    &mut reference,
+                                    &options,
+                                    unadjusted,
+                                    width,
+                                    height
+                                )
+                                .expect("draw envelope")
+                            ),
+                        );
+                        let actual =
+                            prepare_view_with_positions(&mut unique, &options).expect("unique");
+                        let expected = prepare_view_with_positions(&mut reference, &options)
+                            .expect("draw indices");
+                        assert_eq!(
+                            actual.camera.projection.to_cols_array().map(f32::to_bits),
+                            expected.camera.projection.to_cols_array().map(f32::to_bits)
+                        );
+                        assert_eq!(
+                            actual.camera.view.to_cols_array().map(f32::to_bits),
+                            expected.camera.view.to_cols_array().map(f32::to_bits)
+                        );
+                        assert_eq!(
+                            actual.scale_width_px.map(f32::to_bits),
+                            expected.scale_width_px.map(f32::to_bits)
+                        );
+                        assert_eq!(
+                            actual.scale_font_px.map(f32::to_bits),
+                            expected.scale_font_px.map(f32::to_bits)
+                        );
+                        assert_eq!(actual.scale_label, expected.scale_label);
+                        assert_eq!(actual.layout.label, expected.layout.label);
+                        assert_eq!(actual.layout.scale, expected.layout.scale);
+                        assert_eq!(actual.layout.axes, expected.layout.axes);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn annotation_envelope_preserves_empty_and_nonfinite_error_precedence() {
+        let mut source = scene();
+        source.meshes[0].primitives[0].indices = vec![0, 1, 0, 2, 1, 3, 4, 5, 6, 7];
+        let options = RenderOptions::default();
+        let invalid_projection = CameraState {
+            projection: Mat4::ZERO,
+            view: Mat4::IDENTITY,
+            forward: Vec3::NEG_Z,
+            target_depth: 0.0,
+        };
+        for invalid_world in [false, true] {
+            if invalid_world {
+                source.meshes[0].primitives[0]
+                    .positions
+                    .extend([f32::NAN; 3]);
+                source.meshes[0].primitives[0].indices.push(8);
+            }
+            for hidden in [false, true] {
+                let options = RenderOptions {
+                    visible_primitives: hidden.then(Vec::new),
+                    ..options.clone()
+                };
+                let actual = projected_envelope(
+                    &mut UniquePositions::new(&source),
+                    &options,
+                    invalid_projection,
+                    768,
+                    432,
+                )
+                .expect_err("invalid")
+                .to_string();
+                let expected = projected_envelope(
+                    &mut UniquePositions::all(&source),
+                    &options,
+                    invalid_projection,
+                    768,
+                    432,
+                )
+                .expect_err("reference error")
+                .to_string();
+                assert_eq!(actual, expected);
+                let message = if hidden {
+                    "scene has no projected geometry"
+                } else if invalid_world {
+                    "transformed POSITION values must be finite"
+                } else {
+                    "non-finite projected scene bounds"
+                };
+                assert!(actual.contains(message), "{actual}");
+            }
         }
     }
 
@@ -1561,7 +1712,7 @@ mod tests {
                     };
                     let prepared = prepare_view(&scene, &options).expect("canonical view");
                     let envelope = projected_envelope(
-                        &scene,
+                        &mut UniquePositions::new(&scene),
                         &options,
                         prepared.camera,
                         options.width,
@@ -1777,8 +1928,26 @@ mod tests {
             bounds: None,
         };
         let options = RenderOptions::default();
-        assert!(projected_envelope(&empty_scene, &options, zero_camera, 100, 100).is_err());
-        assert!(projected_envelope(&scene(), &options, zero_camera, 100, 100).is_err());
+        assert!(
+            projected_envelope(
+                &mut UniquePositions::new(&empty_scene),
+                &options,
+                zero_camera,
+                100,
+                100
+            )
+            .is_err()
+        );
+        assert!(
+            projected_envelope(
+                &mut UniquePositions::new(&scene()),
+                &options,
+                zero_camera,
+                100,
+                100
+            )
+            .is_err()
+        );
         let overflow_camera = CameraState {
             projection: Mat4::from_cols(
                 Vec4::new(f32::MAX, 0.0, 0.0, 0.0),
@@ -1788,7 +1957,16 @@ mod tests {
             ),
             ..zero_camera
         };
-        assert!(projected_envelope(&scene(), &options, overflow_camera, 100, 100).is_err());
+        assert!(
+            projected_envelope(
+                &mut UniquePositions::new(&scene()),
+                &options,
+                overflow_camera,
+                100,
+                100
+            )
+            .is_err()
+        );
         assert!(
             meters_per_pixel(
                 zero_camera,
@@ -1816,7 +1994,7 @@ mod tests {
         };
         assert!(
             overlay_safe_camera(
-                &scene(),
+                &mut UniquePositions::new(&scene()),
                 &RenderOptions::default(),
                 camera_state(&scene(), &RenderOptions::default()),
                 &obstructed,
@@ -1825,7 +2003,7 @@ mod tests {
         );
         assert!(
             overlay_safe_camera(
-                &scene(),
+                &mut UniquePositions::new(&scene()),
                 &RenderOptions::default(),
                 zero_camera,
                 &obstructed
