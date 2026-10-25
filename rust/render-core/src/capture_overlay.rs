@@ -5,7 +5,7 @@ use crate::glb::{Scene, UniquePositions};
 use crate::render::camera_state;
 use crate::render::{CameraState, Rendered, camera_state_with_bounds};
 use crate::{Projection, RenderError, RenderOptions};
-use glam::{Vec2, Vec3, Vec4};
+use glam::{Vec2, Vec3};
 
 const X_COLOR: [u8; 4] = [255, 0, 0, 255];
 const Y_COLOR: [u8; 4] = [0, 128, 0, 255];
@@ -401,25 +401,50 @@ fn projected_envelope(
             if error.is_some() {
                 return;
             }
-            let clip = matrix * Vec4::new(position.x, position.y, position.z, 1.0);
+            // Preserve matrix-vector addition order in each lane. Explicit lanes
+            // avoid vector mask/reduction work in this measured projection hot path.
+            // Z still participates in validity checks even though layout uses only XY.
+            let clip_x = matrix.x_axis.x * position.x;
+            let clip_x = clip_x + matrix.y_axis.x * position.y;
+            let clip_x = clip_x + matrix.z_axis.x * position.z;
+            let clip_x = clip_x + matrix.w_axis.x;
+            let clip_y = matrix.x_axis.y * position.x;
+            let clip_y = clip_y + matrix.y_axis.y * position.y;
+            let clip_y = clip_y + matrix.z_axis.y * position.z;
+            let clip_y = clip_y + matrix.w_axis.y;
+            let clip_z = matrix.x_axis.z * position.x;
+            let clip_z = clip_z + matrix.y_axis.z * position.y;
+            let clip_z = clip_z + matrix.z_axis.z * position.z;
+            let clip_z = clip_z + matrix.w_axis.z;
+            let clip_w = matrix.x_axis.w * position.x;
+            let clip_w = clip_w + matrix.y_axis.w * position.y;
+            let clip_w = clip_w + matrix.z_axis.w * position.z;
+            let clip_w = clip_w + matrix.w_axis.w;
             // Homogeneous W scales with world units; a small but normal value is
             // valid for sub-millimetre scenes. Only zero/subnormal W cannot be
             // divided safely.
-            if !clip.is_finite() || clip.w.abs() < f32::MIN_POSITIVE {
+            if !(clip_x.is_finite()
+                && clip_y.is_finite()
+                && clip_z.is_finite()
+                && clip_w.is_finite())
+                || clip_w.abs() < f32::MIN_POSITIVE
+            {
                 error = Some(RenderError::Parse(
                     "non-finite projected scene bounds".into(),
                 ));
                 return;
             }
-            let ndc = clip.truncate() / clip.w;
-            if !ndc.is_finite() {
+            let ndc_x = clip_x / clip_w;
+            let ndc_y = clip_y / clip_w;
+            let ndc_z = clip_z / clip_w;
+            if !(ndc_x.is_finite() && ndc_y.is_finite() && ndc_z.is_finite()) {
                 error = Some(RenderError::Parse(
                     "non-finite projected scene bounds".into(),
                 ));
                 return;
             }
-            let x = (ndc.x * 0.5 + 0.5) * width as f32;
-            let y = (0.5 - ndc.y * 0.5) * height as f32;
+            let x = (ndc_x * 0.5 + 0.5) * width as f32;
+            let y = (0.5 - ndc_y * 0.5) * height as f32;
             bounds.0 = bounds.0.min(x);
             bounds.1 = bounds.1.min(y);
             bounds.2 = bounds.2.max(x);
@@ -986,7 +1011,7 @@ fn composite_coverage(rendered: &mut Rendered, coverage: &[u8], rect: Rect, colo
 mod tests {
     use super::*;
     use crate::{CameraProjection, RenderCamera};
-    use glam::Mat4;
+    use glam::{Mat4, Vec4};
 
     fn scene() -> Scene {
         scaled_scene(1.0)
@@ -1440,6 +1465,136 @@ mod tests {
         .flatten()
         {
             assert!(!intersects(envelope, rect, annotated.layout.guard as f32));
+        }
+    }
+
+    fn reference_projected_envelope(
+        scene: &Scene,
+        options: &RenderOptions,
+        camera: CameraState,
+        width: u32,
+        height: u32,
+    ) -> Result<(f32, f32, f32, f32), RenderError> {
+        let matrix = camera.projection * camera.view;
+        let mut bounds = (
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        );
+        let mut error = None;
+        let any = scene
+            .for_each_position(options, &mut |position| {
+                if error.is_some() {
+                    return;
+                }
+                let clip = matrix * Vec4::new(position.x, position.y, position.z, 1.0);
+                // Homogeneous W scales with world units; a small but normal value is
+                // valid for sub-millimetre scenes. Only zero/subnormal W cannot be
+                // divided safely.
+                if !clip.is_finite() || clip.w.abs() < f32::MIN_POSITIVE {
+                    error = Some(RenderError::Parse(
+                        "non-finite projected scene bounds".into(),
+                    ));
+                    return;
+                }
+                let ndc = clip.truncate() / clip.w;
+                if !ndc.is_finite() {
+                    error = Some(RenderError::Parse(
+                        "non-finite projected scene bounds".into(),
+                    ));
+                    return;
+                }
+                let x = (ndc.x * 0.5 + 0.5) * width as f32;
+                let y = (0.5 - ndc.y * 0.5) * height as f32;
+                bounds.0 = bounds.0.min(x);
+                bounds.1 = bounds.1.min(y);
+                bounds.2 = bounds.2.max(x);
+                bounds.3 = bounds.3.max(y);
+            })
+            .map_err(RenderError::Parse)?;
+        if let Some(error) = error {
+            return Err(error);
+        }
+        if !any {
+            return Err(RenderError::Parse("scene has no projected geometry".into()));
+        }
+        Ok(bounds)
+    }
+
+    #[test]
+    fn projected_envelope_preserves_transform_bits_and_invalid_depth() {
+        let mut state = 0x51d3_78a9_u32;
+        let mut next = || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state as i32 as f32) / i32::MAX as f32
+        };
+        let mut points = vec![Vec3::ZERO, Vec3::splat(-0.0)];
+        for scale in [1.0e-20, 1.0e-6, 1.0, 1.0e6, 1.0e20] {
+            for _ in 0..32 {
+                points.push(Vec3::new(next(), next(), next()) * scale);
+            }
+        }
+        let views = [
+            Mat4::IDENTITY,
+            glam::camera::rh::view::look_at_mat4(Vec3::new(1.2, -1.7, 4.2), Vec3::ZERO, Vec3::Y),
+            Mat4::from_scale_rotation_translation(
+                Vec3::new(-0.001, 7.1, 1000.0),
+                glam::Quat::from_euler(glam::EulerRot::XYZ, 0.7, -1.3, 2.9),
+                Vec3::new(0.3, -0.2, 1.1),
+            ),
+        ];
+        let mut projections = vec![Mat4::IDENTITY, Mat4::ZERO];
+        for w in [0.0, -0.0, f32::from_bits(1), f32::MIN_POSITIVE, 1.0, -1.0] {
+            for z in [0.3, f32::MAX, f32::INFINITY, f32::NAN] {
+                projections.push(Mat4::from_cols(
+                    Vec4::new(0.7, -0.2, z, 0.0),
+                    Vec4::new(-0.1, 1.3, 0.1, 0.0),
+                    Vec4::new(0.2, -0.3, z, 0.0),
+                    Vec4::new(0.01, -0.07, z, w),
+                ));
+            }
+        }
+        projections.push(Mat4::from_cols(
+            Vec4::X,
+            Vec4::Y,
+            Vec4::new(0.0, 0.0, 0.7, -1.0),
+            Vec4::new(0.0, 0.0, -0.1, 0.0),
+        ));
+        let options = RenderOptions::default();
+        for point in points {
+            let mut source = scene();
+            source.meshes[0].primitives[0].positions = point.to_array().to_vec();
+            source.meshes[0].primitives[0].indices = vec![0];
+            source.bounds = None;
+            for view in views {
+                for &projection in &projections {
+                    let camera = CameraState {
+                        view,
+                        projection,
+                        forward: Vec3::NEG_Z,
+                        target_depth: 1.0,
+                    };
+                    let bits = |r: Result<(f32, f32, f32, f32), RenderError>| {
+                        r.map(|b| [b.0, b.1, b.2, b.3].map(f32::to_bits))
+                            .map_err(|e| e.to_string())
+                    };
+                    let expected = bits(reference_projected_envelope(
+                        &source, &options, camera, 5120, 2880,
+                    ));
+                    let actual = bits(projected_envelope(
+                        &mut UniquePositions::new(&source),
+                        &options,
+                        camera,
+                        5120,
+                        2880,
+                    ));
+                    assert_eq!(
+                        actual, expected,
+                        "point={point:?}, view={view:?}, projection={projection:?}"
+                    );
+                }
+            }
         }
     }
 
