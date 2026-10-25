@@ -790,7 +790,22 @@ fn camera_extents<const INCLUDE_XY: bool>(
     };
     for_each_camera_position(scene, options, |position| {
         let camera = if INCLUDE_XY {
-            view.transform_point3(position)
+            // Evaluate only XYZ, preserving glam's transform_point3 addition order.
+            // The explicit lanes reduce measured orthographic planning cost without
+            // caching world positions or changing fitted bounds and clip planes.
+            let x = view.x_axis.x * position.x;
+            let x = view.y_axis.x * position.y + x;
+            let x = view.z_axis.x * position.z + x;
+            let x = view.w_axis.x + x;
+            let y = view.x_axis.y * position.x;
+            let y = view.y_axis.y * position.y + y;
+            let y = view.z_axis.y * position.z + y;
+            let y = view.w_axis.y + y;
+            let z = view.x_axis.z * position.x;
+            let z = view.y_axis.z * position.y + z;
+            let z = view.z_axis.z * position.z + z;
+            let z = view.w_axis.z + z;
+            Vec3::new(x, y, z)
         } else {
             // Preserve glam's transform_point3 addition order, but compute only
             // the depth lane. Reassociation can change the fitted clip planes.
@@ -3495,7 +3510,7 @@ mod tests {
     }
 
     #[test]
-    fn depth_only_extents_match_full_transform_bits_for_affine_views() {
+    fn camera_extents_match_full_transform_bits_for_affine_views() {
         // Compare each point independently: aggregate extrema could hide a rounding
         // difference that changes near/far when a different vertex becomes nearest.
         let mut state = 0x913a_7bd5_u32;
@@ -3533,6 +3548,26 @@ mod tests {
                         &mut glb::UniquePositions::new(&scene),
                         &options,
                         view,
+                    );
+                    // Keep the reference independent of both optimized paths.
+                    // Per-point XYZ checks catch differences hidden by aggregate maxima.
+                    let mut expected = [f32::INFINITY, 0.0_f32, 0.0_f32, 0.0_f32];
+                    scene
+                        .for_each_position(&options, &mut |position| {
+                            let camera = view.transform_point3(position);
+                            let depth = -camera.z;
+                            if depth > 0.0 {
+                                expected[0] = expected[0].min(depth);
+                                expected[1] = expected[1].max(depth);
+                            }
+                            expected[2] = expected[2].max(camera.x.abs());
+                            expected[3] = expected[3].max(camera.y.abs());
+                        })
+                        .expect("finite world positions");
+                    assert_eq!(
+                        [full.nearest, full.farthest, full.max_x, full.max_y].map(f32::to_bits),
+                        expected.map(f32::to_bits),
+                        "point={point:?}, view={view:?}",
                     );
                     let depth = camera_extents::<false>(
                         &mut glb::UniquePositions::new(&scene),

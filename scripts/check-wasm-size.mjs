@@ -213,7 +213,12 @@ const sizes = {
 // The existing request-scoped list replaces repeated draw-index projections;
 // native and WASM output remains exact. Admit only the measured raw delta,
 // preserving 63 bytes of headroom and the existing compressed allowances.
-const ceilings = { raw: 2_422_574, gzip9: 1_130_374, brotli11: 938_044 };
+// Exact-order orthographic XYZ extents (Rust 1.99.1): same-host raw
+// 2,422,511 -> 2,422,626 (+115), gzip-9 1,128,366, Brotli-11 941,181.
+// Native and WASM images remain exact; paired native orthographic workloads
+// improve without new allocations. Admit the measured raw delta only,
+// preserving 63 bytes of headroom and the existing compressed allowances.
+const ceilings = { raw: 2_422_689, gzip9: 1_130_374, brotli11: 938_044 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
