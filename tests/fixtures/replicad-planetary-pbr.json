@@ -1,0 +1,35 @@
+{
+  "sourceRepository": "https://github.com/taucad/tau",
+  "sourceRevision": "5b3659c9af322db0f619e10c975b74240e1b3952",
+  "sourcePath": "libs/tau-examples/src/kernels/replicad/planetary-gear-system/main.ts",
+  "sourceSha256": "1f7b4e11f80020eb19f5fbbb5beb7ee9b6112a6b0384bac006450e3205d65931",
+  "exporter": "Tau CLI 0.1.0-beta.9 / Replicad",
+  "options": {
+    "tessellation": {
+      "linearTolerance": 0.12764795338508172,
+      "angularTolerance": 20
+    },
+    "coordinateSystem": "y-up",
+    "unit": {
+      "length": "meter"
+    }
+  },
+  "content": {
+    "includeEdges": true,
+    "includeTopology": true
+  },
+  "sha256": "1c4ac648cefa93bca18c10e86a02c16f5e11a858f3d13859b6c47cfaa1bfe33b",
+  "surfaceVertices": 71980,
+  "surfaceTriangles": 72302,
+  "surfacePrimitives": 34,
+  "materialRanges": {
+    "metallicFactor": [0.65, 0.85],
+    "roughnessFactor": [0.24, 0.32]
+  },
+  "historicalComparison": {
+    "oldBuild123dSurfaceVertices": 70426,
+    "sameTolerance": true,
+    "exactVertexCountMatch": false,
+    "note": "Different CAD topology; keep source geometry rather than padding or decimating to force a count."
+  }
+}

@@ -6,6 +6,56 @@ beforeAll(async () => {
   await init();
 });
 
+test('Replicad metallic planetary assembly matches the general shader at thumbnail and 5K sizes', async () => {
+  const glb = new Uint8Array(
+    await (await fetch(new URL('../fixtures/replicad-planetary-pbr.glb', import.meta.url))).arrayBuffer(),
+  );
+  const documentLength = new DataView(glb.buffer).getUint32(12, true);
+  const document = JSON.parse(new TextDecoder().decode(glb.subarray(20, 20 + documentLength)));
+  const surfaces = document.materials.filter((material) => !material.extensions?.KHR_materials_unlit);
+  expect(surfaces.length).toBeGreaterThan(0);
+  expect(surfaces.every((material) => material.pbrMetallicRoughness.metallicFactor >= 0.65)).toBe(true);
+  // oxlint-disable-next-line typescript/unbound-method -- Preserve the real device receiver with call() and restore in finally.
+  const original = globalThis.GPUDevice.prototype.createRenderPipeline;
+  const results = [];
+  try {
+    for (const general of [false, true]) {
+      globalThis.GPUDevice.prototype.createRenderPipeline = function (descriptor) {
+        if (!general || descriptor.fragment?.entryPoint !== 'fs_mesh') return original.call(this, descriptor);
+        return original.call(this, {
+          ...descriptor,
+          fragment: {
+            ...descriptor.fragment,
+            constants: { ...descriptor.fragment.constants, CLEARCOAT: 1 },
+          },
+        });
+      };
+      const renderer = await Renderer.create();
+      const hashes = [];
+      try {
+        for (const [width, height] of [
+          [768, 432],
+          [5120, 2880],
+        ]) {
+          const image = await renderer.render_image(
+            glb,
+            JSON.stringify({ width, height, format: 'raw', ao: {} }),
+          );
+          expect(image.length).toBe(width * height * 4);
+          hashes.push(Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', image))));
+        }
+      } finally {
+        renderer.dispose();
+        renderer.free();
+      }
+      results.push(hashes);
+    }
+    expect(results[0]).toEqual(results[1]);
+  } finally {
+    globalThis.GPUDevice.prototype.createRenderPipeline = original;
+  }
+});
+
 test('absent clearcoat preserves full-shader pixels and bounded cache reuse across materials', async () => {
   // oxlint-disable-next-line typescript/unbound-method -- Preserve the real device receiver with call() and restore in finally.
   const original = globalThis.GPUDevice.prototype.createRenderPipeline;
