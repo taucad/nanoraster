@@ -227,7 +227,11 @@ const sizes = {
 // (+342), gzip-9 1,129,664 (+186), Brotli-11 943,022 (+796). Admit only
 // measured raw/Brotli growth, retaining existing headroom/tolerance. Native
 // keeps the full shader to preserve exact sheen quantization.
-const ceilings = { raw: 2_426_091, gzip9: 1_130_374, brotli11: 938_840 };
+// Opaque-background readback (Rust 1.99.1): raw 2,426,292 (+269),
+// gzip-9 1,129,881 (+217), Brotli-11 943,050 (+28). A per-view boolean
+// avoids a redundant full-image alpha scan. Admit the measured deltas only;
+// retain the existing raw headroom and compressor tolerances.
+const ceilings = { raw: 2_426_360, gzip9: 1_130_591, brotli11: 938_868 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.

@@ -388,6 +388,7 @@ struct InFlightView {
     height: u32,
     unpadded_bytes_per_row: u32,
     padded_bytes_per_row: u32,
+    opaque_background: bool,
 }
 
 /// Cumulative resource-acquisition counters; timings reporting snapshots them
@@ -3058,6 +3059,7 @@ impl Renderer {
             height: options.height,
             unpadded_bytes_per_row: targets.unpadded_bytes_per_row,
             padded_bytes_per_row: targets.padded_bytes_per_row,
+            opaque_background: clear_color(options).a == 1.0,
         };
         Ok(in_flight)
     }
@@ -3078,14 +3080,20 @@ impl Renderer {
         // The sRGB target stores encoded premultiplied-linear RGB. Convert to
         // the public straight-alpha contract after every cap/edge blend and MSAA
         // resolve, rather than unpremultiplying the surface pass prematurely.
-        for pixel in rgba.as_chunks_mut::<4>().0 {
-            let alpha = pixel[3];
-            if alpha > 0 && alpha < 255 {
-                for channel in &mut pixel[..3] {
-                    *channel = crate::texture::encoded(
-                        crate::texture::linear(*channel, true) * 255.0 / f32::from(alpha),
-                        true,
-                    );
+        // The display pass composites every sample over the requested background;
+        // an opaque background therefore resolves to alpha 255, including lines,
+        // transparent surfaces and transmission. Its straight RGB is already final.
+        // Snapshot this per submitted view: a later overlapping view may differ.
+        if !view.opaque_background {
+            for pixel in rgba.as_chunks_mut::<4>().0 {
+                let alpha = pixel[3];
+                if alpha > 0 && alpha < 255 {
+                    for channel in &mut pixel[..3] {
+                        *channel = crate::texture::encoded(
+                            crate::texture::linear(*channel, true) * 255.0 / f32::from(alpha),
+                            true,
+                        );
+                    }
                 }
             }
         }
@@ -4980,6 +4988,91 @@ mod tests {
     }
 
     #[test]
+    fn opaque_readback_matches_conversion_across_overlapping_backgrounds() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let blended = Material {
+            alpha_mode: 2.0,
+            base_color: [0.2, 0.4, 0.8, 0.5],
+            ..Material::default()
+        };
+        let glass = Material {
+            transmission: [0.8, 0.0, 1.5, 0.0],
+            ..Material::default()
+        };
+        for parsed in [
+            cube_with_edges(true),
+            physical_sphere(blended),
+            physical_sphere(glass),
+        ] {
+            let mut scene = Scene::new(parsed);
+            let make_entry = |alpha| {
+                let options = RenderOptions {
+                    background: Some([0.2, 0.4, 0.6, alpha]),
+                    width: 127,
+                    height: 85,
+                    lines: true,
+                    ..physical_options()
+                };
+                PlanEntry {
+                    id: "background".into(),
+                    prepared: crate::capture_overlay::prepare_view(&scene.parsed, &options)
+                        .expect("camera"),
+                    format: ImageFormat::Raw,
+                    options,
+                }
+            };
+            let entries = [make_entry(1.0), make_entry(0.5), make_entry(0.0)];
+            let presentation = renderer
+                .prepare_presentation(&scene.parsed, &entries[0].options)
+                .expect("presentation");
+            let buffers = renderer.ensure_uploaded(&mut scene).expect("upload");
+            for index in 0..entries.len() {
+                let first = renderer
+                    .begin_view(buffers, &presentation, &entries[index])
+                    .expect("first");
+                let next = renderer
+                    .begin_view(
+                        buffers,
+                        &presentation,
+                        &entries[(index + 1) % entries.len()],
+                    )
+                    .expect("overlapping different background");
+                let image = renderer.finish_view_blocking(first).expect("pixels");
+                renderer.finish_view_blocking(next).expect("overlap pixels");
+                let mut reference = renderer
+                    .begin_view(buffers, &presentation, &entries[index])
+                    .expect("reference");
+                // Force the original full conversion as the independent oracle.
+                reference.opaque_background = false;
+                let reference = renderer.finish_view_blocking(reference).expect("converted");
+                assert_eq!(image.rgba, reference.rgba);
+                if index == 0 {
+                    assert!(
+                        image
+                            .rgba
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .all(|pixel| pixel[3] == 255)
+                    );
+                } else {
+                    assert!(
+                        image
+                            .rgba
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .any(|pixel| pixel[3] < 255)
+                    );
+                }
+            }
+        }
+        renderer.destroy();
+    }
+
+    #[test]
     fn transparent_output_retains_straight_color_for_surfaces_edges_and_lines() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
@@ -6383,6 +6476,7 @@ mod tests {
                 height: 1,
                 unpadded_bytes_per_row: 256,
                 padded_bytes_per_row: 256,
+                opaque_background: false,
             };
             let error = renderer
                 .finish_view_blocking(view)
@@ -6428,6 +6522,7 @@ mod tests {
             height: 1,
             unpadded_bytes_per_row: 256,
             padded_bytes_per_row: 256,
+            opaque_background: false,
         };
 
         let error = renderer
@@ -6475,6 +6570,7 @@ mod tests {
             height: 1,
             unpadded_bytes_per_row: 256,
             padded_bytes_per_row: 256,
+            opaque_background: false,
         };
 
         let error = renderer
