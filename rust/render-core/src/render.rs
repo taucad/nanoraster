@@ -9,7 +9,7 @@
 //! parsed geometry plus its GPU buffers; [`Renderer::execute_plan`] is the one
 //! render loop every public entry point funnels through.
 
-use crate::encode::{ImageFormat, encode};
+use crate::encode::{ImageFormat, encode_owned};
 use crate::glb::{self, MODE_TRIANGLES, Material};
 use crate::{
     CameraProjection, LightingSpace, MAX_LIGHTS, MAX_SECTION_PLANES, Projection, RenderCamera,
@@ -3227,7 +3227,7 @@ fn encode_entry(
     }
     let overlay = clock(now) - overlay_started;
     let encode_started = clock(now);
-    let bytes = with_view_result(encode(&rendered, entry.format), &entry.id)?;
+    let bytes = with_view_result(encode_owned(rendered, entry.format), &entry.id)?;
     Ok((
         bytes,
         ViewTimings {
@@ -3241,6 +3241,7 @@ fn encode_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::encode::encode;
     use glam::Vec2;
 
     fn scene() -> glb::Scene {
@@ -3251,6 +3252,90 @@ mod tests {
             [[-1.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
         ];
         line_scene(&segments)
+    }
+
+    #[test]
+    fn raw_plan_encoding_transfers_the_finished_pixel_allocation() {
+        for annotated in [false, true] {
+            let options = RenderOptions {
+                width: 128,
+                height: 96,
+                label: annotated.then(|| "A".into()),
+                axes: annotated,
+                ..RenderOptions::default()
+            };
+            let entry = PlanEntry {
+                id: "owned-raw".into(),
+                prepared: crate::capture_overlay::prepare_view(&scene(), &options)
+                    .expect("prepared view"),
+                options,
+                format: ImageFormat::Raw,
+            };
+            let mut rgba = Vec::with_capacity(128 * 96 * 4 + 128);
+            rgba.resize(128 * 96 * 4, 200);
+            let allocation = rgba.as_ptr();
+            let capacity = rgba.capacity();
+            let rendered = Rendered {
+                rgba,
+                width: 128,
+                height: 96,
+            };
+            let mut expected = Rendered {
+                rgba: rendered.rgba.clone(),
+                width: 128,
+                height: 96,
+            };
+            if annotated {
+                crate::capture_overlay::stamp_capture_overlay(
+                    &mut expected,
+                    &entry.prepared,
+                    &mut Vec::new(),
+                );
+                assert_ne!(expected.rgba, rendered.rgba, "annotation must be exercised");
+            }
+            let (bytes, timings) =
+                encode_entry(&entry, rendered, 7.0, None, &mut Vec::new()).expect("raw output");
+            assert_eq!(bytes, expected.rgba);
+            assert_eq!(
+                bytes.as_ptr(),
+                allocation,
+                "owned raw output must not clone pixels"
+            );
+            assert_eq!(bytes.capacity(), capacity);
+            assert_eq!(timings.render, 7.0);
+        }
+    }
+
+    #[test]
+    fn raw_plan_encoding_preserves_shape_errors_and_view_context() {
+        let options = RenderOptions::default();
+        let entry = PlanEntry {
+            id: "invalid-raw".into(),
+            prepared: crate::capture_overlay::prepare_view(&scene(), &options)
+                .expect("prepared view"),
+            options,
+            format: ImageFormat::Raw,
+        };
+        for (width, height, len) in [
+            (0, 1, 0),
+            (1, 0, 0),
+            (2, 1, 7),
+            (1, 1, 5),
+            (u32::MAX, u32::MAX, 4),
+        ] {
+            let rendered = Rendered {
+                rgba: vec![0; len],
+                width,
+                height,
+            };
+            let expected = with_view_result(encode(&rendered, ImageFormat::Raw), &entry.id)
+                .expect_err("borrowed shape error")
+                .to_string();
+            let error = encode_entry(&entry, rendered, 0.0, None, &mut Vec::new())
+                .err()
+                .expect("owned shape error");
+            assert_eq!(error.to_string(), expected);
+        }
     }
 
     fn assert_close(actual: Vec3, expected: Vec3) {
