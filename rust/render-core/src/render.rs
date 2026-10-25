@@ -582,17 +582,19 @@ pub(crate) fn camera_state_with_bounds(
                 }
             };
             let view = glam::camera::rh::view::look_at_mat4(eye, target, up);
-            let (near, far) = position_clip_planes(scene, options, view, (eye - target).length());
+            let extents = match projection {
+                CameraProjection::Orthographic { .. } => {
+                    camera_extents::<true>(scene, options, view)
+                }
+                CameraProjection::Perspective { .. } => {
+                    camera_extents::<false>(scene, options, view)
+                }
+            };
+            let (near, far) = extents.clip_planes((eye - target).length());
             let projection = match projection {
                 CameraProjection::Orthographic { .. } => {
-                    let (half_width, half_height) = orthographic_half_extents(
-                        scene,
-                        options,
-                        view,
-                        aspect,
-                        *padding_factor,
-                        radius,
-                    );
+                    let (half_width, half_height) =
+                        extents.orthographic_half_extents(aspect, *padding_factor, radius);
                     glam::camera::rh::proj::directx::orthographic(
                         -half_width,
                         half_width,
@@ -762,54 +764,74 @@ fn fitted_orthographic_pose(
     (target + direction * distance, target)
 }
 
+// Independent reductions over the same view-space positions share one transform.
+// Perspective/fixed cameras specialize away the unneeded XY reduction.
+struct CameraExtents {
+    nearest: f32,
+    farthest: f32,
+    max_x: f32,
+    max_y: f32,
+}
+
+fn camera_extents<const INCLUDE_XY: bool>(
+    scene: &glb::Scene,
+    options: &RenderOptions,
+    view: Mat4,
+) -> CameraExtents {
+    let mut extents = CameraExtents {
+        nearest: f32::INFINITY,
+        farthest: 0.0,
+        max_x: 0.0,
+        max_y: 0.0,
+    };
+    for_each_camera_position(scene, options, |position| {
+        let camera = view.transform_point3(position);
+        let depth = -camera.z;
+        if depth > 0.0 {
+            extents.nearest = extents.nearest.min(depth);
+            extents.farthest = extents.farthest.max(depth);
+        }
+        if INCLUDE_XY {
+            extents.max_x = extents.max_x.max(camera.x.abs());
+            extents.max_y = extents.max_y.max(camera.y.abs());
+        }
+    });
+    extents
+}
+
+impl CameraExtents {
+    fn clip_planes(&self, fallback_depth: f32) -> (f32, f32) {
+        if self.farthest <= 0.0 {
+            let depth = fallback_depth.max(1.0);
+            return (depth * 0.001, depth * 2.0);
+        }
+        let near = (self.nearest * 0.5)
+            .max(self.farthest * 1e-6)
+            .max(f32::MIN_POSITIVE);
+        (near, (self.farthest * 2.0).max(near * 2.0))
+    }
+
+    fn orthographic_half_extents(&self, aspect: f32, padding: f32, radius: f32) -> (f32, f32) {
+        let safe_padding = padding.max(0.001);
+        let minimum = (radius * 0.001).max(f32::MIN_POSITIVE);
+        let mut half_width = (self.max_x / safe_padding).max(minimum);
+        let mut half_height = (self.max_y / safe_padding).max(minimum);
+        if half_width / half_height < aspect {
+            half_width = half_height * aspect;
+        } else {
+            half_height = half_width / aspect;
+        }
+        (half_width, half_height)
+    }
+}
+
 fn position_clip_planes(
     scene: &glb::Scene,
     options: &RenderOptions,
     view: Mat4,
     fallback_depth: f32,
 ) -> (f32, f32) {
-    let mut nearest = f32::INFINITY;
-    let mut farthest = 0.0_f32;
-    for_each_camera_position(scene, options, |position| {
-        let depth = -view.transform_point3(position).z;
-        if depth > 0.0 {
-            nearest = nearest.min(depth);
-            farthest = farthest.max(depth);
-        }
-    });
-    if farthest <= 0.0 {
-        let depth = fallback_depth.max(1.0);
-        return (depth * 0.001, depth * 2.0);
-    }
-    let near = (nearest * 0.5).max(farthest * 1e-6).max(f32::MIN_POSITIVE);
-    (near, (farthest * 2.0).max(near * 2.0))
-}
-
-fn orthographic_half_extents(
-    scene: &glb::Scene,
-    options: &RenderOptions,
-    view: Mat4,
-    aspect: f32,
-    padding: f32,
-    radius: f32,
-) -> (f32, f32) {
-    let mut max_x = 0.0_f32;
-    let mut max_y = 0.0_f32;
-    for_each_camera_position(scene, options, |position| {
-        let camera = view.transform_point3(position);
-        max_x = max_x.max(camera.x.abs());
-        max_y = max_y.max(camera.y.abs());
-    });
-    let safe_padding = padding.max(0.001);
-    let minimum = (radius * 0.001).max(f32::MIN_POSITIVE);
-    let mut half_width = (max_x / safe_padding).max(minimum);
-    let mut half_height = (max_y / safe_padding).max(minimum);
-    if half_width / half_height < aspect {
-        half_width = half_height * aspect;
-    } else {
-        half_height = half_width / aspect;
-    }
-    (half_width, half_height)
+    camera_extents::<false>(scene, options, view).clip_planes(fallback_depth)
 }
 
 // The one definition of the `Frame` uniform (see `shader.wgsl`): two mat4 and
@@ -3252,6 +3274,143 @@ mod tests {
             [[-1.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
         ];
         line_scene(&segments)
+    }
+
+    #[test]
+    fn camera_extents_preserve_extremes_signed_zero_and_empty_depth_fallback() {
+        for points in [
+            [[-0.0, 0.0, -0.0], [0.0, -0.0, 0.0]],
+            [[1.0e-20, -1.0e-20, -1.0e-20], [-1.0e-20, 1.0e-20, 1.0e-20]],
+            [[-1.0e20, 1.0e20, -1.0e20], [1.0e20, -1.0e20, 1.0e20]],
+            [[1.0, 2.0, 3.0], [-1.0, -2.0, 4.0]],
+        ] {
+            let scene = line_scene(&[points]);
+            let options = RenderOptions::default();
+            for view in [
+                Mat4::IDENTITY,
+                Mat4::from_translation(Vec3::new(1.0, -2.0, 3.0)),
+            ] {
+                let mut nearest = f32::INFINITY;
+                let mut farthest = 0.0_f32;
+                scene
+                    .for_each_position(&options, &mut |p| {
+                        let depth = -view.transform_point3(p).z;
+                        if depth > 0.0 {
+                            nearest = nearest.min(depth);
+                            farthest = farthest.max(depth);
+                        }
+                    })
+                    .expect("finite world positions");
+                let mut xy = [0.0_f32; 2];
+                scene
+                    .for_each_position(&options, &mut |p| {
+                        let p = view.transform_point3(p);
+                        xy[0] = xy[0].max(p.x.abs());
+                        xy[1] = xy[1].max(p.y.abs());
+                    })
+                    .expect("finite world positions");
+                let fused = camera_extents::<true>(&scene, &options, view);
+                assert_eq!(
+                    [fused.nearest, fused.farthest, fused.max_x, fused.max_y].map(f32::to_bits),
+                    [nearest, farthest, xy[0], xy[1]].map(f32::to_bits)
+                );
+                for fallback in [-2.0_f32, 0.0, 10.0] {
+                    let expected = if farthest <= 0.0 {
+                        let depth = fallback.max(1.0);
+                        (depth * 0.001, depth * 2.0)
+                    } else {
+                        let near = (nearest * 0.5).max(farthest * 1e-6).max(f32::MIN_POSITIVE);
+                        (near, (farthest * 2.0).max(near * 2.0))
+                    };
+                    for actual in [
+                        fused.clip_planes(fallback),
+                        position_clip_planes(&scene, &options, view, fallback),
+                    ] {
+                        assert_eq!(
+                            [actual.0, actual.1].map(f32::to_bits),
+                            [expected.0, expected.1].map(f32::to_bits)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fitted_orthographic_projection_matches_separate_draw_reductions() {
+        let scene = glb::parse_glb(include_bytes!(
+            "../../../tests/fixtures/interleaved-instanced-lines.glb"
+        ))
+        .expect("fixture");
+        for (width, height) in [(5120, 2880), (432, 768)] {
+            for (direction, up) in [
+                ([1.2, -1.7, 4.2], [0.0, 1.0, 0.0]),
+                ([0.0, 0.0, 1.0], [0.0, 1.0, 0.0]),
+                ([-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+            ] {
+                for surfaces in [false, true] {
+                    for padding in [0.001, 0.9, 1.0] {
+                        let options = RenderOptions {
+                            width,
+                            height,
+                            surfaces,
+                            camera: RenderCamera::Fit {
+                                direction,
+                                up,
+                                padding_factor: padding,
+                                projection: CameraProjection::Orthographic {
+                                    vertical_span: None,
+                                    zoom: 1.0,
+                                },
+                            },
+                            ..RenderOptions::default()
+                        };
+                        let camera = camera_state(&scene, &options);
+                        let (min, max) = scene.presented_bounds(&options).expect("bounds");
+                        let center = (Vec3::from(min) + Vec3::from(max)) * 0.5;
+                        let radius = (Vec3::from(max) - center).length();
+                        // Independent original two-pass reference: retain transform and reduction order.
+                        let mut nearest = f32::INFINITY;
+                        let mut farthest = 0.0_f32;
+                        scene
+                            .for_each_position(&options, &mut |p| {
+                                let depth = -camera.view.transform_point3(p).z;
+                                if depth > 0.0 {
+                                    nearest = nearest.min(depth);
+                                    farthest = farthest.max(depth);
+                                }
+                            })
+                            .expect("depth positions");
+                        let near = (nearest * 0.5).max(farthest * 1e-6).max(f32::MIN_POSITIVE);
+                        let far = (farthest * 2.0).max(near * 2.0);
+                        let mut xy = [0.0_f32; 2];
+                        scene
+                            .for_each_position(&options, &mut |p| {
+                                let p = camera.view.transform_point3(p);
+                                xy[0] = xy[0].max(p.x.abs());
+                                xy[1] = xy[1].max(p.y.abs());
+                            })
+                            .expect("extent positions");
+                        let minimum = (radius * 0.001).max(f32::MIN_POSITIVE);
+                        let mut hw = (xy[0] / padding.max(0.001)).max(minimum);
+                        let mut hh = (xy[1] / padding.max(0.001)).max(minimum);
+                        let aspect = width as f32 / height as f32;
+                        if hw / hh < aspect {
+                            hw = hh * aspect;
+                        } else {
+                            hh = hw / aspect;
+                        }
+                        let expected = glam::camera::rh::proj::directx::orthographic(
+                            -hw, hw, -hh, hh, near, far,
+                        );
+                        assert_eq!(
+                            camera.projection.to_cols_array().map(f32::to_bits),
+                            expected.to_cols_array().map(f32::to_bits)
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

@@ -76,6 +76,7 @@ pub(crate) struct Scene {
     pub(crate) topology_diagnostics: Vec<TopologyDiagnostic>,
     pub(crate) texture_pixels: Vec<u32>,
     /// Exact world-space bounds over vertices referenced by draw indices.
+    /// Computed after parsing; geometry and instance transforms remain immutable thereafter.
     pub(crate) bounds: Option<([f32; 3], [f32; 3])>,
 }
 
@@ -206,6 +207,15 @@ impl Scene {
     }
 
     pub(crate) fn presented_bounds(&self, options: &RenderOptions) -> Option<([f32; 3], [f32; 3])> {
+        // Parsing already performed this exact ordered reduction. A visibility
+        // filter (including an explicitly empty selection) must still be applied.
+        if options.surfaces
+            && options.lines
+            && options.visible_primitives.is_none()
+            && let Some(bounds) = self.bounds
+        {
+            return Some(bounds);
+        }
         let mut bounds: Option<(Vec3, Vec3)> = None;
         self.for_each_position(options, &mut |position| match &mut bounds {
             Some((min, max)) => {
@@ -1820,6 +1830,57 @@ mod tests {
             Vec3::X * -5.0
         );
         assert_eq!(scene.bounds, Some(([-5.0, 0.0, 0.0], [14.0, 3.0, 0.0])));
+    }
+
+    #[test]
+    fn presented_bounds_match_draw_reduction_for_visibility_masks() {
+        let scene = parse_glb(include_bytes!(
+            "../../../tests/fixtures/interleaved-instanced-lines.glb"
+        ))
+        .expect("fixture");
+        let mut uncached = scene.clone();
+        uncached.bounds = None;
+        assert_eq!(
+            uncached.presented_bounds(&RenderOptions::default()),
+            scene.bounds
+        );
+        for surfaces in [false, true] {
+            for lines in [false, true] {
+                for visible_primitives in [
+                    None,
+                    Some(vec![]),
+                    Some(vec![PrimitiveRef {
+                        node_index: 1,
+                        mesh_index: 0,
+                        primitive_index: 0,
+                    }]),
+                ] {
+                    let options = RenderOptions {
+                        surfaces,
+                        lines,
+                        visible_primitives,
+                        ..RenderOptions::default()
+                    };
+                    let mut expected: Option<(Vec3, Vec3)> = None;
+                    scene
+                        .for_each_position(&options, &mut |p| match &mut expected {
+                            Some((min, max)) => {
+                                *min = min.min(p);
+                                *max = max.max(p);
+                            }
+                            None => expected = Some((p, p)),
+                        })
+                        .expect("positions");
+                    let bits = |bounds: Option<([f32; 3], [f32; 3])>| {
+                        bounds.map(|(min, max)| (min.map(f32::to_bits), max.map(f32::to_bits)))
+                    };
+                    assert_eq!(
+                        bits(scene.presented_bounds(&options)),
+                        bits(expected.map(|(min, max)| (min.to_array(), max.to_array())))
+                    );
+                }
+            }
+        }
     }
 
     #[test]
