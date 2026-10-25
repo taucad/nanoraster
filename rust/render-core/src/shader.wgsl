@@ -140,7 +140,7 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
     direction = mat2x2<f32>(prim.anisotropy.yz, vec2<f32>(-prim.anisotropy.z, prim.anisotropy.y)) * normalize(direction);
     let t = normalize(tbn[0] * direction.x + tbn[1] * direction.y);
     let b = normalize(tbn[1] * direction.x - tbn[0] * direction.y);
-    let coat = prim.coat.x * sample_map(in, 6u).r;
+    let coat = select(0.0, prim.coat.x * sample_map(in, 6u).r, CLEARCOAT);
     let coat_rough = min(max(prim.coat.y * sample_map(in, 7u).g, 0.0525) + geometry_roughness, 1.0);
     let iridescence = prim.iridescence.x * sample_map(in, 9u).r;
     let irid_map = sample_map(in, 10u).g;

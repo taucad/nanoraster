@@ -130,6 +130,7 @@ pub(crate) struct SceneBuffers {
     gpu_instances: Vec<GpuInstance>,
     texture_pixels: wgpu::Buffer,
     texture_mask: u32,
+    clearcoat: bool,
 }
 
 /// Scene handle: parsed CPU geometry plus its GPU buffers. The parsed half is
@@ -1081,6 +1082,7 @@ fn create_pipeline_pair(
     line_width_px: f32,
     wireframe: bool,
     texture_mask: u32,
+    clearcoat: bool,
 ) -> PipelinePair {
     let position_layout = wgpu::VertexBufferLayout {
         array_stride: 12,
@@ -1187,7 +1189,10 @@ fn create_pipeline_pair(
                 module: shader,
                 entry_point: Some("fs_mesh"),
                 compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &[("TEXTURE_MASK", f64::from(texture_mask))],
+                    constants: &[
+                        ("TEXTURE_MASK", f64::from(texture_mask)),
+                        ("CLEARCOAT", f64::from(u32::from(clearcoat))),
+                    ],
                     ..Default::default()
                 },
                 targets: &[Some(wgpu::ColorTargetState {
@@ -2167,6 +2172,15 @@ impl Renderer {
             .collect();
 
         SceneBuffers {
+            // Native Metal specialization changes two 8-bit sheen pixels in
+            // the qualified 5K fixture. Keep its general shader until exact
+            // output is independently qualified; browser specialization is exact.
+            clearcoat: cfg!(not(target_arch = "wasm32"))
+                || scene
+                    .meshes
+                    .iter()
+                    .flat_map(|mesh| &mesh.primitives)
+                    .any(|primitive| primitive.material.coat[0] != 0.0),
             gpu_assets,
             gpu_instances,
             texture_mask: scene.meshes.iter().flat_map(|mesh| &mesh.primitives).fold(
@@ -2288,9 +2302,12 @@ impl Renderer {
         line_width_px: f32,
         wireframe: bool,
         texture_mask: u32,
+        clearcoat: bool,
     ) -> usize {
         let key = u64::from(line_width_px.to_bits() << 1 | u32::from(wireframe))
-            | (u64::from(texture_mask) << 32);
+            | (u64::from(texture_mask) << 32)
+            // The texture mask uses bits 32..49 (17 material map slots).
+            | (u64::from(clearcoat) << 49);
         if let Some(index) = self
             .state
             .pipelines
@@ -2312,6 +2329,7 @@ impl Renderer {
             line_width_px,
             wireframe,
             texture_mask,
+            clearcoat,
         );
         self.state.pipelines.push((key, pair));
         self.state.pipelines.len() - 1
@@ -2611,8 +2629,12 @@ impl Renderer {
             }))
             || presentation.boundary.is_some()
             || presentation.open_chains.is_some();
-        let pipeline_index =
-            self.ensure_pipelines(line_width_px(options), wireframe, scene.texture_mask);
+        let pipeline_index = self.ensure_pipelines(
+            line_width_px(options),
+            wireframe,
+            scene.texture_mask,
+            scene.clearcoat,
+        );
         let slot = self
             .state
             .targets
@@ -4515,6 +4537,47 @@ mod tests {
         assert!(
             pixel[3].abs_diff(128) <= 1,
             "clear glass incorrectly blocks the background: {pixel:?}"
+        );
+    }
+
+    #[test]
+    fn clearcoat_specialization_preserves_pixels_when_switching_scenes() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let base = Material {
+            base_color: [0.55, 0.25, 0.12, 1.0],
+            metallic: 0.6,
+            roughness: 0.35,
+            ..Material::default()
+        };
+        let plain = render_test_scene(
+            &mut renderer,
+            physical_sphere(base.clone()),
+            physical_options(),
+        );
+        let mut coated = base.clone();
+        coated.coat[0] = 1.0;
+        coated.coat[1] = 0.1;
+        let coat = render_test_scene(
+            &mut renderer,
+            physical_sphere(coated.clone()),
+            physical_options(),
+        );
+        assert_ne!(plain.rgba, coat.rgba, "clearcoat must remain visible");
+        for material in [base, coated] {
+            let expected = if material.coat[0] == 0.0 {
+                &plain
+            } else {
+                &coat
+            };
+            let repeated =
+                render_test_scene(&mut renderer, physical_sphere(material), physical_options());
+            assert_eq!(expected.rgba, repeated.rgba, "scene history changed pixels");
+        }
+        assert_eq!(
+            renderer.counters.pipeline_sets,
+            if cfg!(target_arch = "wasm32") { 2 } else { 1 },
+            "reuse qualified specializations"
         );
     }
 
@@ -6660,17 +6723,17 @@ mod tests {
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
                 .expect("renderer");
 
-        let first = renderer.ensure_pipelines(2.0, true, 0);
-        assert_eq!(renderer.ensure_pipelines(2.0, true, 0), first);
+        let first = renderer.ensure_pipelines(2.0, true, 0, false);
+        assert_eq!(renderer.ensure_pipelines(2.0, true, 0, false), first);
         assert_eq!(renderer.counters.pipeline_sets, 1);
-        assert_ne!(renderer.ensure_pipelines(2.0, false, 0), first);
-        let second = renderer.ensure_pipelines(4.0, true, 0);
+        assert_ne!(renderer.ensure_pipelines(2.0, false, 0, false), first);
+        let second = renderer.ensure_pipelines(4.0, true, 0, false);
         assert_ne!(first, second);
         assert_eq!(renderer.counters.pipeline_sets, 3);
 
         // Fill past the cap: the oldest entry is evicted, the cache stays bounded.
         for width in 0..MAX_CACHED_PIPELINE_PAIRS as u32 {
-            renderer.ensure_pipelines(8.0 + width as f32, true, 0);
+            renderer.ensure_pipelines(8.0 + width as f32, true, 0, false);
         }
         assert_eq!(renderer.state.pipelines.len(), MAX_CACHED_PIPELINE_PAIRS);
         assert!(

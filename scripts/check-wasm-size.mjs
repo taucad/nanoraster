@@ -223,7 +223,11 @@ const sizes = {
 // Scoped per-device validation preserves ordinary storage on rejection; exact
 // browser output and reduced GPU-process footprint qualify the added code.
 // Admit only that measured delta; retain 68 raw bytes and compressed allowances.
-const ceilings = { raw: 2_425_749, gzip9: 1_130_374, brotli11: 938_044 };
+// Browser absent-clearcoat specialization (Rust 1.99.1): raw 2,426,023
+// (+342), gzip-9 1,129,664 (+186), Brotli-11 943,022 (+796). Admit only
+// measured raw/Brotli growth, retaining existing headroom/tolerance. Native
+// keeps the full shader to preserve exact sheen quantization.
+const ceilings = { raw: 2_426_091, gzip9: 1_130_374, brotli11: 938_840 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.

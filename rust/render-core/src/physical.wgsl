@@ -4,6 +4,8 @@
 
 // Specialize absent maps out of GPU compilation and every fragment.
 override TEXTURE_MASK: u32 = 131071u;
+// Preserve the full material path whenever any primitive uses clearcoat.
+override CLEARCOAT: bool = true;
 
 struct TextureSlot {
     image: vec4<u32>, // pixel offset, width, height, mip count
