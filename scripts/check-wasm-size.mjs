@@ -199,7 +199,11 @@ const sizes = {
 // 936,253; candidate 2,413,094 / 1,124,902 / 937,578. Monomorphizing the
 // fitted-camera loops adds 2,629 raw / 984 gzip-9 / 1,325 Brotli-11 bytes.
 // Preserve existing headroom; no new percentage allowance.
-const ceilings = { raw: 2_414_403, gzip9: 1_128_519, brotli11: 935_297 };
+// Rust 1.99.1 / LLVM 23.1.1 upgrade, same locked dependencies and O3/fat-LTO
+// profile: 2,413,094 / 1,124,902 / 937,578 before; 2,419,376 / 1,126,757 /
+// 940,325 after on Node 26.8.1 / Binaryen 132. Add only the measured compiler
+// delta (+6,282 / +1,855 / +2,747), retaining existing headroom and tolerance.
+const ceilings = { raw: 2_420_685, gzip9: 1_130_374, brotli11: 938_044 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.

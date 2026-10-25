@@ -427,7 +427,7 @@ fn decode_manifold(
         }
         shared_index_view.get_or_insert(view);
         let start = original_indices.len();
-        original_indices.extend(read_unsigned(index_accessor, bin).map_err(&fail)?);
+        original_indices.extend(read_unsigned(index_accessor, bin).map_err(fail)?);
         primitive_ranges.push(start..original_indices.len());
     }
 
@@ -459,7 +459,7 @@ fn decode_manifold(
     }
     let positions = &primitives[0].positions;
     let indices =
-        read_unsigned(accessor(document, manifold.indices).map_err(&fail)?, bin).map_err(&fail)?;
+        read_unsigned(accessor(document, manifold.indices).map_err(fail)?, bin).map_err(fail)?;
     if indices.len() != original_indices.len() {
         return Err(fail(
             "manifold and render index streams must have equal length".into(),
@@ -478,10 +478,10 @@ fn decode_manifold(
         (None, None) if changed.is_empty() => {}
         (Some(merge_indices), Some(merge_values)) => {
             let merge_indices =
-                read_unsigned(accessor(document, merge_indices).map_err(&fail)?, bin)
-                    .map_err(&fail)?;
-            let merge_values = read_unsigned(accessor(document, merge_values).map_err(&fail)?, bin)
-                .map_err(&fail)?;
+                read_unsigned(accessor(document, merge_indices).map_err(fail)?, bin)
+                    .map_err(fail)?;
+            let merge_values = read_unsigned(accessor(document, merge_values).map_err(fail)?, bin)
+                .map_err(fail)?;
             if merge_indices
                 .into_iter()
                 .zip(merge_values)
@@ -504,7 +504,7 @@ fn decode_manifold(
             ));
         }
     }
-    validate_oriented_manifold(&indices, positions.len() / 3).map_err(&fail)?;
+    validate_oriented_manifold(&indices, positions.len() / 3).map_err(fail)?;
     for (offset, after) in changed {
         let before = original_indices[offset as usize];
         let before = &positions[before as usize * 3..before as usize * 3 + 3];
