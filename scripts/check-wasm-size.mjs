@@ -203,7 +203,12 @@ const sizes = {
 // profile: 2,413,094 / 1,124,902 / 937,578 before; 2,419,376 / 1,126,757 /
 // 940,325 after on Node 26.8.1 / Binaryen 132. Add only the measured compiler
 // delta (+6,282 / +1,855 / +2,747), retaining existing headroom and tolerance.
-const ceilings = { raw: 2_420_685, gzip9: 1_130_374, brotli11: 938_044 };
+// Unique camera-index planning (Rust 1.99.1): raw 2,422,162, gzip-9 1,128,189,
+// Brotli-11 941,309, measured 2026-10-25 against 2,420,354 / 1,127,505 /
+// 940,752. The +1,808 raw bytes are the request-scoped index list construction
+// and traversal; no dependency/profile/API change. Preserve the prior 331-byte
+// raw headroom; compressed outputs remain within their existing allowances.
+const ceilings = { raw: 2_422_493, gzip9: 1_130_374, brotli11: 938_044 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.

@@ -533,11 +533,15 @@ fn mapped_range_error(error: wgpu::MapRangeError) -> RenderError {
 /// Resolve fitted or fixed camera framing into WebGPU view/projection matrices.
 #[cfg(test)]
 pub(crate) fn camera_state(scene: &glb::Scene, options: &RenderOptions) -> CameraState {
-    camera_state_with_bounds(scene, options, scene.presented_bounds(options))
+    camera_state_with_bounds(
+        &mut glb::CameraPositions::new(scene),
+        options,
+        scene.presented_bounds(options),
+    )
 }
 
 pub(crate) fn camera_state_with_bounds(
-    scene: &glb::Scene,
+    scene: &mut glb::CameraPositions<'_>,
     options: &RenderOptions,
     bounds: Option<([f32; 3], [f32; 3])>,
 ) -> CameraState {
@@ -684,7 +688,7 @@ pub(crate) fn camera_state_with_bounds(
 }
 
 fn for_each_camera_position(
-    scene: &glb::Scene,
+    scene: &mut glb::CameraPositions<'_>,
     options: &RenderOptions,
     mut visit: impl FnMut(Vec3),
 ) {
@@ -700,7 +704,7 @@ fn camera_basis(direction: Vec3, up: Vec3) -> (Vec3, Vec3) {
 }
 
 fn fitted_perspective_pose(
-    scene: &glb::Scene,
+    scene: &mut glb::CameraPositions<'_>,
     options: &RenderOptions,
     center: Vec3,
     (direction, requested_up): (Vec3, Vec3),
@@ -739,7 +743,7 @@ fn fitted_perspective_pose(
 }
 
 fn fitted_orthographic_pose(
-    scene: &glb::Scene,
+    scene: &mut glb::CameraPositions<'_>,
     options: &RenderOptions,
     center: Vec3,
     direction: Vec3,
@@ -774,7 +778,7 @@ struct CameraExtents {
 }
 
 fn camera_extents<const INCLUDE_XY: bool>(
-    scene: &glb::Scene,
+    scene: &mut glb::CameraPositions<'_>,
     options: &RenderOptions,
     view: Mat4,
 ) -> CameraExtents {
@@ -826,7 +830,7 @@ impl CameraExtents {
 }
 
 fn position_clip_planes(
-    scene: &glb::Scene,
+    scene: &mut glb::CameraPositions<'_>,
     options: &RenderOptions,
     view: Mat4,
     fallback_depth: f32,
@@ -3277,6 +3281,144 @@ mod tests {
     }
 
     #[test]
+    fn camera_visitor_skips_repeated_indices_without_changing_draw_visits() {
+        let mut source = line_scene(&[[[0.0, 0.0, 0.0], [1.0, 2.0, 3.0]]]);
+        source.meshes[0].primitives[0].indices = vec![0, 1, 0, 1, 1, 0];
+        // An unreferenced nonfinite/outlying position must never enter camera fitting.
+        source.meshes[0].primitives[0]
+            .positions
+            .extend([f32::NAN, 1.0e30, 0.0]);
+        let mut instance = source.instances[0].clone();
+        instance.source_node_index = 1;
+        instance.model = Mat4::from_translation(Vec3::X * 10.0);
+        source.instances.push(instance);
+        let options = RenderOptions::default();
+        let mut draws = Vec::new();
+        source
+            .for_each_position(&options, &mut |p| draws.push(p))
+            .expect("draws");
+        assert_eq!(draws.len(), 12);
+        let mut positions = glb::CameraPositions::new(&source);
+        for _ in 0..3 {
+            let mut unique = Vec::new();
+            assert!(
+                positions
+                    .for_each_position(&options, &mut |p| unique.push(p))
+                    .expect("camera")
+            );
+            assert_eq!(
+                unique,
+                vec![
+                    Vec3::ZERO,
+                    Vec3::new(1.0, 2.0, 3.0),
+                    Vec3::new(10.0, 0.0, 0.0),
+                    Vec3::new(11.0, 2.0, 3.0)
+                ]
+            );
+        }
+        for options in [
+            RenderOptions {
+                lines: false,
+                ..options.clone()
+            },
+            RenderOptions {
+                visible_primitives: Some(vec![]),
+                ..options
+            },
+        ] {
+            assert!(
+                !positions
+                    .for_each_position(&options, &mut |_| panic!("hidden position"))
+                    .expect("hidden")
+            );
+        }
+        drop(positions);
+        source.meshes[0].primitives[0].indices = vec![2, 0];
+        assert_eq!(
+            glb::CameraPositions::new(&source)
+                .for_each_position(&RenderOptions::default(), &mut |_| {}),
+            Err("transformed POSITION values must be finite".into())
+        );
+    }
+
+    #[test]
+    fn unique_camera_matrices_match_full_draw_index_reference() {
+        let mut sources = vec![
+            glb::parse_glb(include_bytes!("../../../tests/fixtures/gear-12.glb")).expect("gear"),
+            glb::parse_glb(include_bytes!(
+                "../../../tests/fixtures/interleaved-instanced-lines.glb"
+            ))
+            .expect("instances"),
+        ];
+        for scale in [0.0_f32, 1.0e-12, 1.0, 1.0e12] {
+            let mut source = line_scene(&[
+                [[-scale, 0.0, -0.0], [scale, -0.0, 0.0]],
+                [[0.0, scale, -scale], [-0.0, -scale, scale]],
+            ]);
+            source.meshes[0].primitives[0].indices = vec![0, 1, 0, 2, 1, 3, 0, 3];
+            sources.push(source);
+        }
+        let bits = |camera: CameraState| {
+            camera
+                .view
+                .to_cols_array()
+                .into_iter()
+                .chain(camera.projection.to_cols_array())
+                .chain(camera.forward.to_array())
+                .chain([camera.target_depth])
+                .map(f32::to_bits)
+                .collect::<Vec<_>>()
+        };
+        for source in &sources {
+            let mut unique = glb::CameraPositions::new(source);
+            let mut reference = glb::CameraPositions::all(source);
+            for (direction, up) in [
+                ([1.2, -1.7, 4.2], [0.0, 1.0, 0.0]),
+                ([0.0, 0.0, 1.0], [0.0, 1.0, 0.0]),
+                ([-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+            ] {
+                for projection in [
+                    CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 45.0,
+                        zoom: 1.0,
+                    },
+                    CameraProjection::Perspective {
+                        vertical_field_of_view_deg: 160.0,
+                        zoom: 2.0,
+                    },
+                    CameraProjection::Orthographic {
+                        vertical_span: None,
+                        zoom: 1.0,
+                    },
+                ] {
+                    for surfaces in [false, true] {
+                        let options = RenderOptions {
+                            width: 5120,
+                            height: 2880,
+                            surfaces,
+                            camera: RenderCamera::Fit {
+                                direction,
+                                up,
+                                padding_factor: 0.9,
+                                projection,
+                            },
+                            ..RenderOptions::default()
+                        };
+                        let bounds = source.presented_bounds(&options);
+                        if bounds.is_none() {
+                            continue;
+                        }
+                        assert_eq!(
+                            bits(camera_state_with_bounds(&mut unique, &options, bounds)),
+                            bits(camera_state_with_bounds(&mut reference, &options, bounds))
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn camera_extents_preserve_extremes_signed_zero_and_empty_depth_fallback() {
         for points in [
             [[-0.0, 0.0, -0.0], [0.0, -0.0, 0.0]],
@@ -3309,7 +3451,8 @@ mod tests {
                         xy[1] = xy[1].max(p.y.abs());
                     })
                     .expect("finite world positions");
-                let fused = camera_extents::<true>(&scene, &options, view);
+                let fused =
+                    camera_extents::<true>(&mut glb::CameraPositions::new(&scene), &options, view);
                 assert_eq!(
                     [fused.nearest, fused.farthest, fused.max_x, fused.max_y].map(f32::to_bits),
                     [nearest, farthest, xy[0], xy[1]].map(f32::to_bits)
@@ -3324,7 +3467,12 @@ mod tests {
                     };
                     for actual in [
                         fused.clip_planes(fallback),
-                        position_clip_planes(&scene, &options, view, fallback),
+                        position_clip_planes(
+                            &mut glb::CameraPositions::new(&scene),
+                            &options,
+                            view,
+                            fallback,
+                        ),
                     ] {
                         assert_eq!(
                             [actual.0, actual.1].map(f32::to_bits),
@@ -5101,8 +5249,12 @@ mod tests {
         let scene = asymmetric_scene();
         let eye = Vec3::new(8.0, 6.0, 10.0);
         let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
-        let (near, far) =
-            position_clip_planes(&scene, &RenderOptions::default(), view, eye.length());
+        let (near, far) = position_clip_planes(
+            &mut glb::CameraPositions::new(&scene),
+            &RenderOptions::default(),
+            view,
+            eye.length(),
+        );
         let depths = referenced_positions(&scene)
             .into_iter()
             .map(|position| -view.transform_point3(position).z)
@@ -5366,8 +5518,12 @@ mod tests {
     #[test]
     fn derived_clipping_handles_bounds_behind_the_camera() {
         let scene = line_scene(&[[[-1.0, -1.0, 1.0], [1.0, 1.0, 2.0]]]);
-        let (near, far) =
-            position_clip_planes(&scene, &RenderOptions::default(), Mat4::IDENTITY, 10.0);
+        let (near, far) = position_clip_planes(
+            &mut glb::CameraPositions::new(&scene),
+            &RenderOptions::default(),
+            Mat4::IDENTITY,
+            10.0,
+        );
         assert!((near - 0.01).abs() < f32::EPSILON);
         assert_eq!(far, 20.0);
     }

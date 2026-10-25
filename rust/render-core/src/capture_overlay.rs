@@ -1,6 +1,6 @@
 //! Deterministic screen-space capture annotations stamped into readback RGBA.
 
-use crate::glb::Scene;
+use crate::glb::{CameraPositions, Scene};
 #[cfg(test)]
 use crate::render::camera_state;
 use crate::render::{CameraState, Rendered, camera_state_with_bounds};
@@ -88,6 +88,14 @@ pub(crate) fn prepare_view(
     scene: &Scene,
     options: &RenderOptions,
 ) -> Result<PreparedView, RenderError> {
+    prepare_view_with_positions(&mut CameraPositions::new(scene), options)
+}
+
+pub(crate) fn prepare_view_with_positions(
+    positions: &mut CameraPositions<'_>,
+    options: &RenderOptions,
+) -> Result<PreparedView, RenderError> {
+    let scene = positions.scene;
     debug_assert_eq!(FONTDUE_VERSION, "0.9.4");
     debug_assert_ne!(FONT_GENERATOR_FNV, 0);
     debug_assert_ne!(FONT_SOURCE_FNV, 0);
@@ -98,7 +106,7 @@ pub(crate) fn prepare_view(
             "fitted camera has no eligible geometry to frame".into(),
         ));
     }
-    let mut camera = camera_state_with_bounds(scene, options, bounds);
+    let mut camera = camera_state_with_bounds(positions, options, bounds);
     let axes = options.world_axes.map(Vec3::from);
     let alignment = classify_alignment(camera.forward, axes);
     let projection = options.camera.projection_kind();

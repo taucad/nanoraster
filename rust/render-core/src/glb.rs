@@ -80,8 +80,110 @@ pub(crate) struct Scene {
     pub(crate) bounds: Option<([f32; 3], [f32; 3])>,
 }
 
+/// Request-plan scratch, shared across views and dropped before scene upload.
+/// Geometry remains borrowed; no transformed positions or persistent cache.
+pub(crate) struct CameraPositions<'a> {
+    pub(crate) scene: &'a Scene,
+    indices: Vec<Vec<Option<Box<[u32]>>>>,
+    #[cfg(test)]
+    all_indices: bool,
+}
+
+impl<'a> CameraPositions<'a> {
+    pub(crate) fn new(scene: &'a Scene) -> Self {
+        let mut visited = Vec::new();
+        let indices = scene
+            .meshes
+            .iter()
+            .map(|mesh| {
+                mesh.primitives
+                    .iter()
+                    .map(|primitive| unique_camera_indices(primitive, &mut visited))
+                    .collect()
+            })
+            .collect();
+        Self {
+            scene,
+            indices,
+            #[cfg(test)]
+            all_indices: false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn all(scene: &'a Scene) -> Self {
+        let mut positions = Self::new(scene);
+        positions.all_indices = true;
+        positions
+    }
+
+    pub(crate) fn for_each_position(
+        &mut self,
+        options: &RenderOptions,
+        visit: &mut impl FnMut(Vec3),
+    ) -> Result<bool, String> {
+        #[cfg(test)]
+        if self.all_indices {
+            return self.scene.for_each_position(options, visit);
+        }
+        let mut any = false;
+        for instance in &self.scene.instances {
+            for (primitive, unique) in self.scene.meshes[instance.mesh_index]
+                .primitives
+                .iter()
+                .zip(&self.indices[instance.mesh_index])
+            {
+                if !self
+                    .scene
+                    .primitive_is_eligible(instance, primitive, options)
+                {
+                    continue;
+                }
+                for &index in unique.as_deref().unwrap_or(&primitive.indices) {
+                    let offset = index as usize * 3;
+                    let world = instance.model.transform_point3(Vec3::from_slice(
+                        &primitive.positions[offset..offset + 3],
+                    ));
+                    if !world.is_finite() {
+                        return Err("transformed POSITION values must be finite".into());
+                    }
+                    visit(world);
+                    any = true;
+                }
+            }
+        }
+        Ok(any)
+    }
+}
+
+/// Keep first-reference order. Already unique draws borrow their original indices.
+fn unique_camera_indices(primitive: &Primitive, visited: &mut Vec<u64>) -> Option<Box<[u32]>> {
+    // Flat-shaded/de-indexed draws are commonly dense and need no scratch/list.
+    if primitive
+        .indices
+        .iter()
+        .enumerate()
+        .all(|(i, &index)| i == index as usize)
+    {
+        return None;
+    }
+    visited.resize((primitive.positions.len() / 3).div_ceil(64), 0);
+    visited.fill(0);
+    let mut unique =
+        Vec::with_capacity((primitive.positions.len() / 3).min(primitive.indices.len()));
+    for &index in &primitive.indices {
+        let word = index as usize / 64;
+        let bit = 1_u64 << (index % 64);
+        if visited[word] & bit == 0 {
+            visited[word] |= bit;
+            unique.push(index);
+        }
+    }
+    (unique.len() < primitive.indices.len()).then(|| unique.into_boxed_slice())
+}
+
 impl Scene {
-    // Keep visitors specialized: fitted-camera reductions walk every draw index.
+    // Keep general draw-position visitors specialized.
     // Dynamic dispatch here prevents the compiler from optimizing those hot loops.
     fn visit_positions(
         &self,

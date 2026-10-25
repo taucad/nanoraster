@@ -626,6 +626,7 @@ fn build_plan(
     views: &[RenderView],
 ) -> Result<Vec<render::PlanEntry>, RenderError> {
     let mut plan = Vec::with_capacity(views.len());
+    let mut positions = None;
     for view in views {
         if options.sections.is_some() && view.visible_primitives.is_some() {
             return Err(RenderError::Parse(format!(
@@ -642,7 +643,10 @@ fn build_plan(
             &view.id,
         )?;
         let prepared = with_view_result(
-            capture_overlay::prepare_view(scene, &view_options),
+            capture_overlay::prepare_view_with_positions(
+                positions.get_or_insert_with(|| glb::CameraPositions::new(scene)),
+                &view_options,
+            ),
             &view.id,
         )?;
         plan.push(render::PlanEntry {
