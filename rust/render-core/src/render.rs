@@ -22,14 +22,45 @@ use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 
 const MSAA_SAMPLES: u32 = 4;
-// A hint on native backends; Metal uses memoryless storage when supported.
-// wgpu 30 forwards usage bits directly to browser WebGPU. Keep the portable
-// browser descriptors until transient-attachment support is qualified there.
-const PASS_LOCAL_ATTACHMENT_USAGE: wgpu::TextureUsages = if cfg!(target_arch = "wasm32") {
-    wgpu::TextureUsages::RENDER_ATTACHMENT
-} else {
-    wgpu::TextureUsages::RENDER_ATTACHMENT.union(wgpu::TextureUsages::TRANSIENT_ATTACHMENT)
-};
+// Native backends treat this as a hint; browser descriptors are validated once
+// per initialized device before any production targets use the optional flag.
+const TRANSIENT_ATTACHMENT_USAGE: wgpu::TextureUsages =
+    wgpu::TextureUsages::RENDER_ATTACHMENT.union(wgpu::TextureUsages::TRANSIENT_ATTACHMENT);
+
+async fn pass_local_attachment_usage(device: &wgpu::Device) -> wgpu::TextureUsages {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        for (format, sample_count) in [
+            (COLOR_FORMAT, MSAA_SAMPLES),
+            (HDR_FORMAT, MSAA_SAMPLES),
+            (DEPTH_FORMAT, 1),
+        ] {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("transient capability probe"),
+                    size: wgpu::Extent3d {
+                        width: 4,
+                        height: 4,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: TRANSIENT_ATTACHMENT_USAGE,
+                    view_formats: &[],
+                })
+                .destroy();
+        }
+        if scope.pop().await.is_some() {
+            return wgpu::TextureUsages::RENDER_ATTACHMENT;
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = device;
+    TRANSIENT_ATTACHMENT_USAGE
+}
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -281,6 +312,7 @@ fn hdr_multisample_target(
     device: &wgpu::Device,
     size: wgpu::Extent3d,
     transparency: bool,
+    pass_local_usage: wgpu::TextureUsages,
 ) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
@@ -294,7 +326,7 @@ fn hdr_multisample_target(
             usage: if transparency {
                 wgpu::TextureUsages::RENDER_ATTACHMENT
             } else {
-                PASS_LOCAL_ATTACHMENT_USAGE
+                pass_local_usage
             },
             view_formats: &[],
         })
@@ -384,6 +416,7 @@ impl Counters {
 struct DeviceState {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    pass_local_usage: wgpu::TextureUsages,
     shader: wgpu::ShaderModule,
     frame_buffer: wgpu::Buffer,
     frame_bind_group: wgpu::BindGroup,
@@ -1598,6 +1631,8 @@ impl DeviceState {
             }
         }));
 
+        let pass_local_usage = pass_local_attachment_usage(&device).await;
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("render-core"),
             source: wgpu::ShaderSource::Wgsl(
@@ -1863,6 +1898,7 @@ impl DeviceState {
         Ok(Self {
             device,
             queue,
+            pass_local_usage,
             shader,
             frame_buffer,
             frame_bind_group,
@@ -2325,11 +2361,15 @@ impl Renderer {
                 let usage = if transparency {
                     wgpu::TextureUsages::RENDER_ATTACHMENT
                 } else {
-                    PASS_LOCAL_ATTACHMENT_USAGE
+                    self.state.pass_local_usage
                 };
                 if targets.hdr_msaa.texture().usage() != usage {
-                    let next =
-                        hdr_multisample_target(&self.state.device, targets.extent, transparency);
+                    let next = hdr_multisample_target(
+                        &self.state.device,
+                        targets.extent,
+                        transparency,
+                        self.state.pass_local_usage,
+                    );
                     targets.hdr_msaa.texture().destroy();
                     targets.hdr_msaa = next;
                 }
@@ -2353,7 +2393,7 @@ impl Renderer {
             sample_count: MSAA_SAMPLES,
             dimension: wgpu::TextureDimension::D2,
             format: COLOR_FORMAT,
-            usage: PASS_LOCAL_ATTACHMENT_USAGE,
+            usage: self.state.pass_local_usage,
             view_formats: &[],
         });
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -2395,7 +2435,7 @@ impl Renderer {
                 test_depth_view: texture(
                     "AO depth test",
                     DEPTH_FORMAT,
-                    PASS_LOCAL_ATTACHMENT_USAGE,
+                    self.state.pass_local_usage,
                 ),
                 estimate_view: texture(
                     "AO estimate",
@@ -2420,7 +2460,8 @@ impl Renderer {
             view_formats: &[],
         });
 
-        let hdr_msaa = hdr_multisample_target(device, extent, transparency);
+        let hdr_msaa =
+            hdr_multisample_target(device, extent, transparency, self.state.pass_local_usage);
         let mip_count = if transmission {
             width.max(height).ilog2() + 1
         } else {

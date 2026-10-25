@@ -218,7 +218,12 @@ const sizes = {
 // Native and WASM images remain exact; paired native orthographic workloads
 // improve without new allocations. Admit the measured raw delta only,
 // preserving 63 bytes of headroom and the existing compressed allowances.
-const ceilings = { raw: 2_422_689, gzip9: 1_130_374, brotli11: 938_044 };
+// Browser transient-attachment capability probing (Rust 1.99.1): same-host
+// 2,422,621 -> 2,425,681 (+3,060), gzip-9 1,129,478, Brotli-11 942,226.
+// Scoped per-device validation preserves ordinary storage on rejection; exact
+// browser output and reduced GPU-process footprint qualify the added code.
+// Admit only that measured delta; retain 68 raw bytes and compressed allowances.
+const ceilings = { raw: 2_425_749, gzip9: 1_130_374, brotli11: 938_044 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
