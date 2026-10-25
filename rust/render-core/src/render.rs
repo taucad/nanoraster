@@ -4259,7 +4259,15 @@ mod tests {
                 .iter()
                 .find(|r| r.get("passes").is_some())
                 .expect("frame receipt");
-            assert!(frame["gpuSpanMs"].as_f64().unwrap() > 0.0);
+            let passes = frame["passes"].as_array().unwrap();
+            let begin = passes.first().unwrap()["beginTicks"].as_u64().unwrap();
+            let end = passes.last().unwrap()["endTicks"].as_u64().unwrap();
+            assert_eq!(frame["gpuSpanMs"].is_null(), begin == 0 || end < begin);
+            for pass in passes {
+                let begin = pass["beginTicks"].as_u64().unwrap();
+                let end = pass["endTicks"].as_u64().unwrap();
+                assert_eq!(pass["gpuMs"].is_null(), begin == 0 || end < begin);
+            }
             assert!(frame["allocations"]["targetBytes"].as_u64().unwrap() > 0);
             let child =
                 std::process::Command::new(std::env::current_exe().expect("test executable"))

@@ -79,6 +79,16 @@ pub(super) fn ledger(t: &SizedTargets) -> Value {
         "targetBytes":texture_bytes + readback.iter().sum::<u64>()})
 }
 
+fn timestamp_ms(begin: u64, end: u64, period: f32) -> Option<f64> {
+    (begin > 0 && end >= begin).then(|| (end - begin) as f64 * f64::from(period) / 1_000_000.0)
+}
+
+fn frame_span_ms(stamps: &[u64], period: f32) -> Option<f64> {
+    // Never turn a missing outer endpoint into a shorter, apparently valid
+    // frame by selecting only the internal passes whose queries completed.
+    timestamp_ms(*stamps.first()?, *stamps.last()?, period)
+}
+
 impl Probe {
     pub(super) fn new(
         device: &wgpu::Device,
@@ -142,19 +152,10 @@ impl Probe {
             .map(|b| u64::from_le_bytes(*b))
             .collect();
         let passes: Vec<_> = self.labels.iter().enumerate().map(|(i,label)| json!({"label":label,
-            "beginTicks":stamps[i*2], "endTicks":stamps[i*2+1], "gpuMs":stamps[i*2+1].saturating_sub(stamps[i*2]) as f64 * f64::from(period)/1_000_000.0})).collect();
+            "beginTicks":stamps[i*2], "endTicks":stamps[i*2+1], "gpuMs":timestamp_ms(stamps[i*2], stamps[i*2+1], period)})).collect();
         let mut receipt = self.receipt.clone();
         receipt["passes"] = json!(passes);
-        let valid: Vec<_> = stamps[..self.labels.len() * 2]
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .filter(|p| p[0] > 0 && p[1] >= p[0])
-            .collect();
-        let first = valid.iter().map(|p| p[0]).min().unwrap_or(0);
-        let last = valid.iter().map(|p| p[1]).max().unwrap_or(0);
-        receipt["gpuSpanMs"] =
-            json!(last.saturating_sub(first) as f64 * f64::from(period) / 1_000_000.0);
+        receipt["gpuSpanMs"] = json!(frame_span_ms(&stamps[..self.labels.len() * 2], period));
         receipt["timestampPeriodNs"] = json!(period);
         drop(data);
         self.readback.unmap();
@@ -172,6 +173,20 @@ impl Drop for Probe {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_timestamps_are_not_zero_cost_or_partial_frame_spans() {
+        assert_eq!(timestamp_ms(10, 0, 1.0), None);
+        assert_eq!(timestamp_ms(0, 20, 1.0), None);
+        assert_eq!(timestamp_ms(20, 10, 1.0), None);
+        assert_eq!(timestamp_ms(10, 10, 1.0), Some(0.0));
+        assert_eq!(frame_span_ms(&[10, 20, 21, 0], 1.0), None);
+        assert_eq!(frame_span_ms(&[0, 20, 21, 30], 1.0), None);
+        assert_eq!(frame_span_ms(&[], 1.0), None);
+        // Missing internal end: outer endpoints still bound the full frame.
+        assert_eq!(frame_span_ms(&[10, 0, 21, 30], 1.0), Some(0.00002));
+        assert_eq!(frame_span_ms(&[10, 20, 21, 30], 1.0), Some(0.00002));
+    }
 
     #[test]
     fn queries_require_opt_in_and_adapter_support() {
