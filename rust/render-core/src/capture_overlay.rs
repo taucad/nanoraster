@@ -1,6 +1,6 @@
 //! Deterministic screen-space capture annotations stamped into readback RGBA.
 
-use crate::glb::{CameraPositions, Scene};
+use crate::glb::{Scene, UniquePositions};
 #[cfg(test)]
 use crate::render::camera_state;
 use crate::render::{CameraState, Rendered, camera_state_with_bounds};
@@ -88,11 +88,11 @@ pub(crate) fn prepare_view(
     scene: &Scene,
     options: &RenderOptions,
 ) -> Result<PreparedView, RenderError> {
-    prepare_view_with_positions(&mut CameraPositions::new(scene), options)
+    prepare_view_with_positions(&mut UniquePositions::new(scene), options)
 }
 
 pub(crate) fn prepare_view_with_positions(
-    positions: &mut CameraPositions<'_>,
+    positions: &mut UniquePositions<'_>,
     options: &RenderOptions,
 ) -> Result<PreparedView, RenderError> {
     let scene = positions.scene;

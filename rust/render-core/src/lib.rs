@@ -644,7 +644,7 @@ fn build_plan(
         )?;
         let prepared = with_view_result(
             capture_overlay::prepare_view_with_positions(
-                positions.get_or_insert_with(|| glb::CameraPositions::new(scene)),
+                positions.get_or_insert_with(|| glb::UniquePositions::new(scene)),
                 &view_options,
             ),
             &view.id,

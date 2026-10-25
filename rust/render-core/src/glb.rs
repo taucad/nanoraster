@@ -80,16 +80,17 @@ pub(crate) struct Scene {
     pub(crate) bounds: Option<([f32; 3], [f32; 3])>,
 }
 
-/// Request-plan scratch, shared across views and dropped before scene upload.
+/// Scoped bounds/camera scratch, shared across instances and camera views.
+/// Each owner is dropped before scene upload; parsing retains no index cache.
 /// Geometry remains borrowed; no transformed positions or persistent cache.
-pub(crate) struct CameraPositions<'a> {
+pub(crate) struct UniquePositions<'a> {
     pub(crate) scene: &'a Scene,
     indices: Vec<Vec<Option<Box<[u32]>>>>,
     #[cfg(test)]
     all_indices: bool,
 }
 
-impl<'a> CameraPositions<'a> {
+impl<'a> UniquePositions<'a> {
     pub(crate) fn new(scene: &'a Scene) -> Self {
         let mut visited = Vec::new();
         let indices = scene
@@ -98,7 +99,7 @@ impl<'a> CameraPositions<'a> {
             .map(|mesh| {
                 mesh.primitives
                     .iter()
-                    .map(|primitive| unique_camera_indices(primitive, &mut visited))
+                    .map(|primitive| unique_position_indices(primitive, &mut visited))
                     .collect()
             })
             .collect();
@@ -108,6 +109,10 @@ impl<'a> CameraPositions<'a> {
             #[cfg(test)]
             all_indices: false,
         }
+    }
+
+    fn for_each_draw_position(&mut self, visit: &mut impl FnMut(Vec3)) -> Result<bool, String> {
+        self.visit_positions(None, visit)
     }
 
     #[cfg(test)]
@@ -122,9 +127,17 @@ impl<'a> CameraPositions<'a> {
         options: &RenderOptions,
         visit: &mut impl FnMut(Vec3),
     ) -> Result<bool, String> {
+        self.visit_positions(Some(options), visit)
+    }
+
+    fn visit_positions(
+        &self,
+        options: Option<&RenderOptions>,
+        visit: &mut impl FnMut(Vec3),
+    ) -> Result<bool, String> {
         #[cfg(test)]
         if self.all_indices {
-            return self.scene.for_each_position(options, visit);
+            return self.scene.visit_positions(options, visit);
         }
         let mut any = false;
         for instance in &self.scene.instances {
@@ -133,10 +146,11 @@ impl<'a> CameraPositions<'a> {
                 .iter()
                 .zip(&self.indices[instance.mesh_index])
             {
-                if !self
-                    .scene
-                    .primitive_is_eligible(instance, primitive, options)
-                {
+                if options.is_some_and(|options| {
+                    !self
+                        .scene
+                        .primitive_is_eligible(instance, primitive, options)
+                }) {
                     continue;
                 }
                 for &index in unique.as_deref().unwrap_or(&primitive.indices) {
@@ -157,7 +171,7 @@ impl<'a> CameraPositions<'a> {
 }
 
 /// Keep first-reference order. Already unique draws borrow their original indices.
-fn unique_camera_indices(primitive: &Primitive, visited: &mut Vec<u64>) -> Option<Box<[u32]>> {
+fn unique_position_indices(primitive: &Primitive, visited: &mut Vec<u64>) -> Option<Box<[u32]>> {
     // Flat-shaded/de-indexed draws are commonly dense and need no scratch/list.
     if primitive
         .indices
@@ -252,6 +266,7 @@ impl Scene {
         Ok(any)
     }
 
+    #[cfg(test)]
     fn for_each_draw_position(&self, visit: &mut impl FnMut(Vec3)) -> Result<bool, String> {
         self.visit_positions(None, visit)
     }
@@ -1041,7 +1056,7 @@ fn parse_glb_impl(bytes: &[u8], sections_requested: bool) -> Result<Scene, Strin
         bounds: None,
     };
     let mut bounds: Option<(Vec3, Vec3)> = None;
-    scene.for_each_draw_position(&mut |position| match &mut bounds {
+    UniquePositions::new(&scene).for_each_draw_position(&mut |position| match &mut bounds {
         Some((min, max)) => {
             *min = min.min(position);
             *max = max.max(position);
@@ -1932,6 +1947,95 @@ mod tests {
             Vec3::X * -5.0
         );
         assert_eq!(scene.bounds, Some(([-5.0, 0.0, 0.0], [14.0, 3.0, 0.0])));
+    }
+
+    #[test]
+    fn bounds_scratch_visits_each_referenced_index_once_per_instance() {
+        let mut scene = parse_glb(&fixture(Layout::Packed, 5125, true)).unwrap();
+        let primitive = &mut scene.meshes[0].primitives[0];
+        primitive.indices = vec![0, 1, 0, 1, 1, 0];
+        primitive
+            .positions
+            .extend_from_slice(&[f32::NAN, 1.0e30, 0.0]);
+        let mut expected = Vec::new();
+        scene
+            .for_each_draw_position(&mut |p| expected.push(p))
+            .unwrap();
+        let mut actual = Vec::new();
+        UniquePositions::new(&scene)
+            .for_each_draw_position(&mut |p| actual.push(p))
+            .unwrap();
+        assert_eq!(actual.len(), scene.instances.len() * 2);
+        assert_eq!(expected.len(), scene.instances.len() * 6);
+        for (all, unique) in expected.chunks(6).zip(actual.chunks(2)) {
+            assert_eq!(&all[..2], unique);
+        }
+        scene.meshes[0].primitives[0].positions[0] = f32::NAN;
+        assert_eq!(
+            UniquePositions::new(&scene).for_each_draw_position(&mut drop),
+            scene.for_each_draw_position(&mut drop)
+        );
+    }
+
+    #[test]
+    fn unique_bounds_match_ordered_draw_reduction_bit_for_bit() {
+        let base = parse_glb(include_bytes!(
+            "../../../tests/fixtures/interleaved-instanced-lines.glb"
+        ))
+        .unwrap();
+        let reduce = |points: &[Vec3]| {
+            points
+                .iter()
+                .copied()
+                .fold(None, |bounds, p| match bounds {
+                    None => Some((p, p)),
+                    Some((min, max)) => Some((min.min(p), max.max(p))),
+                })
+                .map(|(min, max)| {
+                    (
+                        min.to_array().map(f32::to_bits),
+                        max.to_array().map(f32::to_bits),
+                    )
+                })
+        };
+        for scale in [0.0, -0.0, 1.0e-12, -1.0, 1.0e12] {
+            for model in [
+                Mat4::from_scale(Vec3::splat(scale)),
+                Mat4::from_rotation_z(0.73) * Mat4::from_scale(Vec3::new(scale, -2.0, 3.0)),
+                Mat4::from_cols_array(&[
+                    scale, 0.3, 0.0, 0.0, 0.2, 1.0, 0.0, 0.0, 0.4, 0.5, 1.0, 0.0, 2.0, -3.0, 0.0,
+                    1.0,
+                ]),
+            ] {
+                let mut scene = base.clone();
+                for instance in &mut scene.instances {
+                    instance.model = model * instance.model;
+                }
+                // Include signed-zero ties, repeated indices and unreferenced invalid positions.
+                for mesh in &mut scene.meshes {
+                    for primitive in &mut mesh.primitives {
+                        primitive.positions[0] = -0.0;
+                        primitive.positions[3] = 0.0;
+                        primitive.indices.extend_from_within(..);
+                        primitive.positions.extend_from_slice(&[f32::NAN; 3]);
+                    }
+                }
+                let mut all = Vec::new();
+                scene.for_each_draw_position(&mut |p| all.push(p)).unwrap();
+                let mut unique = Vec::new();
+                UniquePositions::new(&scene)
+                    .for_each_draw_position(&mut |p| unique.push(p))
+                    .unwrap();
+                assert_eq!(reduce(&unique), reduce(&all));
+            }
+        }
+        let mut empty = base;
+        empty.instances.clear();
+        assert!(
+            !UniquePositions::new(&empty)
+                .for_each_draw_position(&mut |_| panic!("empty"))
+                .unwrap()
+        );
     }
 
     #[test]
