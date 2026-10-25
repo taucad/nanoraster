@@ -3067,14 +3067,41 @@ impl Renderer {
     /// De-pad the mapped readback rows into tightly packed RGBA.
     fn read_back(&self, view: &InFlightView) -> Result<Rendered, RenderError> {
         let slice = view.buffer.slice(..);
-        let mut rgba = Vec::with_capacity((view.unpadded_bytes_per_row * view.height) as usize);
-        {
+        let mut rgba = {
+            #[cfg(not(target_arch = "wasm32"))]
+            let mut rgba = Vec::with_capacity((view.unpadded_bytes_per_row * view.height) as usize);
             let data = slice.get_mapped_range().map_err(mapped_range_error)?;
-            for row in 0..view.height {
-                let start = (row * view.padded_bytes_per_row) as usize;
-                rgba.extend_from_slice(&data[start..start + view.unpadded_bytes_per_row as usize]);
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                for row in 0..view.height {
+                    let start = (row * view.padded_bytes_per_row) as usize;
+                    rgba.extend_from_slice(
+                        &data[start..start + view.unpadded_bytes_per_row as usize],
+                    );
+                }
+                rgba
             }
-        }
+            #[cfg(target_arch = "wasm32")]
+            {
+                // Dereferencing BufferView on WebGPU lazily copies the entire
+                // mapping into a temporary WASM Vec. Copy from the JS mapping
+                // directly into the owned image instead, before dropping/unmapping.
+                let bytes = data.as_uint8array();
+                if view.padded_bytes_per_row == view.unpadded_bytes_per_row {
+                    bytes.to_vec()
+                } else {
+                    let row_bytes = view.unpadded_bytes_per_row as usize;
+                    let mut rgba = vec![0; row_bytes * view.height as usize];
+                    for (row, output) in rgba.chunks_exact_mut(row_bytes).enumerate() {
+                        let start = row as u32 * view.padded_bytes_per_row;
+                        bytes
+                            .subarray(start, start + view.unpadded_bytes_per_row)
+                            .copy_to(output);
+                    }
+                    rgba
+                }
+            }
+        };
         view.buffer.unmap();
         self.take_uncaptured()?;
         // The sRGB target stores encoded premultiplied-linear RGB. Convert to
