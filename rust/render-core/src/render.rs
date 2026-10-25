@@ -22,6 +22,14 @@ use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 
 const MSAA_SAMPLES: u32 = 4;
+// A hint on native backends; Metal uses memoryless storage when supported.
+// wgpu 30 forwards usage bits directly to browser WebGPU. Keep the portable
+// browser descriptors until transient-attachment support is qualified there.
+const PASS_LOCAL_ATTACHMENT_USAGE: wgpu::TextureUsages = if cfg!(target_arch = "wasm32") {
+    wgpu::TextureUsages::RENDER_ATTACHMENT
+} else {
+    wgpu::TextureUsages::RENDER_ATTACHMENT.union(wgpu::TextureUsages::TRANSIENT_ATTACHMENT)
+};
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -267,6 +275,30 @@ fn validate_target_extent(
         )));
     }
     Ok(())
+}
+
+fn hdr_multisample_target(
+    device: &wgpu::Device,
+    size: wgpu::Extent3d,
+    transparency: bool,
+) -> wgpu::TextureView {
+    device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("HDR multisample"),
+            size,
+            mip_level_count: 1,
+            sample_count: MSAA_SAMPLES,
+            dimension: wgpu::TextureDimension::D2,
+            format: HDR_FORMAT,
+            // Transparent rendering loads the opaque samples in a later pass.
+            usage: if transparency {
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+            } else {
+                PASS_LOCAL_ATTACHMENT_USAGE
+            },
+            view_formats: &[],
+        })
+        .create_view(&wgpu::TextureViewDescriptor::default())
 }
 
 fn composite_target(device: &wgpu::Device, size: wgpu::Extent3d) -> wgpu::TextureView {
@@ -2290,6 +2322,17 @@ impl Renderer {
                 }
                 targets.composite_view =
                     transparency.then(|| composite_target(&self.state.device, targets.extent));
+                let usage = if transparency {
+                    wgpu::TextureUsages::RENDER_ATTACHMENT
+                } else {
+                    PASS_LOCAL_ATTACHMENT_USAGE
+                };
+                if targets.hdr_msaa.texture().usage() != usage {
+                    let next =
+                        hdr_multisample_target(&self.state.device, targets.extent, transparency);
+                    targets.hdr_msaa.texture().destroy();
+                    targets.hdr_msaa = next;
+                }
             }
             return;
         }
@@ -2310,7 +2353,7 @@ impl Renderer {
             sample_count: MSAA_SAMPLES,
             dimension: wgpu::TextureDimension::D2,
             format: COLOR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: PASS_LOCAL_ATTACHMENT_USAGE,
             view_formats: &[],
         });
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -2352,7 +2395,7 @@ impl Renderer {
                 test_depth_view: texture(
                     "AO depth test",
                     DEPTH_FORMAT,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    PASS_LOCAL_ATTACHMENT_USAGE,
                 ),
                 estimate_view: texture(
                     "AO estimate",
@@ -2377,25 +2420,7 @@ impl Renderer {
             view_formats: &[],
         });
 
-        let hdr_texture = |label, samples, usage| {
-            device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: extent,
-                    mip_level_count: 1,
-                    sample_count: samples,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: HDR_FORMAT,
-                    usage,
-                    view_formats: &[],
-                })
-                .create_view(&wgpu::TextureViewDescriptor::default())
-        };
-        let hdr_msaa = hdr_texture(
-            "HDR multisample",
-            MSAA_SAMPLES,
-            wgpu::TextureUsages::RENDER_ATTACHMENT,
-        );
+        let hdr_msaa = hdr_multisample_target(device, extent, transparency);
         let mip_count = if transmission {
             width.max(height).ilog2() + 1
         } else {
@@ -6416,6 +6441,31 @@ mod tests {
                 .contains("maxBufferSize")
         );
         assert!(validate_target_extent(768, 432, &small).is_ok());
+    }
+
+    #[test]
+    fn pass_local_targets_are_transient_but_loaded_depth_and_hdr_are_not() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        for transparency in [false, true, false, true] {
+            renderer.ensure_targets(320, 240, false, true, transparency);
+            let targets = renderer.state.targets.as_ref().unwrap();
+            let transient = |view: &wgpu::TextureView| {
+                view.texture()
+                    .usage()
+                    .contains(wgpu::TextureUsages::TRANSIENT_ATTACHMENT)
+            };
+            assert!(transient(&targets.msaa_view));
+            assert!(transient(&targets.ao.as_ref().unwrap().test_depth_view));
+            assert_eq!(transient(&targets.hdr_msaa), !transparency);
+            assert!(!transient(&targets.depth_view));
+            assert!(!transient(&targets.opaque_view));
+            assert_eq!(targets.msaa_view.texture().sample_count(), 4);
+            assert_eq!(targets.hdr_msaa.texture().sample_count(), 4);
+            assert_eq!(targets.depth_view.texture().format(), DEPTH_FORMAT);
+        }
+        assert_eq!(renderer.counters.target_allocations, 1);
     }
 
     #[test]

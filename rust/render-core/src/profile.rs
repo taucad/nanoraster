@@ -42,7 +42,8 @@ fn texture(label: &str, view: &wgpu::TextureView) -> Value {
         })
         .sum();
     json!({"label":label,"width":t.width(),"height":t.height(),"format":format!("{:?}",t.format()),
-        "samples":t.sample_count(),"mips":t.mip_level_count(),"logicalBytes":bytes})
+        "samples":t.sample_count(),"mips":t.mip_level_count(),"logicalBytes":bytes,
+        "transient":t.usage().contains(wgpu::TextureUsages::TRANSIENT_ATTACHMENT)})
 }
 
 pub(super) fn ledger(t: &SizedTargets) -> Value {
@@ -69,7 +70,12 @@ pub(super) fn ledger(t: &SizedTargets) -> Value {
         .iter()
         .map(|t| t["logicalBytes"].as_u64().unwrap())
         .sum();
-    json!({"textures":textures,"textureBytes":texture_bytes,"readbackBytes":readback,
+    let transient_bytes: u64 = textures
+        .iter()
+        .filter(|t| t["transient"] == true)
+        .map(|t| t["logicalBytes"].as_u64().unwrap())
+        .sum();
+    json!({"textures":textures,"textureBytes":texture_bytes,"transientTextureBytes":transient_bytes,"readbackBytes":readback,
         "targetBytes":texture_bytes + readback.iter().sum::<u64>()})
 }
 
