@@ -789,7 +789,17 @@ fn camera_extents<const INCLUDE_XY: bool>(
         max_y: 0.0,
     };
     for_each_camera_position(scene, options, |position| {
-        let camera = view.transform_point3(position);
+        let camera = if INCLUDE_XY {
+            view.transform_point3(position)
+        } else {
+            // Preserve glam's transform_point3 addition order, but compute only
+            // the depth lane. Reassociation can change the fitted clip planes.
+            let z = view.x_axis.z * position.x;
+            let z = view.y_axis.z * position.y + z;
+            let z = view.z_axis.z * position.z + z;
+            let z = view.w_axis.z + z;
+            Vec3::new(0.0, 0.0, z)
+        };
         let depth = -camera.z;
         if depth > 0.0 {
             extents.nearest = extents.nearest.min(depth);
@@ -3478,6 +3488,67 @@ mod tests {
                             [actual.0, actual.1].map(f32::to_bits),
                             [expected.0, expected.1].map(f32::to_bits)
                         );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn depth_only_extents_match_full_transform_bits_for_affine_views() {
+        // Compare each point independently: aggregate extrema could hide a rounding
+        // difference that changes near/far when a different vertex becomes nearest.
+        let mut state = 0x913a_7bd5_u32;
+        let mut next = || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state as i32 as f32) / i32::MAX as f32
+        };
+        let mut points = vec![Vec3::ZERO, Vec3::splat(-0.0)];
+        for scale in [1.0e-20, 1.0e-6, 1.0, 1.0e6, 1.0e20] {
+            for _ in 0..128 {
+                points.push(Vec3::new(next(), next(), next()) * scale);
+            }
+        }
+        for view in [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(-3.7, 2.1, -0.01)),
+            glam::camera::rh::view::look_at_mat4(Vec3::new(1.2, -1.7, 4.2), Vec3::ZERO, Vec3::Y),
+            glam::camera::rh::view::look_at_mat4(Vec3::new(-9.3, 0.1, -0.2), Vec3::ONE, Vec3::Z),
+            Mat4::from_scale_rotation_translation(
+                Vec3::new(-1.0e-3, 7.1, 1.0e3),
+                glam::Quat::from_euler(glam::EulerRot::XYZ, 0.7, -1.3, 2.9),
+                Vec3::new(0.3, -0.2, 1.1),
+            ),
+        ] {
+            for point in &points {
+                let scene = line_scene(&[[point.to_array(), point.to_array()]]);
+                for options in [
+                    RenderOptions::default(),
+                    RenderOptions {
+                        lines: false,
+                        ..RenderOptions::default()
+                    },
+                ] {
+                    let full = camera_extents::<true>(
+                        &mut glb::UniquePositions::new(&scene),
+                        &options,
+                        view,
+                    );
+                    let depth = camera_extents::<false>(
+                        &mut glb::UniquePositions::new(&scene),
+                        &options,
+                        view,
+                    );
+                    assert_eq!(
+                        [depth.nearest, depth.farthest].map(f32::to_bits),
+                        [full.nearest, full.farthest].map(f32::to_bits),
+                        "point={point:?}, view={view:?}",
+                    );
+                    assert_eq!([depth.max_x, depth.max_y], [0.0, 0.0]);
+                    for fallback in [0.0, 1.0e-6, 1000.0] {
+                        let a = depth.clip_planes(fallback);
+                        let b = full.clip_planes(fallback);
+                        assert_eq!([a.0, a.1].map(f32::to_bits), [b.0, b.1].map(f32::to_bits));
                     }
                 }
             }
