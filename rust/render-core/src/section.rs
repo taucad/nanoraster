@@ -20,7 +20,7 @@ use i_triangle::i_overlay::i_float::int::point::IntPoint;
 use i_triangle::i_overlay::i_shape::int::shape::{IntContour, IntShapes};
 use i_triangle::int::triangulatable::IntTriangulatable;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::ops::Bound;
 
 const PRECISION: f64 = 100_000_000.0;
@@ -1002,7 +1002,9 @@ fn spatial_clusters(vertices: &[usize], positions: &[Vec3], epsilon: f32) -> Vec
         .map(|vertex| positions[*vertex])
         .collect::<Vec<_>>();
     let mut maximum = minimum.clone();
-    let mut cells = BTreeMap::<(i64, i64, i64), Vec<usize>>::new();
+    // Only keyed lookup is used: explicit cell traversal and insertion-ordered
+    // candidate lists preserve the deterministic union sequence across hash seeds.
+    let mut cells = HashMap::<(i64, i64, i64), Vec<usize>>::new();
     for (index, vertex) in sorted.iter().enumerate() {
         let position = positions[*vertex];
         let cell = spatial_cell(position, epsilon);
@@ -3537,6 +3539,39 @@ mod tests {
         );
         let geometry = build(&collapsed_seam, &section_options()).expect("collapsed seam");
         assert!(geometry.indices.is_empty());
+    }
+
+    #[test]
+    fn seam_clusters_preserve_order_boundaries_and_bounded_chains() {
+        // Cross negative/positive cells and every neighbor axis, with duplicates
+        // and a chain whose endpoints must not merge through an intermediate.
+        let positions = [
+            Vec3::new(-0.01, -0.01, -0.01),
+            Vec3::new(0.01, 0.01, 0.01),
+            Vec3::new(0.01, 0.01, 0.01),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(1.09, 0.0, 0.0),
+            Vec3::new(1.18, 0.0, 0.0),
+            Vec3::splat(4.0),
+        ];
+        let vertices = [0, 1, 2, 3, 4, 5];
+        let expected = spatial_clusters(&vertices, &positions, 0.1);
+        assert_eq!(expected[0], expected[1]);
+        assert_eq!(expected[1], expected[2]);
+        assert_eq!(expected[3], expected[4]);
+        assert_ne!(expected[4], expected[5]);
+        assert_ne!(expected[0], expected[3]);
+        assert_eq!(expected[6], usize::MAX);
+        // New maps have fresh hash seeds on supported hosts. Their iteration
+        // order must never select a weld or change the resulting cluster IDs.
+        for _ in 0..64 {
+            assert_eq!(spatial_clusters(&vertices, &positions, 0.1), expected);
+            assert_eq!(
+                spatial_clusters(&[5, 2, 0, 4, 1, 3], &positions, 0.1),
+                expected
+            );
+        }
+        assert!(spatial_clusters(&[], &[], 0.1).is_empty());
     }
 
     #[test]
