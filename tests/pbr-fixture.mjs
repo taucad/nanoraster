@@ -264,7 +264,7 @@ export const closedCubeGlb = (copies = 1) => {
 };
 
 /** A smooth UV sphere with a glTF tangent frame for physical layer conformance. */
-export const physicalMaterialGlb = (material) => {
+export const physicalMaterialGlb = (material, textureBytes) => {
   const positions = [],
     normals = [],
     tangents = [],
@@ -299,7 +299,9 @@ export const physicalMaterialGlb = (material) => {
     new Float32Array(uvs),
     new Uint32Array(indices),
   ];
-  const binary = new Uint8Array(arrays.reduce((sum, array) => sum + array.byteLength, 0));
+  const binary = new Uint8Array(
+    arrays.reduce((sum, array) => sum + array.byteLength, 0) + (textureBytes?.length ?? 0),
+  );
   let offset = 0;
   const bufferViews = arrays.map((array) => {
     const view = { buffer: 0, byteOffset: offset, byteLength: array.byteLength };
@@ -307,6 +309,10 @@ export const physicalMaterialGlb = (material) => {
     offset += array.byteLength;
     return view;
   });
+  if (textureBytes) {
+    bufferViews.push({ buffer: 0, byteOffset: offset, byteLength: textureBytes.length });
+    binary.set(textureBytes, offset);
+  }
   const extensions = Object.keys(material.extensions ?? {});
   return glb(
     {
@@ -331,6 +337,9 @@ export const physicalMaterialGlb = (material) => {
         { bufferView: 4, componentType: 5125, count: indices.length, type: 'SCALAR' },
       ],
       materials: [material],
+      ...(textureBytes
+        ? { images: [{ bufferView: 5, mimeType: 'image/png' }], textures: [{ source: 0 }] }
+        : {}),
       extensionsUsed: extensions,
       extensionsRequired: extensions,
       meshes: [

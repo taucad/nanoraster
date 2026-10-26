@@ -231,7 +231,10 @@ const sizes = {
 // gzip-9 1,129,881 (+217), Brotli-11 943,050 (+28). A per-view boolean
 // avoids a redundant full-image alpha scan. Admit the measured deltas only;
 // retain the existing raw headroom and compressor tolerances.
-const ceilings = { raw: 2_426_360, gzip9: 1_130_591, brotli11: 938_868 };
+// Grouped absent anisotropy/sheen with software-adapter fallback (Rust 1.99.1): raw
+// 2,426,240 -> 2,427,493 (+1,253). Preserve the existing 120-byte headroom
+// and compressed allowances; this admits only the measured raw delta.
+const ceilings = { raw: 2_427_613, gzip9: 1_130_591, brotli11: 938_868 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.

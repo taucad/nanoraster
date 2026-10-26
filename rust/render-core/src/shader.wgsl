@@ -133,7 +133,7 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
     let ao = mix(1.0, sample_map(in, 3u).r, prim.misc.y);
     let emission = prim.emissive.rgb * sample_map(in, 4u).rgb;
     let aniso_map = sample_map(in, 5u);
-    let aniso = prim.anisotropy.x * aniso_map.b;
+    let aniso = select(0.0, prim.anisotropy.x * aniso_map.b, ANISOTROPY_SHEEN);
     var direction = vec2<f32>(1.0, 0.0);
     if (has_map(5u)) { direction = aniso_map.rg * 2.0 - 1.0; }
     if (dot(direction, direction) < 0.000001) { direction = vec2<f32>(1.0, 0.0); }
@@ -145,7 +145,7 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
     let iridescence = prim.iridescence.x * sample_map(in, 9u).r;
     let irid_map = sample_map(in, 10u).g;
     let film_thickness = mix(prim.iridescence.z, prim.iridescence.w, irid_map);
-    let sheen = prim.sheen.rgb * sample_map(in, 11u).rgb;
+    let sheen = select(vec3<f32>(0.0), prim.sheen.rgb * sample_map(in, 11u).rgb, ANISOTROPY_SHEEN);
     let sheen_rough = max(0.0001, prim.sheen.a) * sample_map(in, 12u).a;
     let sheen_weight = max(max(sheen.r, sheen.g), sheen.b);
     let sheen_energy = 1.0 - sheen_weight * sheen_albedo(nv, sheen_rough);

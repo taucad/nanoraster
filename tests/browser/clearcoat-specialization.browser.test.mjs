@@ -2,8 +2,10 @@ import { beforeAll, expect, test } from 'vitest';
 import init, { Renderer } from 'nanoraster-wasm-candidate';
 import { physicalMaterialGlb } from '../pbr-fixture.mjs';
 
+let fallback;
 beforeAll(async () => {
   await init();
+  fallback = (await globalThis.navigator.gpu.requestAdapter()).info.isFallbackAdapter;
 });
 
 test('Replicad metallic planetary assembly matches the general shader at thumbnail and 5K sizes', async () => {
@@ -97,7 +99,7 @@ test('absent clearcoat preserves full-shader pixels and bounded cache reuse acro
         for (const material of materials) {
           images.push(await renderer.render_image(physicalMaterialGlb(material), options));
         }
-        expect(compiled).toEqual([0, 0, 0, 0, 1, 1, 1, 1]);
+        expect(compiled).toEqual(fallback ? [0, 0, 0, 0, 1, 1, 1, 1] : [0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0]);
         expect(images[0]).toEqual(images[6]);
         expect(images[0]).not.toEqual(images[1]);
       } finally {

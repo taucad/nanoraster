@@ -6,6 +6,9 @@
 override TEXTURE_MASK: u32 = 131071u;
 // Preserve the full material path whenever any primitive uses clearcoat.
 override CLEARCOAT: bool = true;
+// Keep iridescence on its general path: removing it changes 8-bit output.
+// This group only removes absent anisotropy and sheen, never active layers.
+override ANISOTROPY_SHEEN: bool = true;
 
 struct TextureSlot {
     image: vec4<u32>, // pixel offset, width, height, mip count

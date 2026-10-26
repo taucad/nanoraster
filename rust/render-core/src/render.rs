@@ -129,8 +129,14 @@ pub(crate) struct SceneBuffers {
     gpu_assets: Vec<GpuMeshAsset>,
     gpu_instances: Vec<GpuInstance>,
     texture_pixels: wgpu::Buffer,
+    features: ShaderFeatures,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ShaderFeatures {
     texture_mask: u32,
     clearcoat: bool,
+    anisotropy_sheen: bool,
 }
 
 /// Scene handle: parsed CPU geometry plus its GPU buffers. The parsed half is
@@ -416,6 +422,7 @@ impl Counters {
 
 /// Everything scoped to one `wgpu::Device`, rebuilt wholesale on device loss.
 struct DeviceState {
+    specialize_anisotropy_sheen: bool,
     device: wgpu::Device,
     queue: wgpu::Queue,
     pass_local_usage: wgpu::TextureUsages,
@@ -1082,8 +1089,7 @@ fn create_pipeline_pair(
     pipeline_layout: &wgpu::PipelineLayout,
     line_width_px: f32,
     wireframe: bool,
-    texture_mask: u32,
-    clearcoat: bool,
+    features: ShaderFeatures,
 ) -> PipelinePair {
     let position_layout = wgpu::VertexBufferLayout {
         array_stride: 12,
@@ -1191,8 +1197,12 @@ fn create_pipeline_pair(
                 entry_point: Some("fs_mesh"),
                 compilation_options: wgpu::PipelineCompilationOptions {
                     constants: &[
-                        ("TEXTURE_MASK", f64::from(texture_mask)),
-                        ("CLEARCOAT", f64::from(u32::from(clearcoat))),
+                        ("TEXTURE_MASK", f64::from(features.texture_mask)),
+                        ("CLEARCOAT", f64::from(u32::from(features.clearcoat))),
+                        (
+                            "ANISOTROPY_SHEEN",
+                            f64::from(u32::from(features.anisotropy_sheen)),
+                        ),
                     ],
                     ..Default::default()
                 },
@@ -1577,6 +1587,10 @@ impl DeviceState {
         uncaptured: &Arc<Mutex<Option<String>>>,
     ) -> Result<Self, RenderError> {
         let adapter = request_adapter(power).await?;
+        // Software WebGPU changes exact 5K quantization under this specialization.
+        // Use the adapter's fallback classification, never a vendor-name heuristic.
+        let specialize_anisotropy_sheen =
+            cfg!(target_arch = "wasm32") && adapter.get_info().device_type != wgpu::DeviceType::Cpu;
         // 32-bit ARM Linux only: lavapipe from mesa 23 onwards dies inside the
         // driver during command replay, which no `Result` can carry. Refuse
         // before a device exists, unless the consumer opted out.
@@ -1902,6 +1916,7 @@ impl DeviceState {
         });
 
         Ok(Self {
+            specialize_anisotropy_sheen,
             device,
             queue,
             pass_local_usage,
@@ -2172,31 +2187,32 @@ impl Renderer {
             })
             .collect();
 
+        let features = scene.meshes.iter().flat_map(|mesh| &mesh.primitives).fold(
+            ShaderFeatures {
+                // Native Metal feature specialization needs independent exact-output
+                // qualification. Keep its general shader; specialize browser WebGPU.
+                clearcoat: cfg!(not(target_arch = "wasm32")),
+                anisotropy_sheen: !self.state.specialize_anisotropy_sheen,
+                ..ShaderFeatures::default()
+            },
+            |mut features, primitive| {
+                let material = &primitive.material;
+                features.clearcoat |= material.coat[0] != 0.0;
+                features.anisotropy_sheen |= material.anisotropy[0] != 0.0
+                    // Active iridescence also retains the general expression tree:
+                    // removing its neighboring layers changes exact film output.
+                    || material.iridescence[0] != 0.0
+                    || material.sheen[..3].iter().any(|value| *value != 0.0);
+                for (index, slot) in material.textures.iter().enumerate() {
+                    features.texture_mask |= u32::from(slot.present()) << index;
+                }
+                features
+            },
+        );
         SceneBuffers {
-            // Native Metal specialization changes two 8-bit sheen pixels in
-            // the qualified 5K fixture. Keep its general shader until exact
-            // output is independently qualified; browser specialization is exact.
-            clearcoat: cfg!(not(target_arch = "wasm32"))
-                || scene
-                    .meshes
-                    .iter()
-                    .flat_map(|mesh| &mesh.primitives)
-                    .any(|primitive| primitive.material.coat[0] != 0.0),
+            features,
             gpu_assets,
             gpu_instances,
-            texture_mask: scene.meshes.iter().flat_map(|mesh| &mesh.primitives).fold(
-                0,
-                |mask, primitive| {
-                    primitive
-                        .material
-                        .textures
-                        .iter()
-                        .enumerate()
-                        .fold(mask, |mask, (index, slot)| {
-                            mask | (u32::from(slot.present()) << index)
-                        })
-                },
-            ),
             texture_pixels: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("texture mip pixels"),
                 contents: bytemuck::cast_slice(&scene.texture_pixels),
@@ -2302,13 +2318,13 @@ impl Renderer {
         &mut self,
         line_width_px: f32,
         wireframe: bool,
-        texture_mask: u32,
-        clearcoat: bool,
+        features: ShaderFeatures,
     ) -> usize {
         let key = u64::from(line_width_px.to_bits() << 1 | u32::from(wireframe))
-            | (u64::from(texture_mask) << 32)
+            | (u64::from(features.texture_mask) << 32)
             // The texture mask uses bits 32..49 (17 material map slots).
-            | (u64::from(clearcoat) << 49);
+            | (u64::from(features.clearcoat) << 49)
+            | (u64::from(features.anisotropy_sheen) << 50);
         if let Some(index) = self
             .state
             .pipelines
@@ -2329,8 +2345,7 @@ impl Renderer {
             &self.state.pipeline_layout,
             line_width_px,
             wireframe,
-            texture_mask,
-            clearcoat,
+            features,
         );
         self.state.pipelines.push((key, pair));
         self.state.pipelines.len() - 1
@@ -2608,7 +2623,7 @@ impl Renderer {
             has_transparency,
         );
         if ao_active {
-            self.ensure_ao_pipelines(scene.texture_mask);
+            self.ensure_ao_pipelines(scene.features.texture_mask);
         }
         // Bias surfaces only when line geometry actually draws this view:
         // enabled model edges that survive `visiblePrimitives`, or a section
@@ -2630,12 +2645,8 @@ impl Renderer {
             }))
             || presentation.boundary.is_some()
             || presentation.open_chains.is_some();
-        let pipeline_index = self.ensure_pipelines(
-            line_width_px(options),
-            wireframe,
-            scene.texture_mask,
-            scene.clearcoat,
-        );
+        let pipeline_index =
+            self.ensure_pipelines(line_width_px(options), wireframe, scene.features);
         let slot = self
             .state
             .targets
@@ -4097,7 +4108,10 @@ mod tests {
             .prepare_presentation(&scene.parsed, &entry.options)
             .expect("presentation");
         let buffers = renderer.ensure_uploaded(&mut scene).expect("line upload");
-        let context = format!("test render (texture_mask={:#x})", buffers.texture_mask);
+        let context = format!(
+            "test render (texture_mask={:#x})",
+            buffers.features.texture_mask
+        );
         pollster::block_on(renderer.render_entry_to_rgba(buffers, &presentation, &entry))
             .expect(&context)
     }
@@ -6846,17 +6860,35 @@ mod tests {
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
                 .expect("renderer");
 
-        let first = renderer.ensure_pipelines(2.0, true, 0, false);
-        assert_eq!(renderer.ensure_pipelines(2.0, true, 0, false), first);
+        let first = renderer.ensure_pipelines(2.0, true, ShaderFeatures::default());
+        assert_eq!(
+            renderer.ensure_pipelines(2.0, true, ShaderFeatures::default()),
+            first
+        );
         assert_eq!(renderer.counters.pipeline_sets, 1);
-        assert_ne!(renderer.ensure_pipelines(2.0, false, 0, false), first);
-        let second = renderer.ensure_pipelines(4.0, true, 0, false);
+        assert_ne!(
+            renderer.ensure_pipelines(2.0, false, ShaderFeatures::default()),
+            first
+        );
+        let second = renderer.ensure_pipelines(4.0, true, ShaderFeatures::default());
         assert_ne!(first, second);
         assert_eq!(renderer.counters.pipeline_sets, 3);
+        let extras = ShaderFeatures {
+            anisotropy_sheen: true,
+            ..ShaderFeatures::default()
+        };
+        let active = renderer.ensure_pipelines(2.0, true, extras);
+        assert_ne!(active, first);
+        assert_eq!(renderer.ensure_pipelines(2.0, true, extras), active);
+        assert_eq!(
+            renderer.ensure_pipelines(2.0, true, ShaderFeatures::default()),
+            first
+        );
+        assert_eq!(renderer.counters.pipeline_sets, 4);
 
         // Fill past the cap: the oldest entry is evicted, the cache stays bounded.
         for width in 0..MAX_CACHED_PIPELINE_PAIRS as u32 {
-            renderer.ensure_pipelines(8.0 + width as f32, true, 0, false);
+            renderer.ensure_pipelines(8.0 + width as f32, true, ShaderFeatures::default());
         }
         assert_eq!(renderer.state.pipelines.len(), MAX_CACHED_PIPELINE_PAIRS);
         assert!(
