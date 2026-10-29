@@ -10,7 +10,7 @@
 #   None.
 #
 # Usage:
-#   scripts/test-rust-coverage.sh
+#   scripts/test-rust-coverage.sh [--production]
 #
 # Exit codes:
 #   0  No source lines or functions are uncovered.
@@ -26,6 +26,12 @@ cargo llvm-cov --version >/dev/null 2>&1 || {
 }
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+FEATURES=(--all-features)
+case "${1:-}" in
+  '') ;;
+  --production) FEATURES=(--no-default-features) ;;
+  *) printf '%s\n' 'Usage: scripts/test-rust-coverage.sh [--production]' >&2; exit 2 ;;
+esac
 
 # -- reason: third-party image-webp source is tested through nanoraster's codec conformance oracle.
 # -- reason: vendored wgpu-hal (one DX12 alignment patch) is exercised by the Windows smoke rows, not unit tests.
@@ -34,8 +40,9 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 IGNORE_PATHS='vendor/image-webp|vendor/wgpu-hal|render-wasm|render-napi'
 
 cd "$REPO_ROOT"
-# --all-features keeps the default-off `bench` surface measured rather than
-# silently uncompiled: its code counts, and its tests run.
+# Production coverage runs on every representative platform. The default
+# additionally covers bench instrumentation on a timestamp-capable GPU; CI
+# uses Linux lavapipe for this independent gate because macOS VMs omit queries.
 # Tests share the CI GPU. Bound simultaneous shader compilation by serializing
 # separate cases; explicit concurrency inside individual tests remains.
 # Exercise native opt-in timing/ledger collection. Its regression also runs an
@@ -47,7 +54,7 @@ cd "$REPO_ROOT"
 NANORASTER_GPU_PROFILE=1 cargo llvm-cov \
   --manifest-path rust/Cargo.toml \
   --workspace \
-  --all-features \
+  "${FEATURES[@]}" \
   --ignore-filename-regex "$IGNORE_PATHS" \
   --fail-uncovered-lines 0 \
   --fail-under-functions 100 \

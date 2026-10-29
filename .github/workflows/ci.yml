@@ -348,8 +348,11 @@ jobs:
       - name: Clippy with the bench feature
         if: matrix.representative
         run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --all-features -- -D warnings
-      - name: First-party Rust coverage
+      - name: First-party production Rust coverage
         if: matrix.representative
+        run: pnpm run test:rust-coverage --production
+      - name: First-party benchmark Rust coverage
+        if: matrix.representative && runner.os == 'Linux'
         run: pnpm run test:rust-coverage
       - name: Native singular/batch parity
         if: matrix.representative

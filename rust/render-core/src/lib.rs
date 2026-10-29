@@ -1699,6 +1699,23 @@ mod tests {
         // fail certification by design.
         let sectioned = r#"{"format":"png","width":64,"height":64,"world":{"up":"+z","forward":"-y","unit":"meter"},"sections":{"planes":[{"point":[0,0,0],"normal":[1,0,0]}]}}"#;
         assert!(pollster::block_on(render_image_request(SECTION_FIXTURE, sectioned)).is_ok());
+        let section_batch = r#"{"format":"raw","width":64,"height":64,"timings":true,"views":[{"id":"cut"}],"sections":{"planes":[{"point":[0,0,0],"normal":[1,0,0]}]}}"#;
+        let (cut_images, cut_timings) = pollster::block_on(render_images_request(
+            SECTION_FIXTURE,
+            section_batch,
+            Some(&clock),
+        ))
+        .expect("timed section request");
+        assert_eq!(cut_images.len(), 1);
+        let cut_timings = cut_timings.expect("requested section timings");
+        assert!(!cut_timings.sections.is_empty());
+        assert!(
+            cut_timings
+                .sections
+                .iter()
+                .all(|section| section.plane == 0)
+        );
+        assert_eq!(cut_timings.views[0].id, "cut");
         let raw = pollster::block_on(render_image_request(
             FIXTURE,
             r#"{"format":"raw","width":192,"height":192}"#,
