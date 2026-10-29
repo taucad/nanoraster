@@ -1523,6 +1523,41 @@ mod tests {
     }
 
     #[test]
+    fn projected_envelope_reference_covers_empty_and_repeated_invalid_positions() {
+        let options = RenderOptions::default();
+        let camera = CameraState {
+            view: Mat4::IDENTITY,
+            projection: Mat4::ZERO,
+            forward: Vec3::NEG_Z,
+            target_depth: 1.0,
+        };
+        for empty in [false, true] {
+            let mut source = scene();
+            if empty {
+                source.instances.clear();
+            }
+            let expected = reference_projected_envelope(&source, &options, camera, 768, 432)
+                .expect_err("invalid or empty reference")
+                .to_string();
+            let actual = projected_envelope(
+                &mut UniquePositions::new(&source),
+                &options,
+                camera,
+                768,
+                432,
+            )
+            .expect_err("invalid or empty optimized path")
+            .to_string();
+            assert_eq!(actual, expected);
+            assert!(expected.contains(if empty {
+                "no projected geometry"
+            } else {
+                "non-finite projected"
+            }));
+        }
+    }
+
+    #[test]
     fn projected_envelope_preserves_transform_bits_and_invalid_depth() {
         let mut state = 0x51d3_78a9_u32;
         let mut next = || {

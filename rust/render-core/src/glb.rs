@@ -2029,13 +2029,23 @@ mod tests {
                 assert_eq!(reduce(&unique), reduce(&all));
             }
         }
+        let visits = std::cell::Cell::new(0);
+        let mut visit = |_| visits.set(visits.get() + 1);
+        assert!(
+            UniquePositions::new(&base)
+                .for_each_draw_position(&mut visit)
+                .unwrap()
+        );
+        assert!(visits.get() > 0);
+        visits.set(0);
         let mut empty = base;
         empty.instances.clear();
         assert!(
             !UniquePositions::new(&empty)
-                .for_each_draw_position(&mut |_| panic!("empty"))
+                .for_each_draw_position(&mut visit)
                 .unwrap()
         );
+        assert_eq!(visits.get(), 0);
     }
 
     #[test]

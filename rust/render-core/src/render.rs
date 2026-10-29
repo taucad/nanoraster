@@ -3475,6 +3475,15 @@ mod tests {
                 ]
             );
         }
+        let visits = std::cell::Cell::new(0);
+        let mut visit = |_| visits.set(visits.get() + 1);
+        assert!(
+            positions
+                .for_each_position(&options, &mut visit)
+                .expect("visible")
+        );
+        assert!(visits.get() > 0);
+        visits.set(0);
         for options in [
             RenderOptions {
                 lines: false,
@@ -3487,15 +3496,16 @@ mod tests {
         ] {
             assert!(
                 !positions
-                    .for_each_position(&options, &mut |_| panic!("hidden position"))
+                    .for_each_position(&options, &mut visit)
                     .expect("hidden")
             );
         }
+        assert_eq!(visits.get(), 0, "hidden visitors must not run");
         drop(positions);
         source.meshes[0].primitives[0].indices = vec![2, 0];
         assert_eq!(
             glb::UniquePositions::new(&source)
-                .for_each_position(&RenderOptions::default(), &mut |_| {}),
+                .for_each_position(&RenderOptions::default(), &mut visit),
             Err("transformed POSITION values must be finite".into())
         );
     }
@@ -3564,9 +3574,10 @@ mod tests {
                             ..RenderOptions::default()
                         };
                         let bounds = source.presented_bounds(&options);
-                        if bounds.is_none() {
-                            continue;
-                        }
+                        assert!(
+                            bounds.is_some(),
+                            "fixture must exercise the camera reduction"
+                        );
                         assert_eq!(
                             bits(camera_state_with_bounds(&mut unique, &options, bounds)),
                             bits(camera_state_with_bounds(&mut reference, &options, bounds))
@@ -3730,7 +3741,7 @@ mod tests {
             "../../../tests/fixtures/interleaved-instanced-lines.glb"
         ))
         .expect("fixture");
-        for (width, height) in [(5120, 2880), (432, 768)] {
+        for (width, height) in [(5120, 2880), (432, 768), (8192, 1)] {
             for (direction, up) in [
                 ([1.2, -1.7, 4.2], [0.0, 1.0, 0.0]),
                 ([0.0, 0.0, 1.0], [0.0, 1.0, 0.0]),
