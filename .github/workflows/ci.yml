@@ -358,6 +358,58 @@ jobs:
         if: matrix.representative
         run: pnpm run test:native-parity
 
+  # Temporary attribution lane: altered shaders are never assembled or published.
+  # Keep the normal Windows parity gate strict; remove after AO attribution.
+  ao-diagnostic:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [control, shader-debug, estimate-flat, filter-flat]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '26'
+      - name: Apply isolated diagnostic source change
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          python <<'PYTHON'
+          import os
+          from pathlib import Path
+          variant = os.environ['VARIANT']
+          if variant == 'shader-debug':
+              p = Path('rust/render-core/src/render.rs')
+              source = p.read_text()
+              needle = 'instance_descriptor.backends = backends;'
+              assert source.count(needle) == 1
+              p.write_text(source.replace(needle, needle + '\n    instance_descriptor.flags.insert(wgpu::InstanceFlags::DEBUG);'))
+          elif variant != 'control':
+              p = Path('rust/render-core/src/ao.wgsl')
+              source = p.read_text()
+              name = 'fs_ao_estimate' if variant == 'estimate-flat' else 'fs_ao_blur'
+              start = source.index('{', source.index('fn ' + name))
+              end, depth = start + 1, 1
+              while depth:
+                  depth += (source[end] == '{') - (source[end] == '}')
+                  end += 1
+              p.write_text(source[:start] + '{ return vec4<f32>(1.0, 0.5, 0.5, 1.0); }' + source[end:])
+          PYTHON
+          git diff --stat
+          git diff
+      - run: pnpm run build:napi
+      # Flat diagnostic shaders intentionally fail the appearance oracle. The
+      # contrast is successful GPU completion versus device loss, not a pass.
+      - name: Probe the first failing AO fixture in a fresh process
+        continue-on-error: true
+        run: pnpm exec vitest run --config vitest.native.config.ts --testNamePattern "glass-ao matches"
+
   assemble:
     needs: [preflight, quality, node, build]
     runs-on: ubuntu-24.04
