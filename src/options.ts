@@ -53,7 +53,7 @@ export type RenderLightingRig = {
  */
 export type RenderLighting = 'studio' | RenderLightingRig;
 
-/** Screen-space ambient occlusion for contact shadows in opaque geometry. Omit to skip its render passes. @public */
+/** Screen-space ambient occlusion for contact shadows in opaque geometry. Enabled by default; use intensity 0 to skip its render passes. @public */
 export type RenderAmbientOcclusion = {
   /** Sampling radius in output pixels. @default max(1% of image diagonal, 4) */
   readonly radiusPixels?: number;
@@ -267,7 +267,7 @@ type RenderImageSharedOptions = {
    * @default 'studio'
    */
   readonly lighting?: RenderLighting;
-  /** Optional opaque-surface AO matching Tau's WebGL editing profile. @default disabled */
+  /** Opaque-surface contact shadows. Use intensity 0 to disable. @default enabled */
   readonly ao?: RenderAmbientOcclusion;
 };
 

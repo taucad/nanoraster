@@ -196,6 +196,16 @@ pub struct AmbientOcclusion {
     pub distance_falloff: f32,
 }
 
+impl Default for AmbientOcclusion {
+    fn default() -> Self {
+        Self {
+            radius_pixels: None,
+            intensity: 3.0,
+            distance_falloff: 0.2,
+        }
+    }
+}
+
 /// Maximum number of simultaneous retained-half-space planes. Eight, so an
 /// axis-aligned box crop (six faces) still has two planes spare; the limit is
 /// the `Frame` uniform's plane array, not the shader's clipping arithmetic.
@@ -281,7 +291,7 @@ impl Default for RenderOptions {
             axes: false,
             scale_bar: false,
             lighting: ResolvedLighting::studio(),
-            ao: None,
+            ao: Some(AmbientOcclusion::default()),
             world_axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         }
     }

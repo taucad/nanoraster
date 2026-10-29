@@ -2,6 +2,12 @@
 
 ## 0.x
 
+- Ambient occlusion is enabled by default for single images and batches.
+  Use `ao: { intensity: 0 }` to retain rendering without AO. Omitted options
+  and `ao: {}` select the same default; radius, intensity and falloff remain
+  configurable per invocation. This intentionally changes default image bytes
+  and adds the AO rendering cost.
+
 The package has no compatibility commitments before its first stable release.
 
 - Sections no longer fail on topology. A source with an open seam, a sliver or

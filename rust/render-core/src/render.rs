@@ -4237,6 +4237,7 @@ mod tests {
             width: 256,
             height: 256,
             lines: false,
+            ao: None,
             ..RenderOptions::default()
         };
         let off = render_test_scene(&mut renderer, scene.clone(), options.clone());
@@ -4636,8 +4637,8 @@ mod tests {
         }
         assert_eq!(
             renderer.counters.pipeline_sets,
-            if cfg!(target_arch = "wasm32") { 2 } else { 1 },
-            "reuse qualified specializations"
+            if cfg!(target_arch = "wasm32") { 3 } else { 2 },
+            "reuse qualified specializations plus AO"
         );
     }
 
@@ -5135,6 +5136,8 @@ mod tests {
         material.anisotropy[3] = 1.0;
         let mut options = physical_options();
         options.background = None;
+        // Isolate straight-alpha coverage from intentional AO color attenuation.
+        options.ao = None;
         let opaque = render_test_scene(
             &mut renderer,
             physical_sphere(material.clone()),
@@ -5388,7 +5391,7 @@ mod tests {
         assert_eq!(MAX_SECTION_PLANES, 8);
         assert_eq!(FRAME_SECTION_TAIL, 136);
         assert_eq!(FRAME_FLOATS * 4, 592);
-        assert_eq!(data[FRAME_SECTION_TAIL + 8], 1.0);
+        assert_eq!(data[FRAME_SECTION_TAIL + 8], 3.0);
         assert_eq!(
             frame_uniform(
                 camera,

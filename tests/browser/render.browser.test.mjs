@@ -93,11 +93,11 @@ test('wasm shell renders a deterministic 192x192 PNG', async () => {
 
 test('wasm AO changes contact shading without changing zero-intensity pixels', async () => {
   const options = { width: 192, height: 192, format: 'raw', lines: false };
-  const off = await render_image(glb, JSON.stringify(options));
+  const defaultImage = await render_image(glb, JSON.stringify(options));
   const zero = await render_image(glb, JSON.stringify({ ...options, ao: { intensity: 0 } }));
   const on = await render_image(glb, JSON.stringify({ ...options, ao: {} }));
-  expect(zero).toEqual(off);
-  expect(on).not.toEqual(off);
+  expect(defaultImage).toEqual(on);
+  expect(on).not.toEqual(zero);
   expect(await render_image(glb, JSON.stringify({ ...options, ao: {} }))).toEqual(on);
 });
 
@@ -106,7 +106,7 @@ test('reduced AO keeps native coverage and survives resize without history', asy
   const options = { width: 1537, height: 865, format: 'raw', ao: {} };
   try {
     const first = await renderer.render_image(glb, JSON.stringify(options));
-    const off = await renderer.render_image(glb, JSON.stringify({ ...options, ao: undefined }));
+    const off = await renderer.render_image(glb, JSON.stringify({ ...options, ao: { intensity: 0 } }));
     await renderer.render_image(glb, JSON.stringify({ ...options, width: 192, height: 192 }));
     const repeated = await renderer.render_image(glb, JSON.stringify(options));
     expect(first.byteLength).toBe(1537 * 865 * 4);
@@ -504,7 +504,7 @@ test('metal and glass match captured WebGL material matrices', async () => {
       world: { up: '+z', forward: '-y', unit: 'meter' },
       lines: false,
       camera: base.camera,
-      ao: reference.ao,
+      ao: reference.ao ?? { intensity: 0 },
     });
     for (const error of materialErrors(base, actual.bytes, expected)) {
       expect(error.mae, `${reference.id} row ${error.row} roughness ${error.roughness}`).toBeLessThan(2);

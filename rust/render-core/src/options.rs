@@ -609,11 +609,16 @@ fn resolve_common(
             }
             Ok(AmbientOcclusion {
                 radius_pixels: ao.radius_pixels,
-                intensity: ao.intensity.unwrap_or(3.0),
-                distance_falloff: ao.distance_falloff.unwrap_or(0.2),
+                intensity: ao
+                    .intensity
+                    .unwrap_or(AmbientOcclusion::default().intensity),
+                distance_falloff: ao
+                    .distance_falloff
+                    .unwrap_or(AmbientOcclusion::default().distance_falloff),
             })
         })
-        .transpose()?;
+        .transpose()?
+        .or(defaults.ao);
     let visible_primitives = request
         .visible_primitives
         .map(|primitives| {
@@ -1212,6 +1217,27 @@ mod tests {
         assert!(options.label.is_none());
         assert!(!options.scale_bar);
         assert_eq!(format, ImageFormat::Png);
+    }
+
+    #[test]
+    fn omitted_ao_is_enabled_and_zero_intensity_disables_it() {
+        let (single, _) = RenderRequest::from_json(r#"{"format":"raw"}"#)
+            .expect("single request")
+            .resolve()
+            .expect("single defaults");
+        let (batch, _, _, _) =
+            RenderImagesRequest::from_json(r#"{"format":"raw","views":[{"id":"front"}]}"#)
+                .expect("batch request")
+                .resolve()
+                .expect("batch defaults");
+        assert!(single.ao.is_some_and(|ao| ao.intensity > 0.0));
+        assert_eq!(batch.ao, single.ao);
+        assert_eq!(RenderOptions::default().ao, single.ao);
+        let (disabled, _) = RenderRequest::from_json(r#"{"format":"raw","ao":{"intensity":0}}"#)
+            .expect("disabled request")
+            .resolve()
+            .expect("disabled AO");
+        assert_eq!(disabled.ao.expect("runtime controls").intensity, 0.0);
     }
 
     #[test]
