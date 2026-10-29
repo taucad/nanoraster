@@ -76,6 +76,8 @@ export default defineConfig({
     hookTimeout: 120_000,
     include: ['tests/browser/**/*.browser.test.mjs'],
     reporters: ['verbose'],
-    testTimeout: 120_000,
+    // CI's Chromium runs on SwiftShader, where the 5K PBR comparisons take
+    // 90-105 s each; leave headroom so runner variance cannot time them out.
+    testTimeout: 240_000,
   },
 });
