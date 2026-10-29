@@ -54,6 +54,20 @@ pub fn encode(rendered: &Rendered, format: ImageFormat) -> Result<Vec<u8>, Rende
     }
 }
 
+/// Complete an owned frame without copying raw pixels. Encoded formats keep
+/// the same borrowed codec path; validation still precedes ownership transfer.
+pub(crate) fn encode_owned(
+    rendered: Rendered,
+    format: ImageFormat,
+) -> Result<Vec<u8>, RenderError> {
+    if format == ImageFormat::Raw {
+        validate_rendered(&rendered)?;
+        Ok(rendered.rgba)
+    } else {
+        encode(&rendered, format)
+    }
+}
+
 fn validate_rendered(rendered: &Rendered) -> Result<(), RenderError> {
     let expected = u64::from(rendered.width)
         .checked_mul(u64::from(rendered.height))

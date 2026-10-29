@@ -1,0 +1,117 @@
+import { beforeAll, expect, test } from 'vitest';
+import init, { Renderer } from 'nanoraster-wasm-candidate';
+import { physicalMaterialGlb } from '../pbr-fixture.mjs';
+
+let fallback;
+beforeAll(async () => {
+  await init();
+  fallback = (await globalThis.navigator.gpu.requestAdapter()).info.isFallbackAdapter;
+});
+
+test('Replicad metallic planetary assembly matches the general shader at thumbnail and reduced-AO sizes', async () => {
+  const glb = new Uint8Array(
+    await (await fetch(new URL('../fixtures/replicad-planetary-pbr.glb', import.meta.url))).arrayBuffer(),
+  );
+  const documentLength = new DataView(glb.buffer).getUint32(12, true);
+  const document = JSON.parse(new TextDecoder().decode(glb.subarray(20, 20 + documentLength)));
+  const surfaces = document.materials.filter((material) => !material.extensions?.KHR_materials_unlit);
+  expect(surfaces.length).toBeGreaterThan(0);
+  expect(surfaces.every((material) => material.pbrMetallicRoughness.metallicFactor >= 0.65)).toBe(true);
+  // oxlint-disable-next-line typescript/unbound-method -- Preserve the real device receiver with call() and restore in finally.
+  const original = globalThis.GPUDevice.prototype.createRenderPipeline;
+  const results = [];
+  try {
+    for (const general of [false, true]) {
+      globalThis.GPUDevice.prototype.createRenderPipeline = function (descriptor) {
+        if (!general || descriptor.fragment?.entryPoint !== 'fs_mesh') return original.call(this, descriptor);
+        return original.call(this, {
+          ...descriptor,
+          fragment: {
+            ...descriptor.fragment,
+            constants: { ...descriptor.fragment.constants, CLEARCOAT: 1, ANISOTROPY_SHEEN: 1 },
+          },
+        });
+      };
+      const renderer = await Renderer.create();
+      const hashes = [];
+      try {
+        for (const [width, height] of [
+          [768, 432],
+          // Above the 1,048,576-pixel reduced-AO threshold, yet within what CI's
+          // WebKit VM renders: at 5K its readback map failed and WebGPU was lost.
+          [2560, 1440],
+        ]) {
+          const image = await renderer.render_image(
+            glb,
+            JSON.stringify({ width, height, format: 'raw', ao: {} }),
+          );
+          expect(image.length).toBe(width * height * 4);
+          hashes.push(Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', image))));
+        }
+      } finally {
+        renderer.dispose();
+        renderer.free();
+      }
+      results.push(hashes);
+    }
+    expect(results[0]).toEqual(results[1]);
+  } finally {
+    globalThis.GPUDevice.prototype.createRenderPipeline = original;
+  }
+});
+
+test('absent clearcoat preserves full-shader pixels and bounded cache reuse across materials', async () => {
+  // oxlint-disable-next-line typescript/unbound-method -- Preserve the real device receiver with call() and restore in finally.
+  const original = globalThis.GPUDevice.prototype.createRenderPipeline;
+  const options = JSON.stringify({ width: 257, height: 192, format: 'raw', ao: {} });
+  const materials = [
+    {},
+    { extensions: { KHR_materials_clearcoat: { clearcoatFactor: 1, clearcoatRoughnessFactor: 0.1 } } },
+    {
+      extensions: { KHR_materials_sheen: { sheenColorFactor: [0.4, 0.05, 0.2], sheenRoughnessFactor: 0.5 } },
+    },
+    { extensions: { KHR_materials_iridescence: { iridescenceFactor: 1 } } },
+    { extensions: { KHR_materials_transmission: { transmissionFactor: 0.8 } } },
+    { alphaMode: 'BLEND', pbrMetallicRoughness: { baseColorFactor: [0.5, 0.6, 0.7, 0.5] } },
+    {},
+  ];
+  const results = [];
+  try {
+    for (const general of [false, true]) {
+      const compiled = [];
+      globalThis.GPUDevice.prototype.createRenderPipeline = function (descriptor) {
+        if (descriptor.fragment?.entryPoint !== 'fs_mesh') return original.call(this, descriptor);
+        compiled.push(descriptor.fragment.constants?.CLEARCOAT);
+        return original.call(
+          this,
+          general
+            ? {
+                ...descriptor,
+                fragment: {
+                  ...descriptor.fragment,
+                  constants: { ...descriptor.fragment.constants, CLEARCOAT: 1, ANISOTROPY_SHEEN: 1 },
+                },
+              }
+            : descriptor,
+        );
+      };
+      const renderer = await Renderer.create();
+      const images = [];
+      try {
+        for (const material of materials) {
+          images.push(await renderer.render_image(physicalMaterialGlb(material), options));
+        }
+        expect(compiled).toEqual(fallback ? [0, 0, 0, 0, 1, 1, 1, 1] : [0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0]);
+        expect(images[0]).toEqual(images[6]);
+        expect(images[0]).not.toEqual(images[1]);
+      } finally {
+        renderer.dispose();
+        renderer.free();
+      }
+      results.push(images);
+    }
+    expect(results[0]).toEqual(results[1]);
+  } finally {
+    globalThis.GPUDevice.prototype.createRenderPipeline = original;
+  }
+});

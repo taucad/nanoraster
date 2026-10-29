@@ -189,7 +189,57 @@ const sizes = {
 // (counting-sorted half-edges, flat vertex-link tables, bucketed component
 // edges, a swept overlap broad phase). Each ceiling adds main's measured
 // host-to-ceiling offset to the branch figure.
-const ceilings = { raw: 2_404_153, gzip9: 1_125_436, brotli11: 931_343 };
+// Conditional target/readback storage, bounded AO and 8K admission: same-host
+// e1fd0d1 baseline 2,402,844 / 1,121,819 / 933,624; candidate 2,410,465 /
+// 1,123,918 / 936,253 (Rust 1.98.0, Binaryen 132, Node 26.8.1). The +7,621
+// raw bytes include native-depth AO reconstruction and resolution-aware filtering;
+// native-only opt-in profiling is absent from WASM. Preserve the existing
+// host-to-ceiling offsets and compressor tolerance, adding only measured deltas.
+// Specialized position visitors: same-host 9faf078 2,410,465 / 1,123,918 /
+// 936,253; candidate 2,413,094 / 1,124,902 / 937,578. Monomorphizing the
+// fitted-camera loops adds 2,629 raw / 984 gzip-9 / 1,325 Brotli-11 bytes.
+// Preserve existing headroom; no new percentage allowance.
+// Rust 1.99.1 / LLVM 23.1.1 upgrade, same locked dependencies and O3/fat-LTO
+// profile: 2,413,094 / 1,124,902 / 937,578 before; 2,419,376 / 1,126,757 /
+// 940,325 after on Node 26.8.1 / Binaryen 132. Add only the measured compiler
+// delta (+6,282 / +1,855 / +2,747), retaining existing headroom and tolerance.
+// Unique camera-index planning (Rust 1.99.1): raw 2,422,162, gzip-9 1,128,189,
+// Brotli-11 941,309, measured 2026-10-25 against 2,420,354 / 1,127,505 /
+// 940,752. The +1,808 raw bytes are the request-scoped index list construction
+// and traversal; no dependency/profile/API change. Preserve the prior 331-byte
+// raw headroom; compressed outputs remain within their existing allowances.
+// Reuse unique indices for annotation fitting (Rust 1.99.1): same-host raw
+// 2,422,430 -> 2,422,511 (+81), gzip-9 1,128,323 and Brotli-11 941,364.
+// The existing request-scoped list replaces repeated draw-index projections;
+// native and WASM output remains exact. Admit only the measured raw delta,
+// preserving 63 bytes of headroom and the existing compressed allowances.
+// Exact-order orthographic XYZ extents (Rust 1.99.1): same-host raw
+// 2,422,511 -> 2,422,626 (+115), gzip-9 1,128,366, Brotli-11 941,181.
+// Native and WASM images remain exact; paired native orthographic workloads
+// improve without new allocations. Admit the measured raw delta only,
+// preserving 63 bytes of headroom and the existing compressed allowances.
+// Browser transient-attachment capability probing (Rust 1.99.1): same-host
+// 2,422,621 -> 2,425,681 (+3,060), gzip-9 1,129,478, Brotli-11 942,226.
+// Scoped per-device validation preserves ordinary storage on rejection; exact
+// browser output and reduced GPU-process footprint qualify the added code.
+// Admit only that measured delta; retain 68 raw bytes and compressed allowances.
+// Browser absent-clearcoat specialization (Rust 1.99.1): raw 2,426,023
+// (+342), gzip-9 1,129,664 (+186), Brotli-11 943,022 (+796). Admit only
+// measured raw/Brotli growth, retaining existing headroom/tolerance. Native
+// keeps the full shader to preserve exact sheen quantization.
+// Opaque-background readback (Rust 1.99.1): raw 2,426,292 (+269),
+// gzip-9 1,129,881 (+217), Brotli-11 943,050 (+28). A per-view boolean
+// avoids a redundant full-image alpha scan. Admit the measured deltas only;
+// retain the existing raw headroom and compressor tolerances.
+// Grouped absent anisotropy/sheen with software-adapter fallback (Rust 1.99.1): raw
+// 2,426,240 -> 2,427,493 (+1,253). Preserve the existing 120-byte headroom
+// and compressed allowances; this admits only the measured raw delta.
+// Node 26.12.1 gzip emits 1,137,170 bytes for the exact local WASM that
+// Node 26.8.1 compresses to 1,129,423; raw 2,425,821 and brotli 943,091
+// are identical. CI's Linux artifact measures 2,425,745 / 1,137,162 /
+// 942,622. Admit the observed compressor change only: raw/brotli ceilings
+// and the existing 0.5% compressed allowance remain unchanged.
+const ceilings = { raw: 2_427_613, gzip9: 1_137_170, brotli11: 938_868 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.

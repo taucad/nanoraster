@@ -23,7 +23,7 @@ test.each(references)('$id matches the Three.js material matrix', async (referen
     world: { up: '+z', forward: '-y', unit: 'meter' },
     lines: false,
     camera: base.camera,
-    ao: reference.ao,
+    ao: reference.ao ?? { intensity: 0 },
   });
   for (const error of materialErrors(base, actual.bytes, expected)) {
     expect(error.mae, `${reference.id} row ${error.row} roughness ${error.roughness}`).toBeLessThan(2);
@@ -36,13 +36,29 @@ test('AO changes contact shading, intensity zero preserves pixels, and warm batc
   const renderer = await createRenderer();
   try {
     const options = { width: 256, height: 256, format: 'raw', lines: false };
-    const off = await renderer.renderImage(glb, options);
+    const defaultImage = await renderer.renderImage(glb, options);
     const zero = await renderer.renderImage(glb, { ...options, ao: { intensity: 0 } });
     const on = await renderer.renderImage(glb, { ...options, ao: {} });
-    expect(zero.bytes).toEqual(off.bytes);
-    expect(on.bytes).not.toEqual(off.bytes);
+    expect(defaultImage.bytes).toEqual(on.bytes);
+    expect(on.bytes).not.toEqual(zero.bytes);
     const batch = await renderer.renderImages(glb, { ...options, ao: {}, views: [{ id: 'iso' }] });
     expect(batch[0].file.bytes).toEqual(on.bytes);
+    expect((await renderer.renderImage(glb, { ...options, ao: {} })).bytes).toEqual(on.bytes);
+  } finally {
+    renderer.dispose();
+  }
+});
+
+// Above 1,048,576 output pixels AO estimates and denoises at half resolution
+// through its own separable filter; the release addon must render it too.
+test('reduced-resolution AO above one megapixel renders, shades contacts and repeats exactly', async () => {
+  const glb = readFileSync(new URL('./fixtures/gear-12.glb', import.meta.url));
+  const renderer = await createRenderer();
+  try {
+    const options = { width: 1025, height: 1025, format: 'raw', lines: false };
+    const on = await renderer.renderImage(glb, { ...options, ao: {} });
+    const zero = await renderer.renderImage(glb, { ...options, ao: { intensity: 0 } });
+    expect(on.bytes).not.toEqual(zero.bytes);
     expect((await renderer.renderImage(glb, { ...options, ao: {} })).bytes).toEqual(on.bytes);
   } finally {
     renderer.dispose();
