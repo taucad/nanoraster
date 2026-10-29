@@ -58,7 +58,7 @@ test('absent physical features preserve exact output and active features across 
               JSON.stringify({ width: 257, height: 192, format: 'raw', ao: {} }),
             ),
           );
-        expect(compiled).toEqual(fallback ? Array(8).fill(1) : [0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0]);
+        expect(compiled).toEqual(fallback ? Array(8).fill(1) : [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]);
         expect(images[0]).toEqual(images[6]);
         for (const index of [1, 2, 3, 4, 5]) expect(images[index]).not.toEqual(images[0]);
       } finally {

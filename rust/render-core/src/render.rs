@@ -2195,13 +2195,11 @@ impl Renderer {
             })
             .collect();
 
-        let features = scene.meshes.iter().flat_map(|mesh| &mesh.primitives).fold(
+        let mut features = scene.meshes.iter().flat_map(|mesh| &mesh.primitives).fold(
             ShaderFeatures {
-                // Absent-clearcoat specialization changes exact 5K output under
-                // Firefox's Metal backend, as it does on native Metal, and no
-                // adapter property identifies that compiler. Keep the general
-                // clearcoat shader everywhere.
-                clearcoat: true,
+                // Native Metal feature specialization needs independent exact-output
+                // qualification. Keep its general shader; specialize browser WebGPU.
+                clearcoat: cfg!(not(target_arch = "wasm32")),
                 anisotropy_sheen: !self.state.specialize_anisotropy_sheen,
                 ..ShaderFeatures::default()
             },
@@ -2219,6 +2217,10 @@ impl Renderer {
                 features
             },
         );
+        // Firefox's Metal backend matches the general shader with both groups
+        // specialized or neither, but not with clearcoat alone restored. Keep
+        // the two groups together whenever clearcoat is active.
+        features.anisotropy_sheen |= features.clearcoat;
         SceneBuffers {
             features,
             gpu_assets,
@@ -4654,8 +4656,9 @@ mod tests {
             assert_eq!(expected.rgba, repeated.rgba, "scene history changed pixels");
         }
         assert_eq!(
-            renderer.counters.pipeline_sets, 2,
-            "reuse one general pipeline set plus AO"
+            renderer.counters.pipeline_sets,
+            if cfg!(target_arch = "wasm32") { 3 } else { 2 },
+            "reuse qualified specializations plus AO"
         );
     }
 
