@@ -268,6 +268,8 @@ if (sectionBatch.length !== 1 || !sectionBatch[0].equals(section)) {
 }
 
 const racingDroneCommon = {
+  // This oracle recognizes the unoccluded cap palette, not AO-darkened colors.
+  ao: { intensity: 0 },
   width: 192,
   height: 192,
   format: 'raw',
@@ -295,6 +297,16 @@ for (let count = 1; count <= racingDronePlanes.length; count += 1) {
   }
   if (countDefaultMaterialCapPixels(first) <= racingDroneOrdinaryCapPalette + 4) {
     throw new Error(`Racing Drone ${count}-plane section has no default-material cap pixels`);
+  }
+  const aoOptions = JSON.stringify({
+    ...racingDroneCommon,
+    ao: {},
+    sections: { planes: racingDronePlanes.slice(0, count) },
+  });
+  const aoFirst = await native.renderImage(racingDroneGlb, aoOptions);
+  const aoSecond = await native.renderImage(racingDroneGlb, aoOptions);
+  if (!aoFirst.equals(aoSecond)) {
+    throw new Error(`Racing Drone ${count}-plane AO section is not deterministic`);
   }
   if (count === 1 && first.equals(racingDroneOrdinary)) {
     throw new Error('Racing Drone section did not change the frame');
