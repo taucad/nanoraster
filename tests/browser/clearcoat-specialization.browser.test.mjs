@@ -8,7 +8,7 @@ beforeAll(async () => {
   fallback = (await globalThis.navigator.gpu.requestAdapter()).info.isFallbackAdapter;
 });
 
-test('Replicad metallic planetary assembly matches the general shader at thumbnail and 5K sizes', async () => {
+test('Replicad metallic planetary assembly matches the general shader at thumbnail and reduced-AO sizes', async () => {
   const glb = new Uint8Array(
     await (await fetch(new URL('../fixtures/replicad-planetary-pbr.glb', import.meta.url))).arrayBuffer(),
   );
@@ -37,7 +37,9 @@ test('Replicad metallic planetary assembly matches the general shader at thumbna
       try {
         for (const [width, height] of [
           [768, 432],
-          [5120, 2880],
+          // Above the 1,048,576-pixel reduced-AO threshold, yet within what CI's
+          // WebKit VM renders: at 5K its readback map failed and WebGPU was lost.
+          [2560, 1440],
         ]) {
           const image = await renderer.render_image(
             glb,
