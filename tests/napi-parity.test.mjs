@@ -49,6 +49,22 @@ test('AO changes contact shading, intensity zero preserves pixels, and warm batc
   }
 });
 
+// Above 1,048,576 output pixels AO estimates and denoises at half resolution
+// through its own separable filter; the release addon must render it too.
+test('reduced-resolution AO above one megapixel renders, shades contacts and repeats exactly', async () => {
+  const glb = readFileSync(new URL('./fixtures/gear-12.glb', import.meta.url));
+  const renderer = await createRenderer();
+  try {
+    const options = { width: 1025, height: 1025, format: 'raw', lines: false };
+    const on = await renderer.renderImage(glb, { ...options, ao: {} });
+    const zero = await renderer.renderImage(glb, { ...options, ao: { intensity: 0 } });
+    expect(on.bytes).not.toEqual(zero.bytes);
+    expect((await renderer.renderImage(glb, { ...options, ao: {} })).bytes).toEqual(on.bytes);
+  } finally {
+    renderer.dispose();
+  }
+});
+
 test('native singular and batch renders are byte-identical across all 336 cases', async () => {
   await import('./napi-parity.mjs');
 });
