@@ -196,6 +196,16 @@ pub struct AmbientOcclusion {
     pub distance_falloff: f32,
 }
 
+impl Default for AmbientOcclusion {
+    fn default() -> Self {
+        Self {
+            radius_pixels: None,
+            intensity: 3.0,
+            distance_falloff: 0.2,
+        }
+    }
+}
+
 /// Maximum number of simultaneous retained-half-space planes. Eight, so an
 /// axis-aligned box crop (six faces) still has two planes spare; the limit is
 /// the `Frame` uniform's plane array, not the shader's clipping arithmetic.
@@ -259,7 +269,8 @@ pub struct RenderOptions {
     /// Direct lights, ambient, environment and exposure. Defaults to
     /// [`ResolvedLighting::studio`].
     pub lighting: ResolvedLighting,
-    /// Screen-space contact shadows; absent by default to avoid an estimator pass.
+    /// Screen-space contact shadows; enabled by default. `None` disables AO
+    /// and its estimator pass.
     pub ao: Option<AmbientOcclusion>,
     /// Caller +X/+Y/+Z basis vectors expressed in glTF world coordinates.
     pub world_axes: [[f32; 3]; 3],
@@ -281,7 +292,7 @@ impl Default for RenderOptions {
             axes: false,
             scale_bar: false,
             lighting: ResolvedLighting::studio(),
-            ao: None,
+            ao: Some(AmbientOcclusion::default()),
             world_axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         }
     }
@@ -626,6 +637,7 @@ fn build_plan(
     views: &[RenderView],
 ) -> Result<Vec<render::PlanEntry>, RenderError> {
     let mut plan = Vec::with_capacity(views.len());
+    let mut positions = None;
     for view in views {
         if options.sections.is_some() && view.visible_primitives.is_some() {
             return Err(RenderError::Parse(format!(
@@ -642,7 +654,10 @@ fn build_plan(
             &view.id,
         )?;
         let prepared = with_view_result(
-            capture_overlay::prepare_view(scene, &view_options),
+            capture_overlay::prepare_view_with_positions(
+                positions.get_or_insert_with(|| glb::UniquePositions::new(scene)),
+                &view_options,
+            ),
             &view.id,
         )?;
         plan.push(render::PlanEntry {
@@ -1115,7 +1130,7 @@ mod tests {
                 ..Default::default()
             },
             RenderOptions {
-                height: 4097,
+                height: 8193,
                 ..Default::default()
             },
             RenderOptions {
@@ -1685,6 +1700,23 @@ mod tests {
         // fail certification by design.
         let sectioned = r#"{"format":"png","width":64,"height":64,"world":{"up":"+z","forward":"-y","unit":"meter"},"sections":{"planes":[{"point":[0,0,0],"normal":[1,0,0]}]}}"#;
         assert!(pollster::block_on(render_image_request(SECTION_FIXTURE, sectioned)).is_ok());
+        let section_batch = r#"{"format":"raw","width":64,"height":64,"timings":true,"views":[{"id":"cut"}],"sections":{"planes":[{"point":[0,0,0],"normal":[1,0,0]}]}}"#;
+        let (cut_images, cut_timings) = pollster::block_on(render_images_request(
+            SECTION_FIXTURE,
+            section_batch,
+            Some(&clock),
+        ))
+        .expect("timed section request");
+        assert_eq!(cut_images.len(), 1);
+        let cut_timings = cut_timings.expect("requested section timings");
+        assert!(!cut_timings.sections.is_empty());
+        assert!(
+            cut_timings
+                .sections
+                .iter()
+                .all(|section| section.plane == 0)
+        );
+        assert_eq!(cut_timings.views[0].id, "cut");
         let raw = pollster::block_on(render_image_request(
             FIXTURE,
             r#"{"format":"raw","width":192,"height":192}"#,

@@ -20,7 +20,7 @@ use i_triangle::i_overlay::i_float::int::point::IntPoint;
 use i_triangle::i_overlay::i_shape::int::shape::{IntContour, IntShapes};
 use i_triangle::int::triangulatable::IntTriangulatable;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::ops::Bound;
 
 const PRECISION: f64 = 100_000_000.0;
@@ -1002,9 +1002,20 @@ fn spatial_clusters(vertices: &[usize], positions: &[Vec3], epsilon: f32) -> Vec
         .map(|vertex| positions[*vertex])
         .collect::<Vec<_>>();
     let mut maximum = minimum.clone();
-    let mut cells = BTreeMap::<(i64, i64, i64), Vec<usize>>::new();
+    // Only keyed lookup is used: explicit cell traversal and insertion-ordered
+    // candidate lists preserve the deterministic union sequence across hash seeds.
+    let mut cells = HashMap::<(i64, i64, i64), Vec<usize>>::new();
     for (index, vertex) in sorted.iter().enumerate() {
         let position = positions[*vertex];
+        if index > 0 && compare_position(position, positions[sorted[index - 1]]) == Ordering::Equal
+        {
+            // Equal positions are consecutive. The preceding point already
+            // visited these candidates; no intervening point can change them.
+            // Union (rather than alias) preserves rank and exact root IDs.
+            // One cell entry suffices for this consecutive run of candidates.
+            sets.union(index, index - 1);
+            continue;
+        }
         let cell = spatial_cell(position, epsilon);
         for x in cell.0 - 1..=cell.0 + 1 {
             for y in cell.1 - 1..=cell.1 + 1 {
@@ -3537,6 +3548,127 @@ mod tests {
         );
         let geometry = build(&collapsed_seam, &section_options()).expect("collapsed seam");
         assert!(geometry.indices.is_empty());
+    }
+
+    #[test]
+    fn seam_clusters_preserve_order_boundaries_and_bounded_chains() {
+        // Cross negative/positive cells and every neighbor axis, with duplicates
+        // and a chain whose endpoints must not merge through an intermediate.
+        let positions = [
+            Vec3::new(-0.01, -0.01, -0.01),
+            Vec3::new(0.01, 0.01, 0.01),
+            Vec3::new(0.01, 0.01, 0.01),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(1.09, 0.0, 0.0),
+            Vec3::new(1.18, 0.0, 0.0),
+            Vec3::splat(4.0),
+        ];
+        let vertices = [0, 1, 2, 3, 4, 5];
+        let expected = spatial_clusters(&vertices, &positions, 0.1);
+        assert_eq!(expected[0], expected[1]);
+        assert_eq!(expected[1], expected[2]);
+        assert_eq!(expected[3], expected[4]);
+        assert_ne!(expected[4], expected[5]);
+        assert_ne!(expected[0], expected[3]);
+        assert_eq!(expected[6], usize::MAX);
+        // New maps have fresh hash seeds on supported hosts. Their iteration
+        // order must never select a weld or change the resulting cluster IDs.
+        for _ in 0..64 {
+            assert_eq!(spatial_clusters(&vertices, &positions, 0.1), expected);
+            assert_eq!(
+                spatial_clusters(&[5, 2, 0, 4, 1, 3], &positions, 0.1),
+                expected
+            );
+        }
+        assert!(spatial_clusters(&[], &[], 0.1).is_empty());
+    }
+
+    // Slow reference: enumerate prior points, then order them by cell and
+    // insertion index. It deliberately has no cell map or duplicate fast path.
+    fn reference_seam_clusters(vertices: &[usize], positions: &[Vec3], epsilon: f32) -> Vec<usize> {
+        let mut sorted = vertices.to_vec();
+        sorted.sort_by(|a, b| compare_position(positions[*a], positions[*b]).then(a.cmp(b)));
+        let mut sets = DisjointSet::new(sorted.len());
+        let mut minimum = sorted.iter().map(|v| positions[*v]).collect::<Vec<_>>();
+        let mut maximum = minimum.clone();
+        for (index, vertex) in sorted.iter().enumerate() {
+            let cell = spatial_cell(positions[*vertex], epsilon);
+            let mut candidates = sorted[..index]
+                .iter()
+                .enumerate()
+                .filter_map(|(i, v)| {
+                    let c = spatial_cell(positions[*v], epsilon);
+                    ((c.0 - cell.0).abs() <= 1
+                        && (c.1 - cell.1).abs() <= 1
+                        && (c.2 - cell.2).abs() <= 1)
+                        .then_some((c, i))
+                })
+                .collect::<Vec<_>>();
+            candidates.sort_unstable();
+            for (_, candidate) in candidates {
+                let left = sets.find(index);
+                let right = sets.find(candidate);
+                if left != right {
+                    let low = minimum[left].min(minimum[right]);
+                    let high = maximum[left].max(maximum[right]);
+                    if (high - low).length_squared() <= epsilon * epsilon {
+                        let root = sets.union(left, right);
+                        minimum[root] = low;
+                        maximum[root] = high;
+                    }
+                }
+            }
+        }
+        let mut result = vec![usize::MAX; positions.len()];
+        for (index, vertex) in sorted.into_iter().enumerate() {
+            result[vertex] = sets.find(index);
+        }
+        result
+    }
+
+    #[test]
+    fn duplicate_seams_preserve_exact_roots_under_transforms_and_tolerance_chains() {
+        let transforms = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(1000.0, -1000.0, 0.0)),
+            Mat4::from_scale(Vec3::new(0.001, 1.0, 2.0)),
+            Mat4::from_rotation_z(0.73),
+            Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0)),
+        ];
+        let mut seed = 0x7182_34ab_u32;
+        for case in 0..256 {
+            let mut points = vec![Vec3::ZERO, Vec3::new(-0.0, 0.0, 0.0)];
+            for i in 0..30 {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let p = if i % 3 == 0 {
+                    points[(seed as usize) % points.len()]
+                } else {
+                    Vec3::new(
+                        (seed & 15) as f32,
+                        ((seed >> 4) & 7) as f32,
+                        ((seed >> 7) & 3) as f32,
+                    ) * 0.03
+                };
+                points.push(p);
+            }
+            for transform in transforms {
+                let positions = points
+                    .iter()
+                    .map(|p| transform.transform_point3(*p))
+                    .collect::<Vec<_>>();
+                let vertices = (0..positions.len())
+                    .rev()
+                    .filter(|i| (i + case) % 7 != 0)
+                    .collect::<Vec<_>>();
+                for radius in [0.03, 0.1, 0.3] {
+                    assert_eq!(
+                        spatial_clusters(&vertices, &positions, radius),
+                        reference_seam_clusters(&vertices, &positions, radius),
+                        "case {case}, transform {transform:?}, radius {radius}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -51,6 +51,7 @@ struct Prim {
 @group(3) @binding(2) var scene_sampler: sampler;
 @group(3) @binding(3) var composite_scene: texture_2d<f32>;
 @group(3) @binding(4) var ao_scene: texture_2d<f32>;
+@group(3) @binding(5) var ao_view_depth: texture_2d<f32>;
 
 struct Object {
     model: mat4x4<f32>,
@@ -132,19 +133,19 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
     let ao = mix(1.0, sample_map(in, 3u).r, prim.misc.y);
     let emission = prim.emissive.rgb * sample_map(in, 4u).rgb;
     let aniso_map = sample_map(in, 5u);
-    let aniso = prim.anisotropy.x * aniso_map.b;
+    let aniso = select(0.0, prim.anisotropy.x * aniso_map.b, ANISOTROPY_SHEEN);
     var direction = vec2<f32>(1.0, 0.0);
     if (has_map(5u)) { direction = aniso_map.rg * 2.0 - 1.0; }
     if (dot(direction, direction) < 0.000001) { direction = vec2<f32>(1.0, 0.0); }
     direction = mat2x2<f32>(prim.anisotropy.yz, vec2<f32>(-prim.anisotropy.z, prim.anisotropy.y)) * normalize(direction);
     let t = normalize(tbn[0] * direction.x + tbn[1] * direction.y);
     let b = normalize(tbn[1] * direction.x - tbn[0] * direction.y);
-    let coat = prim.coat.x * sample_map(in, 6u).r;
+    let coat = select(0.0, prim.coat.x * sample_map(in, 6u).r, CLEARCOAT);
     let coat_rough = min(max(prim.coat.y * sample_map(in, 7u).g, 0.0525) + geometry_roughness, 1.0);
     let iridescence = prim.iridescence.x * sample_map(in, 9u).r;
     let irid_map = sample_map(in, 10u).g;
     let film_thickness = mix(prim.iridescence.z, prim.iridescence.w, irid_map);
-    let sheen = prim.sheen.rgb * sample_map(in, 11u).rgb;
+    let sheen = select(vec3<f32>(0.0), prim.sheen.rgb * sample_map(in, 11u).rgb, ANISOTROPY_SHEEN);
     let sheen_rough = max(0.0001, prim.sheen.a) * sample_map(in, 12u).a;
     let sheen_weight = max(max(sheen.r, sheen.g), sheen.b);
     let sheen_energy = 1.0 - sheen_weight * sheen_albedo(nv, sheen_rough);
@@ -265,10 +266,32 @@ fn vs_screen(@builtin(vertex_index) index: u32) -> ScreenOut {
 fn fs_mip(in: ScreenOut) -> @location(0) vec4<f32> {
     return textureSampleLevel(opaque_scene, scene_sampler, in.uv, 0.0);
 }
+// Reconstruct reduced AO with native depth; full-size AO retains its direct sample.
+fn reconstructed_ao(uv: vec2<f32>) -> f32 {
+    let size = vec2<f32>(textureDimensions(ao_scene));
+    if (all(size == frame.viewport.xy) || size.x <= 1.0) { return textureSampleLevel(ao_scene,scene_sampler,uv,0.0).r; }
+    let full_size = vec2<f32>(textureDimensions(ao_view_depth));
+    let z=textureLoad(ao_view_depth,vec2<i32>(uv*full_size),0).r;
+    if (z == 0.0) { return 1.0; }
+    let coordinate=uv*size-0.5;
+    let base=vec2<i32>(floor(coordinate));
+    let fraction=fract(coordinate);
+    var sum=0.0; var weight_sum=0.0;
+    for(var y=0; y<2; y++) { for(var x=0; x<2; x++) {
+        let cell=clamp(base+vec2<i32>(x,y),vec2<i32>(0),vec2<i32>(size)-1);
+        let sample_pixel=vec2<i32>((vec2<f32>(cell)+0.5)*full_size/size);
+        let sample_z=textureLoad(ao_view_depth,sample_pixel,0).r;
+        let bilinear=select(1.0-fraction.x,fraction.x,x==1)*select(1.0-fraction.y,fraction.y,y==1);
+        let weight=bilinear*exp(-abs(sample_z-z)/max(abs(z)*0.002,1e-7))*select(0.0,1.0,sample_z!=0.0);
+        sum+=textureLoad(ao_scene,cell,0).r*weight; weight_sum+=weight;
+    }}
+    if (weight_sum<0.0001) { return 1.0; }
+    return sum/weight_sum;
+}
 @fragment
 fn fs_screen(in: ScreenOut) -> @location(0) vec4<f32> {
     let color = textureSampleLevel(composite_scene, scene_sampler, in.uv, 0.0);
-    let visibility = pow(textureSampleLevel(ao_scene, scene_sampler, in.uv, 0.0).r, frame.ao_control.x);
+    let visibility = pow(reconstructed_ao(in.uv), frame.ao_control.x);
     let display = tone_map(color.rgb / max(color.a, 0.000001), frame.exposure) * visibility;
     let alpha = color.a + frame.background.a * (1.0 - color.a);
     let premultiplied = display * color.a + frame.background.rgb * frame.background.a * (1.0 - color.a);

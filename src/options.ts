@@ -53,7 +53,7 @@ export type RenderLightingRig = {
  */
 export type RenderLighting = 'studio' | RenderLightingRig;
 
-/** Screen-space ambient occlusion for contact shadows in opaque geometry. Omit to skip its render passes. @public */
+/** Screen-space ambient occlusion for contact shadows in opaque geometry. Enabled by default; use intensity 0 to skip its render passes. @public */
 export type RenderAmbientOcclusion = {
   /** Sampling radius in output pixels. @default max(1% of image diagonal, 4) */
   readonly radiusPixels?: number;
@@ -217,9 +217,9 @@ type RenderImageSharedOptions = {
    * bytes per pixel and no padding, owned by the caller.
    */
   readonly format: 'png' | 'webp' | 'jpeg' | 'jpg' | 'raw';
-  /** Output width in pixels, inclusive range 16–4096. @default 768 */
+  /** Output width in pixels, inclusive range 16–8192. @default 768 */
   readonly width?: number;
-  /** Output height in pixels, inclusive range 16–4096. @default 432 */
+  /** Output height in pixels, inclusive range 16–8192. @default 432 */
   readonly height?: number;
   /**
    * Encoder quality from 0 to 1. For WebP, 1 is lossless and anything lower
@@ -267,7 +267,7 @@ type RenderImageSharedOptions = {
    * @default 'studio'
    */
   readonly lighting?: RenderLighting;
-  /** Optional opaque-surface AO matching Tau's WebGL editing profile. @default disabled */
+  /** Opaque-surface contact shadows. Use intensity 0 to disable. @default enabled */
   readonly ao?: RenderAmbientOcclusion;
 };
 
@@ -307,9 +307,9 @@ export type RenderImageView<Id extends string = string> = {
   readonly label?: string;
   /** Camera framing. Omit it for the default fitted three-quarter view. */
   readonly camera?: RenderCamera;
-  /** Output width override for this view, inclusive range 16–4096. @default the shared `width` */
+  /** Output width override for this view, inclusive range 16–8192. @default the shared `width` */
   readonly width?: number;
-  /** Output height override for this view, inclusive range 16–4096. @default the shared `height` */
+  /** Output height override for this view, inclusive range 16–8192. @default the shared `height` */
   readonly height?: number;
   /** Output format override for this view, `'raw'` included. @default the shared `format` */
   readonly format?: 'png' | 'webp' | 'jpeg' | 'jpg' | 'raw';
@@ -639,7 +639,7 @@ const orbitKeys = new Set(['azimuth', 'elevation']);
 const worldAxes: readonly RenderWorldAxis[] = ['+x', '-x', '+y', '-y', '+z', '-z'];
 
 /** Inclusive pixel bounds for image width and height. @public */
-export const renderImageDimensionRange = [16, 4096] as const;
+export const renderImageDimensionRange = [16, 8192] as const;
 
 /** Inclusive encoder-quality bounds. @public */
 export const renderImageQualityRange = [0, 1] as const;

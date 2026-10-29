@@ -43,14 +43,17 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // fitted-bounds, and section-exclusion rules to the API and two guides.
 // Never-refused section caps add the per-source section timings type to
 // `api.mdx`; the section guide trades its refusal note for the open-chain rule.
+// Bounded AO and 8K output add per-invocation controls, resolution and memory
+// guidance to the lighting guide, plus its API link: measured 782 / 3395 words
+// and 13,635 site-wide. No unrelated page ceiling changes.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 3_390,
+  'api.mdx': 3_395,
   'guides/choose-visible-geometry.mdx': 373,
   'guides/render-section-views.mdx': 360,
   'guides/format-and-annotate.mdx': 830,
   'guides/frame-the-model.mdx': 620,
   'guides/handle-render-failures.mdx': 560,
-  'guides/light-the-subject.mdx': 662,
+  'guides/light-the-subject.mdx': 782,
   'guides/place-the-camera.mdx': 739,
   'guides/render-for-llms.mdx': 500,
   'guides/render-in-the-browser.mdx': 740,
@@ -62,7 +65,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'install.mdx': 740,
   'tutorial.mdx': 696,
 };
-const siteCeiling = 13_500;
+const siteCeiling = 13_635;
 
 const pages = globSync('**/*.mdx', { cwd: docsDir })
   .toSorted()

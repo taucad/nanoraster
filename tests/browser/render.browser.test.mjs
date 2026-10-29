@@ -93,12 +93,38 @@ test('wasm shell renders a deterministic 192x192 PNG', async () => {
 
 test('wasm AO changes contact shading without changing zero-intensity pixels', async () => {
   const options = { width: 192, height: 192, format: 'raw', lines: false };
-  const off = await render_image(glb, JSON.stringify(options));
+  const defaultImage = await render_image(glb, JSON.stringify(options));
   const zero = await render_image(glb, JSON.stringify({ ...options, ao: { intensity: 0 } }));
   const on = await render_image(glb, JSON.stringify({ ...options, ao: {} }));
-  expect(zero).toEqual(off);
-  expect(on).not.toEqual(off);
+  expect(defaultImage).toEqual(on);
+  expect(on).not.toEqual(zero);
   expect(await render_image(glb, JSON.stringify({ ...options, ao: {} }))).toEqual(on);
+});
+
+test('reduced AO keeps native coverage and survives resize without history', async () => {
+  const renderer = await Renderer.create();
+  const options = { width: 1537, height: 865, format: 'raw', ao: {} };
+  try {
+    const first = await renderer.render_image(glb, JSON.stringify(options));
+    const off = await renderer.render_image(glb, JSON.stringify({ ...options, ao: { intensity: 0 } }));
+    await renderer.render_image(glb, JSON.stringify({ ...options, width: 192, height: 192 }));
+    const repeated = await renderer.render_image(glb, JSON.stringify(options));
+    expect(first.byteLength).toBe(1537 * 865 * 4);
+    expect(first.every((value, i) => value === repeated[i])).toBe(true);
+    let sameCoverage = true;
+    let cleanBlackEdges = 0;
+    for (let i = 0; i < first.length; i += 4) {
+      if (first[i + 3] !== off[i + 3]) sameCoverage = false;
+      if (off[i] === 0 && off[i + 1] === 0 && off[i + 2] === 0 && off[i + 3] === 255) {
+        if (first[i] !== 0 || first[i + 1] !== 0 || first[i + 2] !== 0) sameCoverage = false;
+        cleanBlackEdges++;
+      }
+    }
+    expect(sameCoverage).toBe(true);
+    expect(cleanBlackEdges).toBeGreaterThan(100);
+  } finally {
+    renderer.dispose();
+  }
 });
 
 test('fitted perspective keeps the gear contained and legible through wide fields of view', async () => {
@@ -371,6 +397,8 @@ test('the packed warm renderer preserves section overlap evidence across camera 
 
 test('a true cut through the racing-drone canopy always produces a section image', async () => {
   const common = {
+    // The palette oracle isolates cap material from AO color attenuation.
+    ao: { intensity: 0 },
     width: 192,
     height: 192,
     format: 'raw',
@@ -397,6 +425,10 @@ test('a true cut through the racing-drone canopy always produces a section image
       expect(countDefaultMaterialCapPixels(first.bytes), 'default-material cap pixels').toBeGreaterThan(
         ordinaryCapPalette + 4,
       );
+      const aoOptions = { ...options, ao: {} };
+      const aoFirst = await renderer.renderImage(racingDroneGlb, aoOptions);
+      const aoSecond = await renderer.renderImage(racingDroneGlb, aoOptions);
+      expect(aoFirst.bytes).toEqual(aoSecond.bytes);
       if (count === 1) expect(first.bytes).not.toEqual(ordinary.bytes);
     }
   } finally {
@@ -478,7 +510,7 @@ test('metal and glass match captured WebGL material matrices', async () => {
       world: { up: '+z', forward: '-y', unit: 'meter' },
       lines: false,
       camera: base.camera,
-      ao: reference.ao,
+      ao: reference.ao ?? { intensity: 0 },
     });
     for (const error of materialErrors(base, actual.bytes, expected)) {
       expect(error.mae, `${reference.id} row ${error.row} roughness ${error.roughness}`).toBeLessThan(2);

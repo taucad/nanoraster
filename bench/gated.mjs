@@ -56,7 +56,9 @@ const report = {
   // v10: the wireframe surface bias drops its extra pixel of slope margin to
   // half the stroke width, so hidden edges that end on a face's outline no
   // longer tick through it. Edge pixels near such outlines change on purpose.
-  name: 'gear-parse-raster-encode-512x384-v10',
+  // v11: omitted AO now enables contact occlusion. This intentionally changes
+  // image bytes and the default workload; explicit AO-off remains available.
+  name: 'gear-parse-raster-encode-512x384-v11',
   adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,

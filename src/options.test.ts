@@ -20,6 +20,20 @@ import {
 const parse = (json: string): Record<string, unknown> => JSON.parse(json) as Record<string, unknown>;
 
 describe('image request serialization', () => {
+  it('should admit 8K per axis for single and per-view requests and reject larger extents', () => {
+    expect(parse(toImageRequestJson({ format: 'png', width: 8192, height: 8192 }))).toMatchObject({
+      width: 8192,
+      height: 8192,
+    });
+    expect(
+      parse(toImagesRequestJson({ format: 'png', views: [{ id: 'max', width: 8192, height: 8192 }] })),
+    ).toMatchObject({ views: [{ id: 'max', width: 8192, height: 8192 }] });
+    expect(() => toImageRequestJson({ format: 'png', width: 8193 })).toThrow();
+    expect(() =>
+      toImagesRequestJson({ format: 'png', views: [{ id: 'too-large', height: 8193 }] }),
+    ).toThrow();
+  });
+
   it('should omit undefined fields and serialize disabled annotations', () => {
     expect(parse(toImageRequestJson({ format: 'webp', axes: false, scaleBar: false }))).toEqual({
       format: 'webp',
@@ -265,8 +279,8 @@ describe('image request serialization', () => {
       [],
       { format: 'gif' },
       { format: 'png', width: 15 },
-      { format: 'png', width: 4097 },
-      { format: 'png', height: 4097 },
+      { format: 'png', width: 8193 },
+      { format: 'png', height: 8193 },
       { format: 'png', quality: -0.1 },
       { format: 'png', lineWidth: 0.2 },
       { format: 'png', margin: 0.6 },
@@ -666,8 +680,8 @@ describe('image request serialization', () => {
 
   it('should reject invalid per-view overrides and timings values by path', () => {
     const cases: readonly (readonly [Record<string, unknown>, string])[] = [
-      [{ id: 'front', width: 15 }, 'views[0].width must be between 16 and 4096'],
-      [{ id: 'front', height: 4097 }, 'views[0].height must be between 16 and 4096'],
+      [{ id: 'front', width: 15 }, 'views[0].width must be between 16 and 8192'],
+      [{ id: 'front', height: 8193 }, 'views[0].height must be between 16 and 8192'],
       [{ id: 'front', format: 'gif' }, 'views[0].format must be png, webp, jpeg, jpg, or raw'],
       [{ id: 'front', quality: 1.5 }, 'views[0].quality must be between 0 and 1'],
     ];

@@ -131,7 +131,7 @@ const defaults = {
   axes: 'false',
   scaleBar: 'false',
   lighting: "'studio'",
-  ao: 'disabled',
+  ao: 'enabled',
 } as const;
 
 const generateDoc = async (name: (typeof tableNames)[number]): Promise<GeneratedDoc> => {
