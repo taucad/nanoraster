@@ -122,10 +122,8 @@ should say how the image was lit.
 
 ## Ambient occlusion
 
-Ambient occlusion is enabled by default. Pass `ao: { intensity: 0 }` to disable
-it for an invocation. The default radius is 1% of the output diagonal (at least four
-pixels), intensity is 3, and distance falloff is 0.2. These values are resolved
-for each invocation, not global renderer settings:
+AO defaults on; `ao: { intensity: 0 }` disables it. Per-call defaults: radius
+1% of the output diagonal (minimum four pixels), intensity 3, distance falloff 0.2:
 
 ```typescript
 const image = await renderImage(glb, {

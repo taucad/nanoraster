@@ -437,8 +437,8 @@ call renders.
 
 ### `RenderAmbientOcclusion`
 
-Screen-space contact shadows are enabled by default for opaque surfaces. Pass
-`ao: { intensity: 0 }` to skip the depth and full-screen passes. The optional fields tune the radius
+Contact shadows default on for opaque surfaces.
+`ao: { intensity: 0 }` skips AO passes. Optional fields tune the radius
 in output pixels, visibility exponent, and distance rejection. AO uses the
 same profile for every view in a batch and leaves authored material factors
 unchanged. See [AO defaults and output limits](guides/light-the-subject#ambient-occlusion).
