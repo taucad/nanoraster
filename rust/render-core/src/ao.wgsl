@@ -118,6 +118,11 @@ fn fs_ao_estimate(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f
 }
 
 override BLUR_INDEX: f32 = 0.0;
+// Full-resolution outputs: stochastic neighbours, rotated per pixel by blue noise.
+// Each resolution mode owns its entry point and the host selects it. Keep the
+// two filters out of one shader: with optimized FXC, the D3D12 WARP adapter
+// loses the device when both loops share a function, even with the other
+// branch uniformly untaken (Windows parity, CI run 40833949690).
 @fragment
 fn fs_ao_blur(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f32> {
     let pixel = floor(fragment.xy * ao_frame.controls.yz) + 0.5;
@@ -130,31 +135,6 @@ fn fs_ao_blur(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f32> 
     let normal = data.gba * 2.0 - 1.0;
     let radius = distance(position, ao_position(pixel + vec2<f32>(ao_frame.viewport.z, 0.0), z));
     let falloff = max(radius * ao_frame.viewport.w, 1e-7);
-    if (any(ao_frame.controls.yz > vec2<f32>(1.0))) {
-        // Deterministic separable taps avoid stochastic denoiser noise. Support
-        // follows projected AO radius so large exports retain smooth contacts.
-        let axis = select(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0), BLUR_INDEX > 0.5);
-        let support = max(1.5 * max(ao_frame.controls.y, ao_frame.controls.z), ao_frame.viewport.z * 0.15);
-        var sum = 0.0;
-        var weight_sum = 0.0;
-        for (var i = -8; i <= 8; i++) {
-            let t = f32(i) / 8.0;
-            let sample_pixel = floor(pixel + axis * support * t) + 0.5;
-            if (all(sample_pixel >= vec2<f32>(0.0)) && all(sample_pixel < ao_frame.viewport.xy)) {
-                let sample_z = ao_z(vec2<i32>(sample_pixel));
-                if (sample_z != 0.0) {
-                    let sample_data = textureSampleLevel(ao_input, ao_sampler, sample_pixel / ao_frame.viewport.xy, 0.0);
-                    let sample_position = ao_position(sample_pixel, sample_z);
-                    let sample_normal = sample_data.gba * 2.0 - 1.0;
-                    let tangent_distance = abs(dot(sample_position - position, normal));
-                    let weight = exp(-2.0 * t * t - tangent_distance / falloff) * max(dot(normal, sample_normal), 0.0);
-                    sum += sample_data.r * weight;
-                    weight_sum += weight;
-                }
-            }
-        }
-        return vec4<f32>(clamp(sum / max(weight_sum, 1e-7), 0.0, 1.0), data.gba);
-    }
     let noise = ao_noise(p);
     let angle = select(noise.a, noise.b, BLUR_INDEX > 0.5) * 6.28318530718;
     var sum = data.r;
@@ -179,4 +159,42 @@ fn fs_ao_blur(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f32> 
         }
     }
     return vec4<f32>(clamp(sum / weight_sum, 0.0, 1.0), data.gba);
+}
+
+// Half-resolution outputs above 1,048,576 pixels: deterministic separable taps
+// avoid stochastic denoiser noise. Support follows projected AO radius so large
+// exports retain smooth contacts.
+@fragment
+fn fs_ao_blur_separable(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f32> {
+    let pixel = floor(fragment.xy * ao_frame.controls.yz) + 0.5;
+    let p = vec2<i32>(pixel);
+    let uv = fragment.xy / vec2<f32>(textureDimensions(ao_input));
+    let data = textureSampleLevel(ao_input, ao_sampler, uv, 0.0);
+    let z = ao_z(p);
+    if (z == 0.0) { return data; }
+    let position = ao_position(pixel, z);
+    let normal = data.gba * 2.0 - 1.0;
+    let radius = distance(position, ao_position(pixel + vec2<f32>(ao_frame.viewport.z, 0.0), z));
+    let falloff = max(radius * ao_frame.viewport.w, 1e-7);
+    let axis = select(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0), BLUR_INDEX > 0.5);
+    let support = max(1.5 * max(ao_frame.controls.y, ao_frame.controls.z), ao_frame.viewport.z * 0.15);
+    var sum = 0.0;
+    var weight_sum = 0.0;
+    for (var i = -8; i <= 8; i++) {
+        let t = f32(i) / 8.0;
+        let sample_pixel = floor(pixel + axis * support * t) + 0.5;
+        if (all(sample_pixel >= vec2<f32>(0.0)) && all(sample_pixel < ao_frame.viewport.xy)) {
+            let sample_z = ao_z(vec2<i32>(sample_pixel));
+            if (sample_z != 0.0) {
+                let sample_data = textureSampleLevel(ao_input, ao_sampler, sample_pixel / ao_frame.viewport.xy, 0.0);
+                let sample_position = ao_position(sample_pixel, sample_z);
+                let sample_normal = sample_data.gba * 2.0 - 1.0;
+                let tangent_distance = abs(dot(sample_position - position, normal));
+                let weight = exp(-2.0 * t * t - tangent_distance / falloff) * max(dot(normal, sample_normal), 0.0);
+                sum += sample_data.r * weight;
+                weight_sum += weight;
+            }
+        }
+    }
+    return vec4<f32>(clamp(sum / max(weight_sum, 1e-7), 0.0, 1.0), data.gba);
 }

@@ -174,8 +174,10 @@ struct AoPipelines {
     depth_mesh: wgpu::RenderPipeline,
     depth_constant_mesh: wgpu::RenderPipeline,
     estimate: wgpu::RenderPipeline,
-    blur_first: wgpu::RenderPipeline,
-    blur_second: wgpu::RenderPipeline,
+    /// Full-resolution stochastic denoise, first and second pass.
+    blur: [wgpu::RenderPipeline; 2],
+    /// Half-resolution separable denoise, horizontal and vertical pass.
+    separable_blur: [wgpu::RenderPipeline; 2],
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     blue_noise: wgpu::TextureView,
@@ -1540,8 +1542,14 @@ fn create_ao_pipelines(
         depth_mesh,
         depth_constant_mesh,
         estimate: fullscreen("fs_ao_estimate", None),
-        blur_first: fullscreen("fs_ao_blur", Some(0.0)),
-        blur_second: fullscreen("fs_ao_blur", Some(1.0)),
+        blur: [
+            fullscreen("fs_ao_blur", Some(0.0)),
+            fullscreen("fs_ao_blur", Some(1.0)),
+        ],
+        separable_blur: [
+            fullscreen("fs_ao_blur_separable", Some(0.0)),
+            fullscreen("fs_ao_blur_separable", Some(1.0)),
+        ],
         layout,
         sampler: device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("AO denoise filtering"),
@@ -2890,6 +2898,12 @@ impl Renderer {
                     draw_surface(&mut pass, instance, mesh);
                 }
             }
+            // The shader filters by resolution mode in separate entry points.
+            let blur = if ao_frame[37] > 1.0 || ao_frame[38] > 1.0 {
+                &pipelines.separable_blur
+            } else {
+                &pipelines.blur
+            };
             for (label, output, input, pipeline) in [
                 (
                     "AO hemisphere",
@@ -2901,13 +2915,13 @@ impl Renderer {
                     "AO denoise first",
                     &ao_targets.blur_view,
                     &ao_targets.estimate_view,
-                    &pipelines.blur_first,
+                    &blur[0],
                 ),
                 (
                     "AO denoise second",
                     &ao_targets.estimate_view,
                     &ao_targets.blur_view,
-                    &pipelines.blur_second,
+                    &blur[1],
                 ),
             ] {
                 let resources = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
