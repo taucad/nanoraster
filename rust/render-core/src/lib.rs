@@ -269,7 +269,8 @@ pub struct RenderOptions {
     /// Direct lights, ambient, environment and exposure. Defaults to
     /// [`ResolvedLighting::studio`].
     pub lighting: ResolvedLighting,
-    /// Screen-space contact shadows; absent by default to avoid an estimator pass.
+    /// Screen-space contact shadows; enabled by default. `None` disables AO
+    /// and its estimator pass.
     pub ao: Option<AmbientOcclusion>,
     /// Caller +X/+Y/+Z basis vectors expressed in glTF world coordinates.
     pub world_axes: [[f32; 3]; 3],

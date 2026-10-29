@@ -2591,7 +2591,6 @@ impl Renderer {
         #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
         let started = std::time::Instant::now();
         let options = &entry.options;
-        let ao_active = options.ao.is_some_and(|ao| ao.intensity > 0.0);
         let camera = entry.prepared.camera;
         let mut opaque = Vec::new();
         let mut transparent = Vec::new();
@@ -2620,6 +2619,9 @@ impl Renderer {
             }
         }
         transparent.sort_by(|left, right| left.0.total_cmp(&right.0));
+        // AO only darkens opaque surfaces; without any it would allocate and
+        // run every AO pass to produce identity visibility.
+        let ao_active = !opaque.is_empty() && options.ao.is_some_and(|ao| ao.intensity > 0.0);
         let has_transparency = !transparent.is_empty();
         let has_transmission = transparent.iter().any(|(_, _, mesh)| mesh.transmission);
         validate_target_extent(options.width, options.height, &self.state.device.limits())?;
@@ -6793,6 +6795,39 @@ mod tests {
                 expected.rgba,
                 render_test_scene(&mut renderer, opaque.clone(), physical_options()).rgba
             );
+        }
+    }
+
+    #[test]
+    fn ao_without_opaque_surfaces_skips_its_targets_and_preserves_pixels() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let mut transparent = cube_scene();
+        let material = &mut transparent.meshes[0].primitives[0].material;
+        material.base_color[3] = 0.4;
+        material.alpha_mode = 2.0;
+        for (scene, surfaces, lines) in [
+            (cube_scene(), false, true),
+            (transparent.clone(), true, false),
+        ] {
+            let options = RenderOptions {
+                surfaces,
+                lines,
+                ..physical_options()
+            };
+            assert!(options.ao.is_some());
+            let with_ao = render_test_scene(&mut renderer, scene.clone(), options.clone());
+            assert!(renderer.state.targets.as_ref().unwrap().ao.is_none());
+            let without_ao = render_test_scene(
+                &mut renderer,
+                scene,
+                RenderOptions {
+                    ao: None,
+                    ..options
+                },
+            );
+            assert_eq!(with_ao.rgba, without_ao.rgba);
         }
     }
 
