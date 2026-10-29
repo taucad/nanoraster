@@ -397,6 +397,8 @@ test('the packed warm renderer preserves section overlap evidence across camera 
 
 test('a true cut through the racing-drone canopy always produces a section image', async () => {
   const common = {
+    // The palette oracle isolates cap material from AO color attenuation.
+    ao: { intensity: 0 },
     width: 192,
     height: 192,
     format: 'raw',
@@ -423,6 +425,10 @@ test('a true cut through the racing-drone canopy always produces a section image
       expect(countDefaultMaterialCapPixels(first.bytes), 'default-material cap pixels').toBeGreaterThan(
         ordinaryCapPalette + 4,
       );
+      const aoOptions = { ...options, ao: {} };
+      const aoFirst = await renderer.renderImage(racingDroneGlb, aoOptions);
+      const aoSecond = await renderer.renderImage(racingDroneGlb, aoOptions);
+      expect(aoFirst.bytes).toEqual(aoSecond.bytes);
       if (count === 1) expect(first.bytes).not.toEqual(ordinary.bytes);
     }
   } finally {
