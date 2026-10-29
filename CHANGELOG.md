@@ -1,3 +1,17 @@
+## 0.8.0 (2026-10-29)
+
+### 🚀 Features
+
+- Support exports up to 8192 pixels per axis with conditional transparency and readback storage and independently budgeted ambient occlusion. ([#125](https://github.com/taucad/nanoraster/pull/125))
+
+  Specialize geometry visitors to reduce fitted-camera CPU setup without changing geometry, clipping or output.
+
+  Enable ambient occlusion by default for native and WASM images, with per-call controls and an explicit zero-intensity opt-out. Retain native-resolution thumbnails and half-resolution large-image AO, and refresh the AO-enabled website demo.
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.7.1 (2026-10-19)
 
 ### 🩹 Fixes
