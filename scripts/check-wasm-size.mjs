@@ -234,7 +234,12 @@ const sizes = {
 // Grouped absent anisotropy/sheen with software-adapter fallback (Rust 1.99.1): raw
 // 2,426,240 -> 2,427,493 (+1,253). Preserve the existing 120-byte headroom
 // and compressed allowances; this admits only the measured raw delta.
-const ceilings = { raw: 2_427_613, gzip9: 1_130_591, brotli11: 938_868 };
+// Node 26.12.1 gzip emits 1,137,170 bytes for the exact local WASM that
+// Node 26.8.1 compresses to 1,129,423; raw 2,425,821 and brotli 943,091
+// are identical. CI's Linux artifact measures 2,425,745 / 1,137,162 /
+// 942,622. Admit the observed compressor change only: raw/brotli ceilings
+// and the existing 0.5% compressed allowance remain unchanged.
+const ceilings = { raw: 2_427_613, gzip9: 1_137_170, brotli11: 938_868 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
