@@ -184,13 +184,20 @@ source; material shading does not replace them with image edge detection.
   outside the image, transparent layers behind transparent layers, multiple
   internal bounces or caustics. Rough transmission uses an HDR mip pyramid with bicubic reconstruction;
   authored BRep line primitives participate in the refracted scene.
-- Lighting uses a captured neutral-room PMREM, integrated GGX and PBR Neutral.
-  Optional `ao: {}` enables full-resolution screen-space ambient occlusion with
-  a depth prepass and two bilateral denoise passes. It defaults off to avoid
-  the extra geometry pass and three full-screen passes. `radiusPixels`,
-  `intensity`, and `distanceFalloff` tune its screen-space profile. Metal and
-  glass matrices are compared to captured Three.js 0.184.0 WebGL references with
-  AO both off and on. No HDR environment-file loader is included.
+- Lighting defaults to the Tau viewer's dark-scheme rig: a captured
+  neutral-room PMREM, a camera-relative headlamp, flat ambient, integrated GGX
+  and PBR Neutral tone mapping. `toneMapping` also offers three.js's ACES
+  Filmic, linear and no-op operators. `lighting.environment: { cards }`
+  prefilters up to 16 rectangular light cards in place of the room, once per
+  renderer and card set. No HDR environment-file loader is included.
+- Ambient occlusion is on by default and matches the viewer's
+  post-processing: a depth pass that also writes view-space mesh normals,
+  three.js 0.184's GTAO estimate and an edge-aware denoise at half resolution,
+  then a depth- and normal-guided upsample. `ao: { intensity: 0 }` skips all
+  four passes. `radiusPixels`, `intensity`, `distanceFalloff`,
+  `thicknessRatio`, `denoiseDepthTolerance`, `samples` and `resolutionScale`
+  tune it. Metal and glass matrices are compared to captured Three.js 0.184.0
+  WebGL references with AO both off and on.
 - Draft material extensions, including diffuse transmission and subsurface
   scattering, are outside this ratified extension set.
 
@@ -200,11 +207,11 @@ suite. The native and browser suites additionally exercise the public API.
 
 ### Physical-material size admission
 
-The production WASM admission is 2,348,238 bytes raw, 1,097,244 gzip-9 and
-918,096 Brotli-11 locally with Rust 1.98.0, Binaryen 132 and Node 26.8.1.
-The initial optional AO path added 87,051 raw bytes over the preceding
-material-only build (2,255,592 to 2,342,643), including a 65,536-byte
-blue-noise texture. Later material and AO fixes bring the combined build to
-the size above. `scripts/check-wasm-size.mjs`
-records the explicit budget and CI compressor allowance; benchmark entry points
-remain excluded.
+The production WASM admission is 2,403,892 bytes raw, 1,087,523 gzip-9 and
+888,068 Brotli-11 locally with Rust 1.99.1 and Node 24.22.1. The initial
+optional AO path added 87,051 raw bytes over the preceding material-only build
+(2,255,592 to 2,342,643), including a 65,536-byte blue-noise texture. The GTAO
+port left that texture unused, and removing it saved 66,148 raw bytes. Later
+material, AO and lighting work brings the combined build to the size above.
+`scripts/check-wasm-size.mjs` records the explicit budget and CI compressor
+allowance; benchmark entry points remain excluded.

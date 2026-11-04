@@ -31,7 +31,10 @@ uses the nanoraster material/uniform contract. The Apache-2.0 license text
 is included in this distribution's license file.
 
 The GGX/DFG, sheen, CubeUV, transmission filtering and PBR Neutral routines in
-physical.wgsl, lighting.wgsl and shader.wgsl are adapted from Three.js r184.
+physical.wgsl, lighting.wgsl and shader.wgsl are adapted from Three.js r184,
+as are the ACES Filmic and linear tone mapping operators in shader.wgsl, the
+GTAONode ambient occlusion estimate in ao.wgsl and the PMREMGenerator GGX
+light-card prefilter in cards.wgsl.
 The embedded neutral-room PMREM derives from its RoomEnvironment and the DFG
 lookup table from its DFGLUTData. GLSL was ported to WGSL; room radiance was
 repacked to one channel and quantized. Exact source fingerprints, generation

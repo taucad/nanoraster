@@ -2,6 +2,31 @@
 
 ## 0.x
 
+- Default rendering follows the Tau viewer, so default image bytes change.
+  Ambient occlusion is a port of three.js 0.184's GTAO with the viewer's
+  edge-aware denoise and a depth- and normal-guided upsample, in place of the
+  hemisphere estimator and its bilateral filters. It reads the mesh's shading
+  normals instead of normals reconstructed from depth, and estimates at half
+  resolution (`ao.resolutionScale: 0.5`) at every output size instead of only
+  above one megapixel.
+- AO `intensity` and `distanceFalloff` keep their names and ranges but change
+  meaning and default. `intensity` is the exponent on the GTAO visibility,
+  default 0.75 instead of 3. `distanceFalloff` is GTAO's distance falloff,
+  default 1 instead of a 0.2 depth-rejection fraction. `radiusPixels` becomes
+  one world-space radius at the camera target, as in the viewer, rather than
+  a fixed screen radius. A request with explicit AO values renders
+  differently: start again from `ao: {}` and retune against the new defaults.
+- The studio preset is the viewer's dark-scheme rig. Its ambient becomes
+  `0.1 × 1.15 / π` instead of `0.1 / π`; pass `ambient: 0.1 / Math.PI` to
+  keep the old value. The former `[1, 1, 1]` studio light is now
+  `lighting.headlamp`, with the same view-space direction and intensity 1.5. A
+  rig without `lights` inherits it. A rig that sets `lights` and omits
+  `headlamp` still renders without it, as `lights` replaced the studio light
+  before; add `headlamp: {}` to keep it beside your lights, which then share
+  `renderImageMaxLights` with it.
+- `toneMapping` is new. Its `'neutral'` default is the PBR Neutral operator
+  every earlier release applied, so omitting it changes nothing.
+
 - Ambient occlusion is enabled by default for single images and batches.
   Use `ao: { intensity: 0 }` to retain rendering without AO. Omitted options
   and `ao: {}` select the same default; radius, intensity and falloff remain
