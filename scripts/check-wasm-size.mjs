@@ -239,7 +239,12 @@ const sizes = {
 // are identical. CI's Linux artifact measures 2,425,745 / 1,137,162 /
 // 942,622. Admit the observed compressor change only: raw/brotli ceilings
 // and the existing 0.5% compressed allowance remain unchanged.
-const ceilings = { raw: 2_427_613, gzip9: 1_137_170, brotli11: 938_868 };
+// Viewer-matched GTAO with denoise and guided upsample, plus `lineColor`
+// (Rust 1.99.1): CI's Linux artifact measures 2,433,591 / 1,138,864 / 944,281
+// against 2,425,745 / 1,137,162 / 942,622 on main (+7,846 / +1,702 / +1,659).
+// The three AO passes replace the hemisphere estimator. Admit the measured raw
+// and Brotli deltas only, retaining the 120-byte raw headroom.
+const ceilings = { raw: 2_433_711, gzip9: 1_137_170, brotli11: 940_527 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
