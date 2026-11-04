@@ -2,14 +2,14 @@
 __default__: minor
 ---
 
-Match the Tau viewer's ambient occlusion: a port of three's GTAO with edge-aware denoise and guided upsample replaces the hemisphere estimator, and the AO defaults become intensity 0.75 and distance falloff 1. AO intensity now scales the occlusion estimate the way the viewer does, so existing explicit intensities render differently.
+Render like the Tau viewer by default, and expose the viewer's ambient occlusion, light rig and tone mapping as options. Default images change, and AO `intensity` and `distanceFalloff` change meaning; [BREAKING_CHANGES.md](https://github.com/taucad/nanoraster/blob/main/BREAKING_CHANGES.md) has the migration.
+
+Ambient occlusion ports three.js 0.184's GTAO with the viewer's edge-aware denoise and a depth- and normal-guided upsample, replacing the hemisphere estimator. The AO depth pass also writes view-space mesh normals, which every AO pass reads as the viewer's normal render target provides them. The defaults are the viewer's: intensity 0.75, distance falloff 1, half-resolution estimate. `ao.thicknessRatio`, `ao.denoiseDepthTolerance`, `ao.samples` and `ao.resolutionScale` tune the estimator and its filters.
+
+The studio preset is the viewer's dark-scheme rig: the neutral room, a camera-relative `lighting.headlamp` and ambient `0.1 × 1.15 / π`. `lighting.environment: { cards, intensity }` prefilters rectangular light cards into the environment, as the viewer prefilters its Lightformers, or scales the room. A rig may omit `lights`; one that sets `lights` without `headlamp` still renders without the headlamp.
+
+Add `toneMapping`: `'neutral'` (the default, unchanged), `'aces'`, `'linear'` or `'none'`, matching three.js's operators.
 
 Add `lineColor` to replace every authored line colour with one sRGB colour.
 
-Add the GTAO controls `ao.thicknessRatio`, `ao.denoiseDepthTolerance`, `ao.samples` and `ao.resolutionScale`. Their defaults are the viewer's values and reproduce the default output exactly.
-
-Add `toneMapping`: `'neutral'` (the default, unchanged output), `'aces'`, `'linear'` or `'none'`, matching three.js's operators.
-
-Ambient occlusion reads the mesh's interpolated shading normals, as the viewer does, instead of normals reconstructed from depth. Curved and smooth-shaded surfaces render with different occlusion.
-
-Match the Tau viewer's lighting: `lighting.headlamp` sets the camera-relative key light, and `lighting.environment` takes `{ cards, intensity }`, prefiltering rectangular light cards into the environment the way the viewer prefilters its Lightformers. The default ambient becomes the viewer's dark-scheme 0.1 × 1.15, and a rig may omit `lights`.
+Drop the N8AO blue-noise texture that the GTAO port left unused: the WASM shrinks by 66,148 bytes (65,524 Brotli-compressed) and the Linux x64 native addon by 66,520 bytes.
