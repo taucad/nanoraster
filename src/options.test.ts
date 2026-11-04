@@ -622,6 +622,9 @@ describe('image request serialization', () => {
       ],
     ).toEqual({ headlamp: {}, environment: { cards: [] } });
     expect(parse(toImageRequestJson({ format: 'png', lighting: {} }))['lighting']).toEqual({});
+    expect(
+      parse(toImageRequestJson({ format: 'png', lighting: { environment: { intensity: 2 } } }))['lighting'],
+    ).toEqual({ environment: { intensity: 2 } });
   });
 
   it('should reject invalid lighting with a precise path', () => {

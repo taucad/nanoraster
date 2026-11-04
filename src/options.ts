@@ -1206,10 +1206,8 @@ const validateLight = (light: unknown, name: string): void => {
   }
 };
 
+/** Validates a present headlamp and reports whether it is switched on. */
 const validateHeadlamp = (headlamp: unknown): boolean => {
-  if (headlamp === undefined) {
-    return false;
-  }
   if (!isRecord(headlamp)) {
     throw new TypeError('lighting.headlamp must be an object');
   }
