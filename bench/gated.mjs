@@ -61,6 +61,9 @@ const report = {
   // v12: AO ports the Tau viewer's GTAO with its denoise and upsample, and the
   // default lighting, tone mapping and AO settings match the viewer. Shaded
   // pixels change on purpose; geometry, framing and codecs are untouched.
+  // The workload grows with it: three AO passes and a normal attachment on the
+  // AO depth pass. CI medians were 923-1,256 ms on lavapipe against 705.6 ms
+  // for v11; bench.yml's MAX_MEDIAN_MS admits them.
   name: 'gear-parse-raster-encode-512x384-v12',
   adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),

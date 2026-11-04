@@ -23,8 +23,16 @@ jobs:
       - run: pnpm run build:napi:bench
       - id: benchmark
         continue-on-error: true # Origin: monthly drift opens an issue; the PR-vs-main gate remains fail-closed.
+        shell: bash # Origin: the default `bash -e` has no pipefail, so `| tee` swallowed an exceeded ceiling.
         env:
-          MAX_MEDIAN_MS: '250' # Origin: 10x headroom over the extracted lavapipe spike; lower after five scheduled samples.
+          # Origin: ubuntu-24.04 lavapipe medians. The first 250 ms ceiling held
+          # through v4 (71.7 ms, 2026-09-01) but not v8's room IBL (744.1 ms,
+          # 2026-10-01) or v11's default AO (705.6 ms, 2026-11-01); the missing
+          # pipefail hid both failures. v12 adds the viewer's GTAO estimate,
+          # denoise and upsample passes and the AO normal target: 923-1,256 ms
+          # across the nanoraster#130 heads. This admits the highest v12 sample
+          # plus 27% for runner spread.
+          MAX_MEDIAN_MS: '1600'
         run: |
           node bench/gated.mjs | tee benchmark.json
           node --expose-gc bench/presentation.mjs | tee presentation-benchmark.json
