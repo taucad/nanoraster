@@ -58,7 +58,10 @@ const report = {
   // longer tick through it. Edge pixels near such outlines change on purpose.
   // v11: omitted AO now enables contact occlusion. This intentionally changes
   // image bytes and the default workload; explicit AO-off remains available.
-  name: 'gear-parse-raster-encode-512x384-v11',
+  // v12: AO ports the Tau viewer's GTAO with its denoise and upsample, and the
+  // default lighting, tone mapping and AO settings match the viewer. Shaded
+  // pixels change on purpose; geometry, framing and codecs are untouched.
+  name: 'gear-parse-raster-encode-512x384-v12',
   adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,
