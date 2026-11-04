@@ -114,14 +114,7 @@ fitted camera but never change a fixed camera.
 `lineWidth` controls glTF `LINES` primitives in output pixels, from `0.25` to
 `16`. The default is `3`. The width does not grow with image height: a 1 px line
 stays 1 px at 2048×2048. Meshes and lines use 4× MSAA.
-
-```typescript
-const image = await renderImage(glb, { format: 'png', lineWidth: 1 });
-```
-
-`lineColor` replaces every authored line colour with one sRGB colour, as
-`#RRGGBB`, `#RRGGBBAA`, or four normalized straight-alpha channels. Leave it
-unset to keep the authored colours.
+`lineColor` overrides authored line colours.
 
 ```typescript
 const image = await renderImage(glb, { format: 'png', lineWidth: 1, lineColor: '#868686' });
