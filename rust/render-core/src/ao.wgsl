@@ -1,7 +1,8 @@
 // Ground-truth AO matching the Tau viewer's post-processing: three.js r184
-// GTAONode (3 slices x 6 steps, magic-square noise, no temporal rotation) at
-// half drawing-buffer resolution, Tau's 13-tap edge-aware denoiser with outlier
-// trimming at the same resolution, then a depth/normal-guided upsample.
+// GTAONode (samples split into slices and steps as GTAONode does, magic-square
+// noise, no temporal rotation) at `resolutionScale` of the drawing buffer, Tau's
+// 13-tap edge-aware denoiser with outlier trimming at the same resolution, then
+// a depth/normal-guided upsample.
 struct AoFrame {
     projection: mat4x4<f32>,
     inverse_projection: mat4x4<f32>,
@@ -9,6 +10,8 @@ struct AoFrame {
     viewport: vec4<f32>,
     // x = orthographic flag; y = visibility exponent; z = thickness; w = denoise depth phi.
     controls: vec4<f32>,
+    // x = slices; y = steps per slice, fractional as GTAONode's float uniform keeps it.
+    sampling: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> ao_frame: AoFrame;
 @group(0) @binding(1) var ao_depth: texture_2d<f32>;
@@ -138,17 +141,19 @@ fn fs_ao_estimate(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f
     let bitangent = vec3<f32>(-tangent.y, tangent.x, 0.0);
     let kernel = mat3x3<f32>(tangent, bitangent, vec3<f32>(0.0, 0.0, 1.0));
     let view_dir = normalize(-view_position);
+    let slices = ao_frame.sampling.x;
+    let steps = ao_frame.sampling.y;
     var ao = 0.0;
-    for (var i = 0; i < 3; i++) {
-        let angle = f32(i) / 3.0 * 3.14159265359;
+    for (var i = 0; i < i32(slices); i++) {
+        let angle = f32(i) / slices * 3.14159265359;
         let sample_dir = normalize(kernel * vec3<f32>(cos(angle), sin(angle), 0.0));
         let slice_bitangent = normalize(cross(sample_dir, view_dir));
         let slice_tangent = cross(slice_bitangent, view_dir);
         let normal_in_slice = normalize(view_normal - slice_bitangent * dot(view_normal, slice_bitangent));
         let tangent_to_normal = cross(normal_in_slice, slice_bitangent);
         var cos_horizons = vec2<f32>(dot(view_dir, tangent_to_normal), dot(view_dir, -tangent_to_normal));
-        for (var j = 0; j < 6; j++) {
-            let offset = sample_dir * radius * (f32(j + 1) / 6.0);
+        for (var j = 0; j < i32(steps); j++) {
+            let offset = sample_dir * radius * (f32(j + 1) / steps);
             let weight = mix(1.0, 2.0 / (f32(j) + 2.0), falloff);
             let uv_x = ao_project(view_position + offset);
             let z_x = ao_z(ao_full_pixel(uv_x));
@@ -175,7 +180,7 @@ fn fs_ao_estimate(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f
         let nyb = 0.5 * (2.0 - cos_horizons.x * cos_horizons.x - cos_horizons.y * cos_horizons.y);
         ao += nx * nxb + ny * nyb;
     }
-    let visibility = pow(clamp(ao / 3.0, 0.0, 1.0), ao_frame.controls.y);
+    let visibility = pow(clamp(ao / slices, 0.0, 1.0), ao_frame.controls.y);
     return vec4<f32>(visibility, view_normal * 0.5 + 0.5);
 }
 

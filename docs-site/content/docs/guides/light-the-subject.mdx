@@ -123,21 +123,21 @@ should say how the image was lit.
 ## Ambient occlusion
 
 AO defaults on; `ao: { intensity: 0 }` disables it. Per-call defaults: radius
-1% of the output diagonal (minimum four pixels), intensity 3, distance falloff 0.2:
+1% of the output diagonal (minimum four pixels), intensity 0.75, distance falloff 1:
 
 ```typescript
 const image = await renderImage(glb, {
   format: 'png',
   width: 7680,
   height: 4320,
-  ao: { radiusPixels: 32, intensity: 2, distanceFalloff: 0.2 },
+  ao: { radiusPixels: 32, samples: 32 },
 });
 ```
 
-Outputs above 1,048,576 pixels estimate and filter AO at half linear resolution,
-then reconstruct with native-resolution depth. Smaller outputs keep full-resolution
-AO. Beauty and authored CAD edges remain at the requested resolution. The two
-filters use only the current image; repeated captures need no temporal warmup.
+`thicknessRatio`, `denoiseDepthTolerance`, `samples` and `resolutionScale`
+tune the GTAO estimator and its filters; each defaults to the Tau
+viewer's value. Edges stay at the requested resolution, and no temporal warmup
+is needed.
 
 The maximum dimension is 8192, subject to the initialized adapter's texture and
 buffer limits and available memory. A square 8192×8192 export has substantially

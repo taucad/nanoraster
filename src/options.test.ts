@@ -141,6 +141,28 @@ describe('image request serialization', () => {
     }
   });
 
+  it('should serialize the GTAO controls and name each one it rejects', () => {
+    const ao = { thicknessRatio: 4, denoiseDepthTolerance: 0.5, samples: 30, resolutionScale: 1 };
+    expect(parse(toImageRequestJson({ format: 'raw', ao }))).toEqual({ format: 'raw', ao });
+    expect(parse(toImagesRequestJson({ format: 'raw', ao, views: [{ id: 'front' }] }))).toEqual({
+      format: 'raw',
+      ao,
+      views: [{ id: 'front' }],
+    });
+    for (const [invalid, message] of [
+      [{ thicknessRatio: 0 }, 'ao.thicknessRatio must be between 0.1 and 100'],
+      [{ thicknessRatio: Number.POSITIVE_INFINITY }, 'ao.thicknessRatio'],
+      [{ denoiseDepthTolerance: 11 }, 'ao.denoiseDepthTolerance must be between 0.01 and 10'],
+      [{ samples: 0 }, 'ao.samples must be between 1 and 64'],
+      [{ samples: 65 }, 'ao.samples must be between 1 and 64'],
+      [{ samples: 16.5 }, 'ao.samples must be an integer'],
+      [{ resolutionScale: 0.2 }, 'ao.resolutionScale must be between 0.25 and 1'],
+      [{ resolutionScale: '0.5' }, 'ao.resolutionScale'],
+    ] as const) {
+      expect(() => toImageRequestJson({ format: 'raw', ao: invalid } as RenderImageOptions)).toThrow(message);
+    }
+  });
+
   // render-core derives the caller's right as `up × forward`, which makes
   // `(right, up, forward)` right-handed for every non-collinear pair, so it
   // accepts all 24 of them. The TS mirror once rejected half of them as

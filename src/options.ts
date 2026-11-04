@@ -53,14 +53,54 @@ export type RenderLightingRig = {
  */
 export type RenderLighting = 'studio' | RenderLightingRig;
 
-/** Screen-space ambient occlusion for contact shadows in opaque geometry. Enabled by default; use intensity 0 to skip its render passes. @public */
+/**
+ * Screen-space ambient occlusion for contact shadows in opaque geometry: the
+ * three.js GTAO estimator with an edge-aware denoise, configured like the Tau
+ * viewer by default. Enabled by default; use intensity 0 to skip its render
+ * passes.
+ *
+ * @public
+ */
 export type RenderAmbientOcclusion = {
-  /** Sampling radius in output pixels. @default max(1% of image diagonal, 4) */
+  /** Sampling radius in output pixels, from 1 to 128. @default max(1% of image diagonal, 4) */
   readonly radiusPixels?: number;
-  /** Visibility exponent. @default 3 */
+  /** Visibility exponent, from 0 to 8; 0 skips the AO passes. @default 0.75 */
   readonly intensity?: number;
-  /** Fraction of the sampling radius used for depth rejection. @default 0.2 */
+  /** GTAO distance falloff, from 0.01 to 1; lower values weight distant horizon samples more. @default 1 */
   readonly distanceFalloff?: number;
+  /**
+   * Depth acceptance as a multiple of the world-space sampling radius, from
+   * 0.1 to 100: a horizon sample further than `radius × thicknessRatio` in
+   * front of or behind the surface is ignored. The Tau viewer's
+   * `gtaoThicknessToRadiusRatio`.
+   *
+   * @default 1 / 0.09 (≈ 11.11)
+   */
+  readonly thicknessRatio?: number;
+  /**
+   * Plane-distance tolerance of the denoise and upsample filters as a
+   * fraction of the world-space sampling radius, from 0.01 to 10. Neighbours
+   * further than this from the centre's tangent plane do not contribute.
+   *
+   * @default 0.1
+   */
+  readonly denoiseDepthTolerance?: number;
+  /**
+   * Horizon samples per pixel, an integer from 1 to 64, split as three.js
+   * `GTAONode` splits them: 3 slices below 30 samples and 5 from 30, each
+   * marching `ceil(samples / slices)` steps.
+   *
+   * @default 16
+   */
+  readonly samples?: number;
+  /**
+   * Resolution of the estimate and denoise passes as a fraction of the output
+   * size, from 0.25 to 1, rounded per axis; the result is upsampled with depth
+   * and normal guidance.
+   *
+   * @default 0.5
+   */
+  readonly resolutionScale?: number;
 };
 
 /**
@@ -626,7 +666,15 @@ const clippingKeys = new Set(['near', 'far']);
 
 const lightingKeys = new Set(['lights', 'ambient', 'environment', 'space', 'exposure']);
 
-const aoKeys = new Set(['radiusPixels', 'intensity', 'distanceFalloff']);
+const aoKeys = new Set([
+  'radiusPixels',
+  'intensity',
+  'distanceFalloff',
+  'thicknessRatio',
+  'denoiseDepthTolerance',
+  'samples',
+  'resolutionScale',
+]);
 
 const lightKeys = new Set(['direction', 'color']);
 
@@ -1078,6 +1126,15 @@ const validateAo = (ao: unknown): void => {
   if (ao['intensity'] !== undefined) assertRange(ao['intensity'], 'ao.intensity', [0, 8]);
   if (ao['distanceFalloff'] !== undefined)
     assertRange(ao['distanceFalloff'], 'ao.distanceFalloff', [0.01, 1]);
+  if (ao['thicknessRatio'] !== undefined) assertRange(ao['thicknessRatio'], 'ao.thicknessRatio', [0.1, 100]);
+  if (ao['denoiseDepthTolerance'] !== undefined)
+    assertRange(ao['denoiseDepthTolerance'], 'ao.denoiseDepthTolerance', [0.01, 10]);
+  if (ao['samples'] !== undefined) {
+    assertRange(ao['samples'], 'ao.samples', [1, 64]);
+    if (!Number.isInteger(ao['samples'])) throw new TypeError('ao.samples must be an integer');
+  }
+  if (ao['resolutionScale'] !== undefined)
+    assertRange(ao['resolutionScale'], 'ao.resolutionScale', [0.25, 1]);
 };
 
 const validateVisiblePrimitives = (value: unknown, path: string): void => {

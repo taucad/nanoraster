@@ -137,6 +137,64 @@ pub struct AoRequest {
     intensity: Option<f32>,
     #[serde(default, deserialize_with = "present_ao_number")]
     distance_falloff: Option<f32>,
+    #[serde(default, deserialize_with = "present_ao_number")]
+    thickness_ratio: Option<f32>,
+    #[serde(default, deserialize_with = "present_ao_number")]
+    denoise_depth_tolerance: Option<f32>,
+    #[serde(default, deserialize_with = "present_ao_number")]
+    samples: Option<f32>,
+    #[serde(default, deserialize_with = "present_ao_number")]
+    resolution_scale: Option<f32>,
+}
+
+const AO_RADIUS_PIXELS_RANGE: std::ops::RangeInclusive<f32> = 1.0..=128.0;
+const AO_INTENSITY_RANGE: std::ops::RangeInclusive<f32> = 0.0..=8.0;
+const AO_DISTANCE_FALLOFF_RANGE: std::ops::RangeInclusive<f32> = 0.01..=1.0;
+const AO_THICKNESS_RATIO_RANGE: std::ops::RangeInclusive<f32> = 0.1..=100.0;
+const AO_DENOISE_DEPTH_TOLERANCE_RANGE: std::ops::RangeInclusive<f32> = 0.01..=10.0;
+const AO_SAMPLES_RANGE: std::ops::RangeInclusive<u32> = 1..=64;
+const AO_RESOLUTION_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.25..=1.0;
+
+/// The one AO admission rule, shared by request resolution and
+/// `RenderOptions` validation. Each failure names its field.
+pub(crate) fn validate_ao(ao: &AmbientOcclusion) -> Result<(), RenderError> {
+    let mut checks = vec![
+        ("intensity", ao.intensity, AO_INTENSITY_RANGE),
+        (
+            "distanceFalloff",
+            ao.distance_falloff,
+            AO_DISTANCE_FALLOFF_RANGE,
+        ),
+        (
+            "thicknessRatio",
+            ao.thickness_ratio,
+            AO_THICKNESS_RATIO_RANGE,
+        ),
+        (
+            "denoiseDepthTolerance",
+            ao.denoise_depth_tolerance,
+            AO_DENOISE_DEPTH_TOLERANCE_RANGE,
+        ),
+        (
+            "resolutionScale",
+            ao.resolution_scale,
+            AO_RESOLUTION_SCALE_RANGE,
+        ),
+    ];
+    if let Some(radius) = ao.radius_pixels {
+        checks.insert(0, ("radiusPixels", radius, AO_RADIUS_PIXELS_RANGE));
+    }
+    for (name, value, range) in checks {
+        if !value.is_finite() || !range.contains(&value) {
+            return Err(RenderError::Parse(format!("ao.{name} outside {range:?}")));
+        }
+    }
+    if !AO_SAMPLES_RANGE.contains(&ao.samples) {
+        return Err(RenderError::Parse(format!(
+            "ao.samples outside {AO_SAMPLES_RANGE:?}"
+        )));
+    }
+    Ok(())
 }
 
 fn present_ao_number<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f32>, D::Error> {
@@ -587,15 +645,16 @@ fn resolve_common(
             LINE_WIDTH_RANGE.end()
         )));
     }
-    for (name, color) in [("background", request.background), ("lineColor", request.line_color)] {
+    for (name, color) in [
+        ("background", request.background),
+        ("lineColor", request.line_color),
+    ] {
         if let Some(color) = color
             && color
                 .iter()
                 .any(|channel| !channel.is_finite() || !(0.0..=1.0).contains(channel))
         {
-            return Err(RenderError::Parse(format!(
-                "{name} channels outside 0..=1"
-            )));
+            return Err(RenderError::Parse(format!("{name} channels outside 0..=1")));
         }
     }
 
@@ -603,26 +662,36 @@ fn resolve_common(
     let ao = request
         .ao
         .map(|ao| {
-            for (name, value, range) in [
-                ("radiusPixels", ao.radius_pixels, 1.0..=128.0),
-                ("intensity", ao.intensity, 0.0..=8.0),
-                ("distanceFalloff", ao.distance_falloff, 0.01..=1.0),
-            ] {
-                if let Some(value) = value
-                    && (!value.is_finite() || !range.contains(&value))
-                {
-                    return Err(RenderError::Parse(format!("ao.{name} outside {range:?}")));
+            let fallback = AmbientOcclusion::default();
+            let samples = match ao.samples {
+                None => fallback.samples,
+                Some(samples) if samples.is_finite() && samples.fract() == 0.0 => {
+                    if !(*AO_SAMPLES_RANGE.start() as f32..=*AO_SAMPLES_RANGE.end() as f32)
+                        .contains(&samples)
+                    {
+                        return Err(RenderError::Parse(format!(
+                            "ao.samples outside {AO_SAMPLES_RANGE:?}"
+                        )));
+                    }
+                    samples as u32
                 }
-            }
-            Ok(AmbientOcclusion {
+                Some(_) => {
+                    return Err(RenderError::Parse("ao.samples must be an integer".into()));
+                }
+            };
+            let resolved = AmbientOcclusion {
                 radius_pixels: ao.radius_pixels,
-                intensity: ao
-                    .intensity
-                    .unwrap_or(AmbientOcclusion::default().intensity),
-                distance_falloff: ao
-                    .distance_falloff
-                    .unwrap_or(AmbientOcclusion::default().distance_falloff),
-            })
+                intensity: ao.intensity.unwrap_or(fallback.intensity),
+                distance_falloff: ao.distance_falloff.unwrap_or(fallback.distance_falloff),
+                thickness_ratio: ao.thickness_ratio.unwrap_or(fallback.thickness_ratio),
+                denoise_depth_tolerance: ao
+                    .denoise_depth_tolerance
+                    .unwrap_or(fallback.denoise_depth_tolerance),
+                samples,
+                resolution_scale: ao.resolution_scale.unwrap_or(fallback.resolution_scale),
+            };
+            validate_ao(&resolved)?;
+            Ok(resolved)
         })
         .transpose()?
         .or(defaults.ao);
@@ -1260,6 +1329,10 @@ mod tests {
                 radius_pixels: None,
                 intensity: 0.75,
                 distance_falloff: 1.0,
+                thickness_ratio: 1.0 / 0.09,
+                denoise_depth_tolerance: 0.1,
+                samples: 16,
+                resolution_scale: 0.5,
             })
         );
         let (batch, _, _, _) = RenderImagesRequest::from_json(
@@ -1274,6 +1347,7 @@ mod tests {
                 radius_pixels: Some(12.0),
                 intensity: 2.0,
                 distance_falloff: 0.25,
+                ..AmbientOcclusion::default()
             })
         );
         for invalid in [
@@ -1290,6 +1364,94 @@ mod tests {
                 "{invalid}"
             );
         }
+    }
+
+    #[test]
+    fn gtao_controls_resolve_and_each_rejection_names_its_field() {
+        let (single, _) = RenderRequest::from_json(
+            r#"{"format":"raw","ao":{"thicknessRatio":4,"denoiseDepthTolerance":0.5,"samples":30,"resolutionScale":1}}"#,
+        )
+        .expect("GTAO request")
+        .resolve()
+        .expect("GTAO controls");
+        assert_eq!(
+            single.ao,
+            Some(AmbientOcclusion {
+                thickness_ratio: 4.0,
+                denoise_depth_tolerance: 0.5,
+                samples: 30,
+                resolution_scale: 1.0,
+                ..AmbientOcclusion::default()
+            })
+        );
+        let (batch, _, _, _) = RenderImagesRequest::from_json(
+            r#"{"format":"raw","ao":{"samples":8},"views":[{"id":"front"}]}"#,
+        )
+        .expect("batch GTAO request")
+        .resolve()
+        .expect("batch GTAO controls");
+        assert_eq!(batch.ao.expect("AO").samples, 8);
+        for (field, expected) in [
+            (
+                r#""thicknessRatio":0"#,
+                "parse: ao.thicknessRatio outside 0.1..=100.0",
+            ),
+            (
+                r#""thicknessRatio":101"#,
+                "parse: ao.thicknessRatio outside 0.1..=100.0",
+            ),
+            (
+                r#""denoiseDepthTolerance":0"#,
+                "parse: ao.denoiseDepthTolerance outside 0.01..=10.0",
+            ),
+            (r#""samples":0"#, "parse: ao.samples outside 1..=64"),
+            (r#""samples":65"#, "parse: ao.samples outside 1..=64"),
+            (r#""samples":16.5"#, "parse: ao.samples must be an integer"),
+            (
+                r#""resolutionScale":0.2"#,
+                "parse: ao.resolutionScale outside 0.25..=1.0",
+            ),
+            (
+                r#""resolutionScale":1.5"#,
+                "parse: ao.resolutionScale outside 0.25..=1.0",
+            ),
+        ] {
+            let error =
+                RenderRequest::from_json(&format!(r#"{{"format":"raw","ao":{{{field}}}}}"#))
+                    .and_then(|request| request.resolve())
+                    .expect_err(field);
+            assert_eq!(error.to_string(), expected);
+        }
+        for invalid in [
+            AmbientOcclusion {
+                thickness_ratio: f32::NAN,
+                ..AmbientOcclusion::default()
+            },
+            AmbientOcclusion {
+                samples: 0,
+                ..AmbientOcclusion::default()
+            },
+            AmbientOcclusion {
+                resolution_scale: 0.0,
+                ..AmbientOcclusion::default()
+            },
+        ] {
+            assert!(validate_ao(&invalid).is_err());
+        }
+        assert!(validate_ao(&AmbientOcclusion::default()).is_ok());
+    }
+
+    #[test]
+    fn gtao_samples_split_like_gtao_node() {
+        assert_eq!(crate::gtao_slices_and_steps(16), (3.0, 6.0));
+        assert_eq!(crate::gtao_slices_and_steps(8), (3.0, 10.0 / 3.0));
+        assert_eq!(crate::gtao_slices_and_steps(29), (3.0, 31.0 / 3.0));
+        assert_eq!(crate::gtao_slices_and_steps(30), (5.0, 34.0 / 5.0));
+        assert_eq!(crate::gtao_slices_and_steps(64), (5.0, 68.0 / 5.0));
+        assert_eq!(crate::ao_extent(769, 577, 0.5), (385, 289));
+        assert_eq!(crate::ao_extent(768, 576, 0.5), (384, 288));
+        assert_eq!(crate::ao_extent(768, 576, 1.0), (768, 576));
+        assert_eq!(crate::ao_extent(17, 16, 0.25), (4, 4));
     }
 
     #[test]

@@ -173,9 +173,9 @@ struct AoPipelines {
     texture_mask: u32,
     depth_mesh: wgpu::RenderPipeline,
     depth_constant_mesh: wgpu::RenderPipeline,
-    /// Half-resolution GTAO estimate.
+    /// GTAO estimate at `resolutionScale`.
     estimate: wgpu::RenderPipeline,
-    /// Half-resolution edge-aware denoise.
+    /// Edge-aware denoise at `resolutionScale`.
     denoise: wgpu::RenderPipeline,
     /// Guided upsample to the output resolution.
     upsample: wgpu::RenderPipeline,
@@ -186,6 +186,8 @@ struct AoPipelines {
 }
 
 struct AoTargets {
+    /// Estimate and denoise extent: the output scaled by `resolutionScale`.
+    extent: (u32, u32),
     depth_view: wgpu::TextureView,
     test_depth_view: wgpu::TextureView,
     estimate_view: wgpu::TextureView,
@@ -1590,7 +1592,7 @@ fn create_ao_pipelines(
             .create_view(&wgpu::TextureViewDescriptor::default()),
         frame_buffer: device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("AO frame"),
-            size: 160,
+            size: 176,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }),
@@ -2398,14 +2400,15 @@ impl Renderer {
         width: u32,
         height: u32,
         transmission: bool,
-        ao: bool,
+        ao_scale: Option<f32>,
         transparency: bool,
     ) {
+        let ao_extent = ao_scale.map(|scale| crate::ao_extent(width, height, scale));
         if let Some(targets) = &mut self.state.targets
             && targets.width == width
             && targets.height == height
             && targets.transmission == transmission
-            && targets.ao.is_some() == ao
+            && targets.ao.as_ref().map(|ao| ao.extent) == ao_extent
         {
             if targets.composite_view.is_some() != transparency {
                 if let Some(old) = targets.composite_view.take() {
@@ -2461,13 +2464,14 @@ impl Renderer {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
-        let ao_targets = ao.then(|| {
-            // The viewer estimates and denoises at half drawing-buffer resolution.
-            let texture = |label, format, usage, half: bool| {
+        let ao_targets = ao_extent.map(|(ao_width, ao_height)| {
+            // GTAONode estimates (and Tau denoises) at `resolutionScale` of the
+            // drawing buffer, rounded per axis; the viewer's scale is 0.5.
+            let texture = |label, format, usage, scaled: bool| {
                 let mut size = extent;
-                if half {
-                    size.width = width.div_ceil(2);
-                    size.height = height.div_ceil(2);
+                if scaled {
+                    size.width = ao_width;
+                    size.height = ao_height;
                 }
                 device
                     .create_texture(&wgpu::TextureDescriptor {
@@ -2483,6 +2487,7 @@ impl Renderer {
                     .create_view(&wgpu::TextureViewDescriptor::default())
             };
             AoTargets {
+                extent: (ao_width, ao_height),
                 depth_view: texture(
                     "AO view depth",
                     wgpu::TextureFormat::R32Float,
@@ -2653,7 +2658,10 @@ impl Renderer {
             options.width,
             options.height,
             has_transmission,
-            ao_active,
+            options
+                .ao
+                .filter(|_| ao_active)
+                .map(|ao| ao.resolution_scale),
             has_transparency,
         );
         if ao_active {
@@ -2876,12 +2884,17 @@ impl Renderer {
             // The viewer converts its pixel radius to world units once, at the
             // camera target: one world radius for every pixel of the frame.
             let world_per_pixel = 2.0 / (camera.projection.y_axis.y * options.height as f32)
-                * if orthographic { 1.0 } else { camera.target_depth.abs() };
+                * if orthographic {
+                    1.0
+                } else {
+                    camera.target_depth.abs()
+                };
             let world_radius = radius * world_per_pixel;
-            let mut ao_frame = [0f32; 40];
+            let (slices, steps) = crate::gtao_slices_and_steps(ao.samples);
+            let mut ao_frame = [0f32; 44];
             ao_frame[..16].copy_from_slice(&camera.projection.to_cols_array());
             ao_frame[16..32].copy_from_slice(&camera.projection.inverse().to_cols_array());
-            ao_frame[32..40].copy_from_slice(&[
+            ao_frame[32..44].copy_from_slice(&[
                 options.width as f32,
                 options.height as f32,
                 world_radius,
@@ -2889,8 +2902,12 @@ impl Renderer {
                 f32::from(orthographic),
                 ao.intensity,
                 // GTAO depth acceptance and denoise plane tolerance, as the viewer derives them.
-                world_radius / 0.09,
-                world_radius * 0.1,
+                world_radius * ao.thickness_ratio,
+                world_radius * ao.denoise_depth_tolerance,
+                slices,
+                steps,
+                0.0,
+                0.0,
             ]);
             state
                 .queue
@@ -4290,6 +4307,7 @@ mod tests {
                     radius_pixels: None,
                     intensity: 0.0,
                     distance_falloff: 0.2,
+                    ..crate::AmbientOcclusion::default()
                 }),
                 ..options.clone()
             },
@@ -4302,6 +4320,7 @@ mod tests {
                     radius_pixels: None,
                     intensity: 3.0,
                     distance_falloff: 0.2,
+                    ..crate::AmbientOcclusion::default()
                 }),
                 ..options
             },
@@ -4320,6 +4339,7 @@ mod tests {
             radius_pixels: None,
             intensity: 3.0,
             distance_falloff: 0.2,
+            ..crate::AmbientOcclusion::default()
         });
         render_test_scene(
             &mut renderer,
@@ -4327,6 +4347,83 @@ mod tests {
             with_attributes,
         );
         renderer.take_uncaptured().expect("AO GPU validation");
+    }
+
+    #[test]
+    fn gtao_controls_each_change_output_and_explicit_defaults_do_not() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let scene = glb::parse_glb(include_bytes!("../../../tests/fixtures/gear-12.glb"))
+            .expect("gear fixture");
+        let render = |renderer: &mut Renderer, ao: crate::AmbientOcclusion| {
+            render_test_scene(
+                renderer,
+                scene.clone(),
+                RenderOptions {
+                    width: 255,
+                    height: 193,
+                    lines: false,
+                    ao: Some(ao),
+                    ..RenderOptions::default()
+                },
+            )
+            .rgba
+        };
+        let defaults = crate::AmbientOcclusion::default();
+        let baseline = render(&mut renderer, defaults);
+        assert_eq!(
+            render(
+                &mut renderer,
+                crate::AmbientOcclusion {
+                    thickness_ratio: 1.0 / 0.09,
+                    denoise_depth_tolerance: 0.1,
+                    samples: 16,
+                    resolution_scale: 0.5,
+                    ..defaults
+                }
+            ),
+            baseline
+        );
+        for (name, ao) in [
+            (
+                "thicknessRatio",
+                crate::AmbientOcclusion {
+                    thickness_ratio: 0.5,
+                    ..defaults
+                },
+            ),
+            (
+                "denoiseDepthTolerance",
+                crate::AmbientOcclusion {
+                    denoise_depth_tolerance: 2.0,
+                    ..defaults
+                },
+            ),
+            (
+                "samples",
+                crate::AmbientOcclusion {
+                    samples: 40,
+                    ..defaults
+                },
+            ),
+            (
+                "resolutionScale",
+                crate::AmbientOcclusion {
+                    resolution_scale: 1.0,
+                    ..defaults
+                },
+            ),
+        ] {
+            let changed = render(&mut renderer, ao)
+                .iter()
+                .zip(&baseline)
+                .filter(|(a, b)| a != b)
+                .count();
+            assert!(changed > 0, "ao.{name} left every pixel unchanged");
+        }
+        renderer
+            .take_uncaptured()
+            .expect("GTAO controls GPU validation");
     }
 
     #[test]
@@ -4341,6 +4438,7 @@ mod tests {
                 radius_pixels: None,
                 intensity: 3.0,
                 distance_falloff: 0.2,
+                ..crate::AmbientOcclusion::default()
             }),
             ..RenderOptions::default()
         };
@@ -4472,6 +4570,7 @@ mod tests {
                 radius_pixels: None,
                 intensity: 3.0,
                 distance_falloff: 0.2,
+                ..crate::AmbientOcclusion::default()
             }),
             ..RenderOptions::default()
         };
@@ -4567,6 +4666,7 @@ mod tests {
                     radius_pixels: Some(16.0),
                     intensity: 3.0,
                     distance_falloff: 0.2,
+                    ..crate::AmbientOcclusion::default()
                 }),
                 ..options
             },
@@ -5453,7 +5553,8 @@ mod tests {
                     ao: Some(crate::AmbientOcclusion {
                         radius_pixels: None,
                         intensity: 2.0,
-                        distance_falloff: 0.2
+                        distance_falloff: 0.2,
+                        ..crate::AmbientOcclusion::default()
                     }),
                     ..RenderOptions::default()
                 }
@@ -6766,7 +6867,7 @@ mod tests {
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
                 .expect("renderer");
         for transparency in [false, true, false, true] {
-            renderer.ensure_targets(320, 240, false, true, transparency);
+            renderer.ensure_targets(320, 240, false, Some(0.5), transparency);
             let targets = renderer.state.targets.as_ref().unwrap();
             let transient = |view: &wgpu::TextureView| {
                 view.texture()
@@ -6938,7 +7039,7 @@ mod tests {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
                 .expect("renderer");
-        renderer.ensure_targets(768, 432, false, false, false);
+        renderer.ensure_targets(768, 432, false, None, false);
         let ledger = profile::ledger(renderer.state.targets.as_ref().expect("targets"));
         assert_eq!(
             ledger["readbackBytes"].as_array().unwrap().len(),
@@ -7000,23 +7101,23 @@ mod tests {
                 .any(|(key, _)| *key == u64::from(2.0f32.to_bits() << 1 | 1))
         );
 
-        renderer.ensure_targets(320, 240, false, false, false);
+        renderer.ensure_targets(320, 240, false, None, false);
         assert_eq!(renderer.counters.target_allocations, 1);
-        renderer.ensure_targets(320, 240, false, false, false);
+        renderer.ensure_targets(320, 240, false, None, false);
         assert_eq!(renderer.counters.target_allocations, 1);
-        renderer.ensure_targets(640, 480, false, false, false);
+        renderer.ensure_targets(640, 480, false, None, false);
         assert_eq!(renderer.counters.target_allocations, 2);
         // The retention guard keeps ordinary sizes and evicts oversized ones.
         renderer.trim_targets();
         assert!(renderer.state.targets.is_some());
-        renderer.ensure_targets(4096, 4096, false, false, false);
+        renderer.ensure_targets(4096, 4096, false, None, false);
         renderer.trim_targets();
         assert!(renderer.state.targets.is_none());
         // Nothing retained: trimming again is a no-op.
         renderer.trim_targets();
         assert!(renderer.state.targets.is_none());
 
-        renderer.ensure_targets(640, 480, false, false, false);
+        renderer.ensure_targets(640, 480, false, None, false);
         let targets = renderer.state.targets.as_ref().expect("targets");
         assert_eq!(targets.readback.len(), 1);
         assert_eq!(targets.unpadded_bytes_per_row, 640 * 4);
@@ -7024,7 +7125,7 @@ mod tests {
             targets.padded_bytes_per_row % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
             0
         );
-        renderer.ensure_targets(640, 480, false, true, false);
+        renderer.ensure_targets(640, 480, false, Some(0.5), false);
         assert!(
             renderer
                 .state
@@ -7035,8 +7136,23 @@ mod tests {
                 .is_some()
         );
         assert_eq!(renderer.counters.target_allocations, 5);
-        renderer.ensure_targets(640, 480, false, true, false);
+        renderer.ensure_targets(640, 480, false, Some(0.5), false);
         assert_eq!(renderer.counters.target_allocations, 5);
+        // A new AO resolution scale is a new estimate extent.
+        renderer.ensure_targets(640, 480, false, Some(1.0), false);
+        assert_eq!(renderer.counters.target_allocations, 6);
+        assert_eq!(
+            renderer
+                .state
+                .targets
+                .as_ref()
+                .expect("AO targets")
+                .ao
+                .as_ref()
+                .expect("AO")
+                .extent,
+            (640, 480)
+        );
         renderer.ensure_ao_pipelines(0);
         let pipeline_sets = renderer.counters.pipeline_sets;
         renderer.ensure_ao_pipelines(0);

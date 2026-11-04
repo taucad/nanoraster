@@ -454,3 +454,26 @@ void ({
 void renderImages(glb, { format: 'png', views: [{ id: 'front', width: 320 }] });
 // @ts-expect-error missing view id
 void ({ format: 'png', views: [{}] } as const satisfies ImagesOptions);
+const occluded = {
+  format: 'png',
+  ao: {
+    radiusPixels: 12,
+    intensity: 0.75,
+    distanceFalloff: 1,
+    thicknessRatio: 1 / 0.09,
+    denoiseDepthTolerance: 0.1,
+    samples: 16,
+    resolutionScale: 0.5,
+  },
+} as const satisfies ImageOptions;
+expectTypeOf(occluded.ao).toExtend<renderModule.RenderAmbientOcclusion | undefined>();
+expectTypeOf<renderModule.RenderAmbientOcclusion['samples']>().toEqualTypeOf<number | undefined>();
+void renderImages(glb, {
+  format: 'png',
+  ao: {
+    samples: 30,
+    // @ts-expect-error deep unknown AO keys are rejected by generic calls
+    thickness: 2,
+  },
+  views: [{ id: 'front' }],
+});

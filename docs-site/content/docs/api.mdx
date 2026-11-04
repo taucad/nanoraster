@@ -439,7 +439,8 @@ call renders.
 
 Contact shadows default on for opaque surfaces.
 `ao: { intensity: 0 }` skips AO passes. Optional fields tune the radius
-in output pixels, visibility exponent, and distance rejection. AO uses the
+in output pixels, visibility exponent, falloff, thickness, denoise
+tolerance, samples and resolution. AO uses the
 same profile for every view in a batch and leaves authored material factors
 unchanged. See [AO defaults and output limits](guides/light-the-subject#ambient-occlusion).
 

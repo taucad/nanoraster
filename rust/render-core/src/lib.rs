@@ -188,12 +188,26 @@ pub struct Sections {
     pub clip_lines: bool,
 }
 
-/// Optional screen-space ambient occlusion for opaque surfaces.
+/// Optional screen-space ambient occlusion for opaque surfaces: three.js r184
+/// GTAO with the Tau viewer's denoise and guided upsample. Every default is the
+/// viewer's value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AmbientOcclusion {
+    /// Sampling radius in output pixels; `None` is 1% of the image diagonal, at least 4.
     pub radius_pixels: Option<f32>,
+    /// Visibility exponent; zero skips the AO passes.
     pub intensity: f32,
+    /// GTAONode `distanceFallOff`.
     pub distance_falloff: f32,
+    /// GTAO thickness as a multiple of the world radius (the viewer's
+    /// `gtaoThicknessToRadiusRatio`).
+    pub thickness_ratio: f32,
+    /// Denoise and upsample plane-distance tolerance as a fraction of the world radius.
+    pub denoise_depth_tolerance: f32,
+    /// GTAONode `samples`, split into slices and steps by [`gtao_slices_and_steps`].
+    pub samples: u32,
+    /// Estimate and denoise resolution as a fraction of the output size.
+    pub resolution_scale: f32,
 }
 
 impl Default for AmbientOcclusion {
@@ -202,8 +216,31 @@ impl Default for AmbientOcclusion {
             radius_pixels: None,
             intensity: 0.75,
             distance_falloff: 1.0,
+            thickness_ratio: 1.0 / 0.09,
+            denoise_depth_tolerance: 0.1,
+            samples: 16,
+            resolution_scale: 0.5,
         }
     }
+}
+
+/// GTAONode's sample split: 3 slices below 30 samples, otherwise 5, and
+/// `(samples + slices - 1) / slices` steps. The step count stays fractional as
+/// GTAONode's float uniform keeps it: the march takes its integer part, while
+/// step spacing divides by the fraction itself.
+#[must_use]
+pub fn gtao_slices_and_steps(samples: u32) -> (f32, f32) {
+    let slices: f32 = if samples < 30 { 3.0 } else { 5.0 };
+    (slices, (samples as f32 + slices - 1.0) / slices)
+}
+
+/// The estimate target extent: GTAONode's `Math.round(resolutionScale * size)`
+/// per axis, at least one texel.
+#[must_use]
+pub fn ao_extent(width: u32, height: u32, resolution_scale: f32) -> (u32, u32) {
+    let scaled =
+        |size: u32| ((f64::from(resolution_scale) * f64::from(size) + 0.5).floor() as u32).max(1);
+    (scaled(width), scaled(height))
 }
 
 /// Maximum number of simultaneous retained-half-space planes. Eight, so an
@@ -436,18 +473,8 @@ fn validate_options(options: &RenderOptions) -> Result<(), RenderError> {
             "lineWidth must be between 0.25 and 16".into(),
         ));
     }
-    if let Some(ao) = options.ao
-        && (ao
-            .radius_pixels
-            .is_some_and(|radius| !radius.is_finite() || !(1.0..=128.0).contains(&radius))
-            || !ao.intensity.is_finite()
-            || !(0.0..=8.0).contains(&ao.intensity)
-            || !ao.distance_falloff.is_finite()
-            || !(0.01..=1.0).contains(&ao.distance_falloff))
-    {
-        return Err(RenderError::Parse(
-            "ao values outside supported ranges".into(),
-        ));
+    if let Some(ao) = options.ao {
+        options::validate_ao(&ao)?;
     }
     if let Some(primitives) = &options.visible_primitives {
         let mut seen = std::collections::HashSet::with_capacity(primitives.len());
@@ -1295,6 +1322,7 @@ mod tests {
             radius_pixels: Some(12.0),
             intensity: 3.0,
             distance_falloff: 0.2,
+            ..AmbientOcclusion::default()
         };
         assert!(
             validate_options(&RenderOptions {
