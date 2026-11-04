@@ -248,8 +248,12 @@ const sizes = {
 // local raw 2,432,898 -> 2,441,746 (+8,848), gzip-9 1,138,912 -> 1,142,760
 // (+3,848), Brotli-11 943,800 -> 946,943 (+3,143). Admit the measured raw and
 // Brotli deltas only; the gzip ceiling and compressor allowances are unchanged.
-// LIGHTING-PLACEHOLDER
-const ceilings = { raw: 2_442_559, gzip9: 1_137_170, brotli11: 943_670 };
+// Headlamp, light cards and the GGX card prefilter (Rust 1.99.1, 2026-11-04):
+// local raw 2,441,746 -> 2,470,040 (+28,294), gzip-9 1,142,760 -> 1,154,521
+// (+11,761), Brotli-11 946,943 -> 953,592 (+6,649). Admit the measured raw and
+// Brotli deltas, and the gzip delta too: the gzip ceiling's 0.5% allowance no
+// longer covers the build. Compressor allowances are unchanged.
+const ceilings = { raw: 2_470_853, gzip9: 1_148_931, brotli11: 950_319 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
