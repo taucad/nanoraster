@@ -12,8 +12,8 @@
 use crate::encode::{ImageFormat, encode_owned};
 use crate::glb::{self, MODE_TRIANGLES, Material};
 use crate::{
-    CameraProjection, LightingSpace, MAX_LIGHTS, MAX_SECTION_PLANES, Projection, RenderCamera,
-    RenderError, RenderOptions, with_view_result,
+    CameraProjection, MAX_SECTION_PLANES, Projection, RenderCamera, RenderError, RenderOptions,
+    with_view_result,
 };
 use glam::{Mat4, Vec3};
 use std::fmt::Display;
@@ -437,7 +437,15 @@ struct DeviceState {
     pass_local_usage: wgpu::TextureUsages,
     shader: wgpu::ShaderModule,
     frame_buffer: wgpu::Buffer,
+    /// The frame group for the current view's environment: `room_frame`, or
+    /// the card environment's group.
     frame_bind_group: wgpu::BindGroup,
+    frame_layout: wgpu::BindGroupLayout,
+    dfg_map: wgpu::TextureView,
+    lighting_sampler: wgpu::Sampler,
+    room_frame: wgpu::BindGroup,
+    /// Last prefiltered card environment, kept while its cards repeat.
+    card_frame: Option<(Vec<crate::LightCard>, wgpu::BindGroup)>,
     prim_layout: wgpu::BindGroupLayout,
     scene_layout: wgpu::BindGroupLayout,
     scene_sampler: wgpu::Sampler,
@@ -969,23 +977,35 @@ fn frame_uniform(camera: CameraState, options: &RenderOptions) -> [f32; FRAME_FL
         line_width_px(options),
         crate::section::stripe_spacing(camera, camera_projection_kind(&options.camera)),
     ]);
-    for (index, light) in lighting.lights.iter().take(MAX_LIGHTS).enumerate() {
-        // World-space rigs are rotated into view space here, once per view,
-        // so the shader stays view-space and never learns the difference.
-        let direction = match lighting.space {
-            LightingSpace::View => Vec3::from(light.direction),
-            LightingSpace::World => camera.view.transform_vector3(Vec3::from(light.direction)),
-        }
-        .normalize_or_zero();
+    // World-space rigs are rotated into view space here, once per view, so
+    // the shader stays view-space and never learns the difference. The
+    // camera-relative headlamp takes the first slot.
+    let mut count = 0u32;
+    for (index, (direction, color)) in lighting
+        .view_lights(|direction| {
+            camera
+                .view
+                .transform_vector3(Vec3::from(direction))
+                .to_array()
+        })
+        .into_iter()
+        .enumerate()
+    {
         let base = FRAME_LIGHTS + index * FRAME_LIGHT_STRIDE;
-        data[base..base + 3].copy_from_slice(&direction.to_array());
-        data[base + 4..base + 7].copy_from_slice(&light.color);
+        data[base..base + 3].copy_from_slice(&Vec3::from(direction).normalize_or_zero().to_array());
+        data[base + 4..base + 7].copy_from_slice(&color);
+        count += 1;
     }
-    // The tail's two u32 fields ride in the same f32 array by bit pattern.
-    data[FRAME_TAIL] = f32::from_bits(lighting.lights.len().min(MAX_LIGHTS) as u32);
+    // The light count rides in the same f32 array by bit pattern.
+    data[FRAME_TAIL] = f32::from_bits(count);
     data[FRAME_TAIL + 1] = lighting.ambient;
     data[FRAME_TAIL + 2] = lighting.exposure;
-    data[FRAME_TAIL + 3] = f32::from_bits(u32::from(lighting.environment));
+    // Environment radiance multiplier; zero switches the environment off.
+    data[FRAME_TAIL + 3] = if lighting.environment {
+        lighting.environment_intensity
+    } else {
+        0.0
+    };
     data[FRAME_SECTION_TAIL + 3] = f32::from_bits(u32::from(
         camera_projection_kind(&options.camera) == Projection::Orthographic,
     ));
@@ -1626,7 +1646,71 @@ fn create_ao_pipelines(
     }
 }
 
+/// Group 0 of the mesh pipelines: the frame uniform and the lighting maps.
+fn frame_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    frame_buffer: &wgpu::Buffer,
+    environment: &wgpu::TextureView,
+    dfg_map: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("frame"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: frame_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(environment),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(dfg_map),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
 impl DeviceState {
+    /// Bind the environment this view's rig lights with, prefiltering a card
+    /// environment the first time its cards appear.
+    fn select_environment(&mut self, lighting: &crate::ResolvedLighting) {
+        let crate::EnvironmentSource::Cards(cards) = &lighting.environment_source else {
+            self.frame_bind_group = self.room_frame.clone();
+            return;
+        };
+        if self
+            .card_frame
+            .as_ref()
+            .is_none_or(|(kept, _)| kept != cards)
+        {
+            let environment = crate::lighting::card_environment(&self.device, &self.queue, cards);
+            let group = frame_group(
+                &self.device,
+                &self.frame_layout,
+                &self.frame_buffer,
+                &environment,
+                &self.dfg_map,
+                &self.lighting_sampler,
+            );
+            self.card_frame = Some((cards.clone(), group));
+        }
+        self.frame_bind_group = self
+            .card_frame
+            .as_ref()
+            .expect("card environment kept")
+            .1
+            .clone();
+    }
+
     async fn new(
         power: wgpu::PowerPreference,
         lost: &Arc<AtomicBool>,
@@ -1768,28 +1852,14 @@ impl DeviceState {
             mag_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let frame_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("frame"),
-            layout: &frame_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: frame_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&studio_map),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&dfg_map),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&lighting_sampler),
-                },
-            ],
-        });
+        let room_frame = frame_group(
+            &device,
+            &frame_layout,
+            &frame_buffer,
+            &studio_map,
+            &dfg_map,
+            &lighting_sampler,
+        );
 
         let prim_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("prim"),
@@ -1968,7 +2038,12 @@ impl DeviceState {
             pass_local_usage,
             shader,
             frame_buffer,
-            frame_bind_group,
+            frame_bind_group: room_frame.clone(),
+            frame_layout,
+            dfg_map,
+            lighting_sampler,
+            room_frame,
+            card_frame: None,
             prim_layout,
             scene_layout,
             scene_sampler,
@@ -2722,6 +2797,7 @@ impl Renderer {
             || presentation.open_chains.is_some();
         let pipeline_index =
             self.ensure_pipelines(line_width_px(options), wireframe, scene.features);
+        self.state.select_environment(&options.lighting);
         let slot = self
             .state
             .targets
@@ -4990,6 +5066,86 @@ mod tests {
     }
 
     #[test]
+    fn light_cards_prefilter_an_environment_that_lights_from_their_side() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let matte = || {
+            physical_sphere(Material {
+                base_color: [0.8, 0.8, 0.8, 1.0],
+                metallic: 0.0,
+                roughness: 1.0,
+                ..Material::default()
+            })
+        };
+        let environment_only = |source, intensity| {
+            let mut options = physical_options();
+            options.lighting.headlamp = None;
+            options.lighting.ambient = 0.0;
+            options.lighting.environment_source = source;
+            options.lighting.environment_intensity = intensity;
+            options
+        };
+        // One broad card overhead, in view space, facing down by default.
+        let overhead = crate::EnvironmentSource::Cards(vec![crate::LightCard {
+            position: [0.0, 3.0, 0.0],
+            size: [6.0, 6.0],
+            intensity: 4.0,
+            rotation: None,
+        }]);
+        let luminance = |image: &Rendered, x: u32, y: u32| {
+            let index = ((y * image.width + x) * 4) as usize;
+            image.rgba[index..index + 3]
+                .iter()
+                .map(|&channel| u32::from(channel))
+                .sum::<u32>()
+        };
+        let lit = render_test_scene(
+            &mut renderer,
+            matte(),
+            environment_only(overhead.clone(), 1.0),
+        );
+        let (top, bottom) = (luminance(&lit, 48, 18), luminance(&lit, 48, 78));
+        assert!(
+            top > bottom + 120,
+            "overhead card lights the top: {top} vs {bottom}"
+        );
+
+        // The kept environment is reused, and intensity scales it.
+        let again = render_test_scene(
+            &mut renderer,
+            matte(),
+            environment_only(overhead.clone(), 1.0),
+        );
+        assert_eq!(lit.rgba, again.rgba);
+        let brighter = render_test_scene(&mut renderer, matte(), environment_only(overhead, 2.0));
+        assert!(luminance(&brighter, 48, 18) > top);
+
+        // No cards is a black environment: the same pixels as none at all.
+        let black = render_test_scene(
+            &mut renderer,
+            matte(),
+            environment_only(crate::EnvironmentSource::Cards(Vec::new()), 1.0),
+        );
+        let mut off = environment_only(crate::EnvironmentSource::Room, 1.0);
+        off.lighting.environment = false;
+        assert_eq!(
+            black.rgba,
+            render_test_scene(&mut renderer, matte(), off).rgba
+        );
+
+        // Switching back to the room restores its pixels exactly.
+        let room = environment_only(crate::EnvironmentSource::Room, 1.0);
+        let mut fresh =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let first = render_test_scene(&mut fresh, matte(), room.clone());
+        assert_eq!(
+            render_test_scene(&mut renderer, matte(), room).rgba,
+            first.rgba
+        );
+        renderer.take_uncaptured().expect("no uncaptured GPU error");
+    }
+
+    #[test]
     fn large_emission_stays_finite_through_hdr_and_display() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
@@ -5137,6 +5293,7 @@ mod tests {
         options.lighting.ambient = 0.0;
         options.lighting.environment = false;
         options.lighting.lights.clear();
+        options.lighting.headlamp = None;
         let second = render_test_scene(
             &mut renderer,
             physical_sphere(material.clone()),
@@ -5693,8 +5850,11 @@ mod tests {
                     direction: [3.0, 0.0, 0.0],
                     color: [0.25, 0.5, 0.75],
                 }],
+                headlamp: None,
                 ambient: 0.5,
                 environment: false,
+                environment_source: crate::EnvironmentSource::Room,
+                environment_intensity: 3.0,
                 space: LightingSpace::World,
                 exposure: 2.0,
             },
@@ -5723,7 +5883,8 @@ mod tests {
         assert_eq!(data[FRAME_TAIL].to_bits(), 1);
         assert_eq!(data[FRAME_TAIL + 1], 0.5);
         assert_eq!(data[FRAME_TAIL + 2], 2.0);
-        assert_eq!(data[FRAME_TAIL + 3].to_bits(), 0);
+        // A switched-off environment writes zero whatever its intensity.
+        assert_eq!(data[FRAME_TAIL + 3], 0.0);
         assert_eq!(
             &data[FRAME_SECTION_PLANES..FRAME_SECTION_PLANES + 4],
             [1.0, 0.0, 0.0, -2.0]
@@ -5799,12 +5960,34 @@ mod tests {
 
         let studio = frame_uniform(camera, &RenderOptions::default());
         assert_eq!(studio[FRAME_TAIL].to_bits(), 1);
-        assert_eq!(studio[FRAME_TAIL + 3].to_bits(), 1);
-        // View space ignores the view matrix; the direction is only normalised.
+        assert_eq!(studio[FRAME_TAIL + 3], 1.0);
+        // The headlamp is view space: it ignores the view matrix and its
+        // (right, up, 2) offsets are only normalised.
         assert_close(
             Vec3::from_slice(&studio[FRAME_LIGHTS..FRAME_LIGHTS + 3]),
             Vec3::ONE.normalize(),
         );
+        assert_eq!(&studio[FRAME_LIGHTS + 4..FRAME_LIGHTS + 7], [1.5; 3]);
+
+        // The headlamp keeps the first slot and stays view-relative while a
+        // world-space light beside it turns with the view.
+        let mut both = options.clone();
+        both.lighting.headlamp = Some(crate::Headlamp {
+            intensity: 2.0,
+            right_offset: -2.0,
+            up_offset: 0.0,
+        });
+        both.lighting.environment = true;
+        let data = frame_uniform(camera, &both);
+        assert_eq!(data[FRAME_TAIL].to_bits(), 2);
+        assert_close(
+            Vec3::from_slice(&data[FRAME_LIGHTS..FRAME_LIGHTS + 3]),
+            Vec3::new(-1.0, 0.0, 1.0).normalize(),
+        );
+        assert_eq!(&data[FRAME_LIGHTS + 4..FRAME_LIGHTS + 7], [2.0; 3]);
+        let second = FRAME_LIGHTS + FRAME_LIGHT_STRIDE;
+        assert_close(Vec3::from_slice(&data[second..second + 3]), Vec3::NEG_Z);
+        assert_eq!(data[FRAME_TAIL + 3], 3.0);
     }
 
     #[test]

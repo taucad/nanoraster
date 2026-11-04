@@ -25,15 +25,19 @@ expectTypeOf<keyof RenderModule>().toEqualTypeOf<
   | 'renderImageAnnotatedMinDimension'
   | 'renderImageBackgroundPattern'
   | 'renderImageDimensionRange'
+  | 'renderImageEnvironmentIntensityRange'
   | 'renderImageExposureRange'
   | 'renderImageLabelMaxLength'
   | 'renderImageLabelPattern'
   | 'renderImageLineWidthRange'
+  | 'renderImageLightCardIntensityRange'
   | 'renderImageLightColorRange'
   | 'renderImageMarginRange'
+  | 'renderImageMaxLightCards'
   | 'renderImageMaxLights'
   | 'renderImageMaxSections'
   | 'renderImageQualityRange'
+  | 'renderImageRigExtentRange'
   | 'renderImageVerticalFieldOfViewRange'
   | 'renderImageViewIdPattern'
   | 'renderImageZoomRange'
@@ -397,6 +401,68 @@ const lit = {
   },
 } as const satisfies ImageOptions;
 expectTypeOf(lit.lighting).toExtend<renderModule.RenderLighting | undefined>();
+const viewerRig = {
+  format: 'png',
+  lighting: {
+    headlamp: { intensity: 1.5, rightOffset: 2, upOffset: 2 },
+    ambient: 0.036605636,
+    environment: {
+      intensity: 1,
+      cards: [
+        { position: [1, 1, 1], size: [1.2, 1.2], intensity: 64 },
+        { position: [0, 3, 0], size: [3, 3], intensity: 0.25, rotation: [Math.PI / 2, 0, 0] },
+      ],
+    },
+  },
+} as const satisfies ImageOptions;
+expectTypeOf(viewerRig.lighting.headlamp).toExtend<renderModule.RenderHeadlamp>();
+expectTypeOf(viewerRig.lighting.environment).toExtend<renderModule.RenderEnvironment>();
+expectTypeOf(viewerRig.lighting.environment.cards[1]).toExtend<renderModule.RenderLightCard>();
+expectTypeOf<renderModule.RenderLightingRig['lights']>().toEqualTypeOf<
+  readonly renderModule.RenderLight[] | undefined
+>();
+void ({
+  format: 'png',
+  lighting: {
+    // @ts-expect-error unknown headlamp property
+    headlamp: { leftOffset: 1 },
+  },
+} as const satisfies ImageOptions);
+void ({
+  format: 'png',
+  lighting: {
+    // @ts-expect-error a card size has two sides
+    environment: { cards: [{ position: [1, 1, 1], size: [1, 1, 1], intensity: 1 }] },
+  },
+} as const satisfies ImageOptions);
+void renderImages(glb, {
+  format: 'png',
+  lighting: {
+    environment: {
+      cards: [
+        {
+          position: [1, 1, 1],
+          size: [1, 1],
+          intensity: 1,
+          // @ts-expect-error deep unknown card keys are rejected by generic calls
+          form: 'circle',
+        },
+      ],
+    },
+  },
+  views: [{ id: 'front' }],
+});
+void renderImages(glb, {
+  format: 'png',
+  lighting: {
+    headlamp: {
+      intensity: 1,
+      // @ts-expect-error deep unknown headlamp keys are rejected by generic calls
+      distance: 2,
+    },
+  },
+  views: [{ id: 'front' }],
+});
 void ({
   format: 'png',
   // @ts-expect-error unknown preset name

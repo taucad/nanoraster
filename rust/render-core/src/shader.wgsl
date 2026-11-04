@@ -18,7 +18,8 @@ struct Frame {
     light_count: u32,
     ambient: f32,
     exposure: f32,
-    environment: u32,
+    // Environment radiance multiplier; zero switches the environment off.
+    environment: f32,
     section_planes: array<vec4<f32>, 8>,
     section_count: u32,
     clip_surfaces: u32,
@@ -179,7 +180,7 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
     var sheen_light = vec3<f32>(0.0);
     var coat_light = vec3<f32>(0.0);
     let coat_fresnel = fresnel_schlick(vec3<f32>(0.04), max(dot(coat_n, v), 0.0));
-    if (frame.environment != 0u) {
+    if (frame.environment > 0.0) {
         let bent = cross(cross(b, v), b);
         let bending = pow(1.0 - aniso * (1.0 - rough), 4.0);
         let reflection_n = normalize(mix(select(n, normalize(bent), dot(bent, bent) > 0.000001), n, bending));
@@ -193,12 +194,12 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
         let single_m = environment_brdf(metallic, f90, fab_v);
         let multi_d = multi_scatter(dielectric, single_d, fab_v);
         let multi_m = multi_scatter(metallic, single_m, fab_v);
-        let irradiance = room_radiance(n, 1.0);
-        specular_light += (environment_radiance(v, reflection_n, rough) * mix(single_d, single_m, metal)
+        let irradiance = room_radiance(n, 1.0) * frame.environment;
+        specular_light += (environment_radiance(v, reflection_n, rough) * frame.environment * mix(single_d, single_m, metal)
             + irradiance * mix(multi_d, multi_m, metal)) * sheen_energy;
         diffuse_light += diffuse * irradiance * (1.0 - single_d - multi_d) * sheen_energy;
         sheen_light += irradiance * sheen * sheen_albedo(nv, sheen_rough);
-        coat_light += environment_radiance(v, coat_n, coat_rough)
+        coat_light += environment_radiance(v, coat_n, coat_rough) * frame.environment
             * environment_brdf(vec3<f32>(0.04), vec3<f32>(1.0), dfg(coat_rough, dot(coat_n, v)));
     }
     diffuse_light *= ao;

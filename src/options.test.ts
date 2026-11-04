@@ -602,13 +602,36 @@ describe('image request serialization', () => {
     });
   });
 
+  it('should serialize the headlamp and a card environment verbatim', () => {
+    const lighting = {
+      headlamp: { intensity: 0, rightOffset: -2, upOffset: 0.5 },
+      lights: Array.from({ length: 8 }, () => ({ direction: [0, 1, 0], color: [1, 1, 1] }) as const),
+      environment: {
+        intensity: 0.5,
+        cards: [
+          { position: [1, 1, 1], size: [1.2, 1.2], intensity: 64 },
+          { position: [0, 3, 0], size: [3, 3], intensity: 0.25, rotation: [Math.PI / 2, 0, 0] },
+        ],
+      },
+    } as const;
+    // A switched-off headlamp frees its slot for an eighth light.
+    expect(parse(toImageRequestJson({ format: 'png', lighting }))['lighting']).toEqual(lighting);
+    expect(
+      parse(toImageRequestJson({ format: 'png', lighting: { headlamp: {}, environment: { cards: [] } } }))[
+        'lighting'
+      ],
+    ).toEqual({ headlamp: {}, environment: { cards: [] } });
+    expect(parse(toImageRequestJson({ format: 'png', lighting: {} }))['lighting']).toEqual({});
+  });
+
   it('should reject invalid lighting with a precise path', () => {
     const light = { direction: [0, 1, 0], color: [1, 1, 1] } as const;
+    const card = { position: [1, 1, 1], size: [1.2, 1.2], intensity: 64 } as const;
     const invalid: readonly (readonly [unknown, string])[] = [
       ['sunset', 'lighting must be studio or a rig object'],
       [42, 'lighting must be studio or a rig object'],
       [{ lights: [], glow: 1 }, 'lighting contains unknown property "glow"'],
-      [{}, 'lighting.lights must be an array'],
+      [{ lights: 'all' }, 'lighting.lights must be an array'],
       [{ lights: Array.from({ length: 9 }, () => light) }, 'lighting.lights must contain at most 8 lights'],
       [{ lights: [null] }, 'lighting.lights[0] must be an object'],
       [{ lights: [{ ...light, intensity: 2 }] }, 'lighting.lights[0] contains unknown property "intensity"'],
@@ -647,7 +670,55 @@ describe('image request serialization', () => {
       [{ lights: [], ambient: 4.1 }, 'lighting.ambient must be between 0 and 4'],
       [{ lights: [], ambient: 'dim' }, 'lighting.ambient must be a finite number'],
       [{ lights: [], exposure: 0 }, 'lighting.exposure must be between 0.01 and 16'],
-      [{ lights: [], environment: 'sunset' }, 'lighting.environment must be studio or none'],
+      [
+        { lights: [], environment: 'sunset' },
+        'lighting.environment must be studio, none or an environment object',
+      ],
+      [
+        { headlamp: {}, lights: Array.from({ length: 8 }, () => light) },
+        'lighting.lights must contain at most 7 lights beside the headlamp',
+      ],
+      [{ headlamp: 'on' }, 'lighting.headlamp must be an object'],
+      [{ headlamp: { leftOffset: 1 } }, 'lighting.headlamp contains unknown property "leftOffset"'],
+      [{ headlamp: { intensity: 33 } }, 'lighting.headlamp.intensity must be between 0 and 32'],
+      [{ headlamp: { rightOffset: 65 } }, 'lighting.headlamp.rightOffset must be between -64 and 64'],
+      [{ headlamp: { upOffset: Number.NaN } }, 'lighting.headlamp.upOffset must be a finite number'],
+      [{ environment: { glow: 1 } }, 'lighting.environment contains unknown property "glow"'],
+      [{ environment: { intensity: 17 } }, 'lighting.environment.intensity must be between 0 and 16'],
+      [{ environment: { cards: {} } }, 'lighting.environment.cards must be an array'],
+      [
+        { environment: { cards: Array.from({ length: 17 }, () => card) } },
+        'lighting.environment.cards must contain at most 16 cards',
+      ],
+      [{ environment: { cards: [null] } }, 'lighting.environment.cards[0] must be an object'],
+      [
+        { environment: { cards: [{ ...card, form: 'circle' }] } },
+        'lighting.environment.cards[0] contains unknown property "form"',
+      ],
+      [
+        { environment: { cards: [card, { ...card, position: [0, 0, 65] }] } },
+        'lighting.environment.cards[1].position must contain three numbers between -64 and 64',
+      ],
+      [
+        { environment: { cards: [{ ...card, position: [0, 0, 0] }] } },
+        'lighting.environment.cards[0].position must not be the scene center',
+      ],
+      [
+        { environment: { cards: [{ ...card, size: [1, 0] }] } },
+        'lighting.environment.cards[0].size must contain two numbers above 0 and at most 64',
+      ],
+      [
+        { environment: { cards: [{ ...card, size: [1] }] } },
+        'lighting.environment.cards[0].size must contain two numbers above 0 and at most 64',
+      ],
+      [
+        { environment: { cards: [{ ...card, intensity: 4097 }] } },
+        'lighting.environment.cards[0].intensity must be between 0 and 4096',
+      ],
+      [
+        { environment: { cards: [{ ...card, rotation: [0, 'x', 0] }] } },
+        'lighting.environment.cards[0].rotation must contain three finite numbers',
+      ],
       [{ lights: [], space: 'screen' }, 'lighting.space must be view or world'],
     ];
     for (const [lighting, message] of invalid) {

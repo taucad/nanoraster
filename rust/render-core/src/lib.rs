@@ -148,22 +148,88 @@ pub struct ResolvedLight {
     pub color: [f32; 3],
 }
 
+/// A camera-relative directional key, placed like the Tau viewer's headlamp:
+/// the light sits `right_offset` scene radii to the camera's right and
+/// `up_offset` above it, aimed two radii ahead of the camera. Only its
+/// direction matters, so it is `(right_offset, up_offset, 2)` in view space
+/// whatever the scene's size, distance or projection.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Headlamp {
+    /// Linear radiance of the white light.
+    pub intensity: f32,
+    pub right_offset: f32,
+    pub up_offset: f32,
+}
+
+impl Headlamp {
+    /// The Tau viewer's `headlampBaseIntensity` and `defaultHeadlampConfig`.
+    pub const VIEWER: Self = Self {
+        intensity: 1.5,
+        right_offset: 2.0,
+        up_offset: 2.0,
+    };
+
+    /// View-space direction from the surface toward the light (unnormalised).
+    #[must_use]
+    pub fn direction(&self) -> [f32; 3] {
+        [self.right_offset, self.up_offset, 2.0]
+    }
+}
+
+/// One rectangular emitter of a card environment — a drei `Lightformer` with
+/// `form="rect"`. Units are scene radii in the environment's own frame, which
+/// is view space (x right, y up, z toward the viewer): the environment turns
+/// with the camera, as the viewer's does. Because the environment is captured
+/// from the scene centre, only the angles cards subtend matter.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LightCard {
+    pub position: [f32; 3],
+    /// Width and height of the card.
+    pub size: [f32; 2],
+    /// Linear radiance of the card's face.
+    pub intensity: f32,
+    /// Euler XYZ rotation in radians; `None` turns the card's face toward the
+    /// centre, as `Lightformer`'s default target does.
+    pub rotation: Option<[f32; 3]>,
+}
+
+/// Environment radiance: Three.js's neutral room (`RoomEnvironment`), or one
+/// prefiltered from light cards.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EnvironmentSource {
+    Room,
+    Cards(Vec<LightCard>),
+}
+
 /// A validated lighting rig, uploaded verbatim into the `Frame` uniform.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedLighting {
-    /// At most [`MAX_LIGHTS`]; empty renders from the environment alone.
+    /// Directional lights beside the headlamp; together at most [`MAX_LIGHTS`].
     pub lights: Vec<ResolvedLight>,
+    /// Camera-relative key light; `None` when switched off.
+    pub headlamp: Option<Headlamp>,
     /// Flat multiplier on the diffuse colour.
     pub ambient: f32,
-    /// Whether the studio environment contributes (specular *and* diffuse).
+    /// Whether the environment contributes (specular *and* diffuse).
     pub environment: bool,
+    /// Environment radiance source, prefiltered like Three.js's PMREM.
+    pub environment_source: EnvironmentSource,
+    /// Multiplier on environment radiance (Three's `environmentIntensity`).
+    pub environment_intensity: f32,
     pub space: LightingSpace,
     /// Linear multiplier applied before tone mapping.
     pub exposure: f32,
 }
 
-/// Uniform-array capacity for [`ResolvedLighting::lights`].
+/// The viewer's dark-scheme ambient irradiance, `0.1 × 1.15`, as the Lambert
+/// multiplier `fs_mesh` applies to the diffuse colour.
+const VIEWER_AMBIENT: f32 = 0.1 * 1.15 / std::f32::consts::PI;
+
+/// Uniform-array capacity for the headlamp and [`ResolvedLighting::lights`].
 pub const MAX_LIGHTS: usize = 8;
+
+/// Most cards one card environment may carry.
+pub const MAX_LIGHT_CARDS: usize = 16;
 
 /// Source glTF primitive instance selected for presentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -266,20 +332,43 @@ pub const MAX_SECTION_PLANES: usize = 8;
 impl ResolvedLighting {
     /// The studio preset — the one definition of the built-in rig. `fs_mesh`
     /// carries no lighting literals of its own; it reads these through the
-    /// uniform. Matches Tau's neutral-room editing profile: one view-space
-    /// headlamp and ambient irradiance converted to a Lambert multiplier.
+    /// uniform. Matches the Tau viewer's default dark-scheme lighting: the
+    /// headlamp, ambient `0.1` times the dark-scheme boost `1.15` converted
+    /// to a Lambert multiplier, and the neutral room at intensity 1.
     #[must_use]
     pub fn studio() -> Self {
         Self {
-            lights: vec![ResolvedLight {
-                direction: [1.0; 3],
-                color: [1.5; 3],
-            }],
-            ambient: 0.1 / std::f32::consts::PI,
+            lights: Vec::new(),
+            headlamp: Some(Headlamp::VIEWER),
+            ambient: VIEWER_AMBIENT,
             environment: true,
+            environment_source: EnvironmentSource::Room,
+            environment_intensity: 1.0,
             space: LightingSpace::View,
             exposure: 1.0,
         }
+    }
+
+    /// The headlamp then the rig's lights, each as a view-space direction
+    /// (unnormalised) and linear colour, ready for the `Frame` uniform.
+    pub(crate) fn view_lights(
+        &self,
+        world_to_view: impl Fn([f32; 3]) -> [f32; 3],
+    ) -> Vec<([f32; 3], [f32; 3])> {
+        let to_view = |direction| match self.space {
+            LightingSpace::View => direction,
+            LightingSpace::World => world_to_view(direction),
+        };
+        self.headlamp
+            .map(|headlamp| (headlamp.direction(), [headlamp.intensity; 3]))
+            .into_iter()
+            .chain(
+                self.lights
+                    .iter()
+                    .map(|light| (to_view(light.direction), light.color)),
+            )
+            .take(MAX_LIGHTS)
+            .collect()
     }
 }
 
@@ -1132,10 +1221,22 @@ mod tests {
         assert!(!options.scale_bar);
         assert_eq!(options.lighting, ResolvedLighting::studio());
         assert_eq!(ResolvedLighting::default(), ResolvedLighting::studio());
-        assert_eq!(options.lighting.lights.len(), 1);
-        assert_eq!(options.lighting.ambient, 0.1 / std::f32::consts::PI);
+        // The Tau viewer's default dark-scheme rig: headlamp 1.5 offset two
+        // radii right and up, ambient 0.1 x 1.15, neutral room at 1, exposure 1.
+        assert!(options.lighting.lights.is_empty());
+        assert_eq!(
+            options.lighting.headlamp,
+            Some(Headlamp {
+                intensity: 1.5,
+                right_offset: 2.0,
+                up_offset: 2.0
+            })
+        );
+        assert_eq!(options.lighting.ambient, 0.1 * 1.15 / std::f32::consts::PI);
         assert_eq!(options.lighting.exposure, 1.0);
         assert!(options.lighting.environment);
+        assert_eq!(options.lighting.environment_source, EnvironmentSource::Room);
+        assert_eq!(options.lighting.environment_intensity, 1.0);
         assert_eq!(options.lighting.space, LightingSpace::View);
         assert_eq!(
             options.world_axes,
