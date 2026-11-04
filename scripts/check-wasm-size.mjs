@@ -248,6 +248,7 @@ const sizes = {
 // local raw 2,432,898 -> 2,441,746 (+8,848), gzip-9 1,138,912 -> 1,142,760
 // (+3,848), Brotli-11 943,800 -> 946,943 (+3,143). Admit the measured raw and
 // Brotli deltas only; the gzip ceiling and compressor allowances are unchanged.
+// LIGHTING-PLACEHOLDER
 const ceilings = { raw: 2_442_559, gzip9: 1_137_170, brotli11: 943_670 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
