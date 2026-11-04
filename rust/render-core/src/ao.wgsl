@@ -18,8 +18,7 @@ struct AoFrame {
 @group(0) @binding(1) var ao_depth: texture_2d<f32>;
 @group(0) @binding(2) var ao_input: texture_2d<f32>;
 @group(0) @binding(3) var ao_sampler: sampler;
-@group(0) @binding(4) var blue_noise: texture_2d<f32>;
-@group(0) @binding(5) var ao_normals: texture_2d<f32>;
+@group(0) @binding(4) var ao_normals: texture_2d<f32>;
 
 @vertex
 fn vs_ao(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {

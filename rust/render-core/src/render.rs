@@ -181,7 +181,6 @@ struct AoPipelines {
     upsample: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    blue_noise: wgpu::TextureView,
     frame_buffer: wgpu::Buffer,
 }
 
@@ -1423,7 +1422,6 @@ const AO_NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
 
 fn create_ao_pipelines(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
     mesh_shader: &wgpu::ShaderModule,
     mesh_layout: &wgpu::PipelineLayout,
     texture_mask: u32,
@@ -1547,16 +1545,6 @@ fn create_ao_pipelines(
                 binding: 4,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 5,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: false },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
@@ -1615,28 +1603,6 @@ fn create_ao_pipelines(
             mag_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         }),
-        // Decoded from n8ao 1.10.2 src/BlueNoise.js (project LICENSE: CC0-1.0).
-        blue_noise: device
-            .create_texture_with_data(
-                queue,
-                &wgpu::TextureDescriptor {
-                    label: Some("N8AO blue noise (CC0-1.0)"),
-                    size: wgpu::Extent3d {
-                        width: 128,
-                        height: 128,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                },
-                wgpu::util::TextureDataOrder::LayerMajor,
-                include_bytes!("../assets/n8ao-blue-noise.bin"),
-            )
-            .create_view(&wgpu::TextureViewDescriptor::default()),
         frame_buffer: device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("AO frame"),
             size: 176,
@@ -2488,7 +2454,6 @@ impl Renderer {
         self.counters.pipeline_sets += 1;
         self.state.ao_pipelines = Some(create_ao_pipelines(
             &self.state.device,
-            &self.state.queue,
             &self.state.shader,
             &self.state.pipeline_layout,
             texture_mask,
@@ -3103,10 +3068,6 @@ impl Renderer {
                         },
                         wgpu::BindGroupEntry {
                             binding: 4,
-                            resource: wgpu::BindingResource::TextureView(&pipelines.blue_noise),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 5,
                             resource: wgpu::BindingResource::TextureView(&ao_targets.normal_view),
                         },
                     ],
