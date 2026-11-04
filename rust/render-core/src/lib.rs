@@ -473,9 +473,7 @@ fn validate_options(options: &RenderOptions) -> Result<(), RenderError> {
             "lineWidth must be between 0.25 and 16".into(),
         ));
     }
-    if let Some(ao) = options.ao {
-        options::validate_ao(&ao)?;
-    }
+    options.ao.as_ref().map_or(Ok(()), options::validate_ao)?;
     if let Some(primitives) = &options.visible_primitives {
         let mut seen = std::collections::HashSet::with_capacity(primitives.len());
         if let Some(duplicate) = primitives

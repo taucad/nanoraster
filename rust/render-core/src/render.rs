@@ -1524,7 +1524,7 @@ fn create_ao_pipelines(
         label: Some("AO estimate and denoise"),
         source: wgpu::ShaderSource::Wgsl(include_str!("ao.wgsl").into()),
     });
-    let fullscreen = |entry: &str, blur_index: Option<f64>| {
+    let fullscreen = |entry: &str| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(entry),
             layout: Some(&pipeline_layout),
@@ -1537,10 +1537,7 @@ fn create_ao_pipelines(
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some(entry),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &blur_index.map_or(Vec::new(), |index| vec![("BLUR_INDEX", index)]),
-                    ..Default::default()
-                },
+                compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: wgpu::TextureFormat::Rgba8Unorm,
                     blend: None,
@@ -1558,9 +1555,9 @@ fn create_ao_pipelines(
         texture_mask,
         depth_mesh,
         depth_constant_mesh,
-        estimate: fullscreen("fs_ao_estimate", None),
-        denoise: fullscreen("fs_ao_blur", None),
-        upsample: fullscreen("fs_ao_upsample", None),
+        estimate: fullscreen("fs_ao_estimate"),
+        denoise: fullscreen("fs_ao_blur"),
+        upsample: fullscreen("fs_ao_upsample"),
         layout,
         sampler: device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("AO denoise filtering"),
