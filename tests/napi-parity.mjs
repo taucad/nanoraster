@@ -520,9 +520,10 @@ const isometricPerspective = await native.renderImage(
 // of the studio preset — omitted, named, and written out — are the same bytes.
 const studioLights = [{ direction: [1, 1, 1], color: [1.5, 1.5, 1.5] }];
 const studioSpelledOut = {
-  lights: studioLights,
-  ambient: 0.1 / Math.PI,
-  environment: 'studio',
+  lights: [],
+  headlamp: { intensity: 1.5, rightOffset: 2, upOffset: 2 },
+  ambient: (0.1 * 1.15) / Math.PI,
+  environment: { intensity: 1 },
   space: 'view',
   exposure: 1,
 };
@@ -547,6 +548,8 @@ const renderLitBatch = async (lighting) =>
 const studioSpellings = [
   { name: 'preset name', lighting: 'studio' },
   { name: 'spelled-out values', lighting: studioSpelledOut },
+  // A lights array replaces the headlamp; the same light restores the bytes.
+  { name: 'headlamp as a light', lighting: { lights: studioLights, ambient: (0.1 * 1.15) / Math.PI } },
 ];
 const studioOmitted = await renderLit({});
 const studioBatchOmitted = await renderLitBatch({});

@@ -98,7 +98,7 @@ export type RenderLightingRig = {
    * light's intensity divided by π. The default is the Tau viewer's
    * dark-scheme ambient, `0.1 × 1.15 / π`.
    *
-   * @default 0.036605636
+   * @default 0.036605637
    */
   readonly ambient?: number;
   /**
