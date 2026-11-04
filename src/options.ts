@@ -311,6 +311,15 @@ type RenderImageSharedOptions = {
   readonly lighting?: RenderLighting;
   /** Opaque-surface contact shadows. Use intensity 0 to disable. @default enabled */
   readonly ao?: RenderAmbientOcclusion;
+  /**
+   * Display transform from scene radiance to output colour, matching the three.js
+   * operators: `'neutral'` (Khronos PBR Neutral), `'aces'` (ACES
+   * Filmic), `'linear'` (exposure, then clamp) or `'none'` (radiance as it
+   * is; like three's `NoToneMapping` it ignores `lighting.exposure`).
+   *
+   * @default 'neutral'
+   */
+  readonly toneMapping?: 'neutral' | 'aces' | 'linear' | 'none';
 };
 
 /** The singular camera plus the top-left label, whose presence is its switch. */
@@ -616,6 +625,7 @@ const singularKeys = new Set([
   'scaleBar',
   'lighting',
   'ao',
+  'toneMapping',
 ]);
 
 const pluralKeys = new Set([
@@ -635,6 +645,7 @@ const pluralKeys = new Set([
   'scaleBar',
   'lighting',
   'ao',
+  'toneMapping',
   'timings',
   'views',
 ]);
@@ -1279,6 +1290,7 @@ const validateCameraCommon = (options: CameraCommonOptions, annotated: boolean):
   validateBackground(options.lineColor, 'lineColor');
   validateLighting(options.lighting);
   validateAo(options.ao);
+  assertOptionalEnum(options.toneMapping, 'toneMapping', ['neutral', 'aces', 'linear', 'none']);
   validatePresentation(options);
 };
 
@@ -1324,6 +1336,7 @@ export const toImageRequestJson = (options: RenderImageOptions): string => {
     scaleBar: options.scaleBar,
     lighting: options.lighting,
     ao: options.ao,
+    toneMapping: options.toneMapping,
   });
 };
 
@@ -1427,6 +1440,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     scaleBar: options.scaleBar,
     lighting: options.lighting,
     ao: options.ao,
+    toneMapping: options.toneMapping,
     timings: options.timings,
     views: normalizedViews,
   });

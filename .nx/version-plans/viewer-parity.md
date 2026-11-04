@@ -7,3 +7,5 @@ Match the Tau viewer's ambient occlusion: a port of three's GTAO with edge-aware
 Add `lineColor` to replace every authored line colour with one sRGB colour.
 
 Add the GTAO controls `ao.thicknessRatio`, `ao.denoiseDepthTolerance`, `ao.samples` and `ao.resolutionScale`. Their defaults are the viewer's values and reproduce the default output exactly.
+
+Add `toneMapping`: `'neutral'` (the default, unchanged output), `'aces'`, `'linear'` or `'none'`, matching three.js's operators.

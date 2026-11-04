@@ -141,6 +141,25 @@ describe('image request serialization', () => {
     }
   });
 
+  it('should serialize every tone mapping operator and reject unknown ones by name', () => {
+    for (const toneMapping of ['neutral', 'aces', 'linear', 'none'] as const) {
+      expect(parse(toImageRequestJson({ format: 'raw', toneMapping }))).toEqual({
+        format: 'raw',
+        toneMapping,
+      });
+      expect(parse(toImagesRequestJson({ format: 'raw', toneMapping, views: [{ id: 'front' }] }))).toEqual({
+        format: 'raw',
+        toneMapping,
+        views: [{ id: 'front' }],
+      });
+    }
+    for (const invalid of ['agx', 'ACES', null, 1]) {
+      expect(() =>
+        toImageRequestJson({ format: 'raw', toneMapping: invalid } as unknown as RenderImageOptions),
+      ).toThrow('toneMapping must be neutral or aces or linear or none');
+    }
+  });
+
   it('should serialize the GTAO controls and name each one it rejects', () => {
     const ao = { thicknessRatio: 4, denoiseDepthTolerance: 0.5, samples: 30, resolutionScale: 1 };
     expect(parse(toImageRequestJson({ format: 'raw', ao }))).toEqual({ format: 'raw', ao });

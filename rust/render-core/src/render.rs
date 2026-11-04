@@ -947,7 +947,8 @@ fn position_clip_planes(
 // The one definition of the `Frame` uniform (see `shader.wgsl`): two mat4 and
 // a viewport vec4, then eight Lights at a 32-byte stride, a 16-byte lighting
 // tail, `MAX_SECTION_PLANES` section planes, a 16-byte section tail, 16-byte
-// background, 16-byte AO control and 16-byte line colour. 608 bytes at eight planes.
+// background, 16-byte display control (AO exponent, tone mapping operator) and
+// 16-byte line colour. 608 bytes at eight planes.
 const FRAME_LIGHTS: usize = 36;
 const FRAME_LIGHT_STRIDE: usize = 8;
 const FRAME_TAIL: usize = 100;
@@ -995,6 +996,12 @@ fn frame_uniform(camera: CameraState, options: &RenderOptions) -> [f32; FRAME_FL
     ]);
     // The AO passes apply the visibility exponent before denoising, as GTAO does.
     data[FRAME_SECTION_TAIL + 8] = 1.0;
+    data[FRAME_SECTION_TAIL + 9] = f32::from_bits(match options.tone_mapping {
+        crate::ToneMapping::Neutral => 0u32,
+        crate::ToneMapping::Aces => 1,
+        crate::ToneMapping::Linear => 2,
+        crate::ToneMapping::None => 3,
+    });
     // Linear line colour; a negative alpha keeps each line's authored material colour.
     data[FRAME_SECTION_TAIL + 12..FRAME_SECTION_TAIL + 16].copy_from_slice(
         &options.line_color.map_or([0.0, 0.0, 0.0, -1.0], |color| {
@@ -4906,6 +4913,118 @@ mod tests {
             "bright emitter must tone-map to white: {pixel:?}"
         );
         renderer.take_uncaptured().expect("no uncaptured GPU error");
+    }
+
+    /// three.js r184 `ToneMappingFunctions.js`, transcribed in f64 as the
+    /// golden reference: `neutralToneMapping`, `acesFilmicToneMapping` (the TSL
+    /// fit, whose `mat3` literals are row-major), `linearToneMapping`, and
+    /// `NoToneMapping`, which skips exposure.
+    fn three_tone_map(operator: crate::ToneMapping, color: [f64; 3], exposure: f64) -> [f64; 3] {
+        let c = color.map(|channel| channel * exposure);
+        match operator {
+            crate::ToneMapping::None => color,
+            crate::ToneMapping::Linear => c.map(|channel| channel.clamp(0.0, 1.0)),
+            crate::ToneMapping::Aces => {
+                let product = |m: [[f64; 3]; 3], v: [f64; 3]| {
+                    m.map(|row| row[0] * v[0] + row[1] * v[1] + row[2] * v[2])
+                };
+                let v = product(
+                    [
+                        [0.59719, 0.35458, 0.04823],
+                        [0.07600, 0.90834, 0.01566],
+                        [0.02840, 0.13383, 0.83777],
+                    ],
+                    c.map(|channel| channel / 0.6),
+                );
+                let fitted = v.map(|x| {
+                    (x * (x + 0.0245786) - 0.000090537)
+                        / (x * ((x + 0.4329510) * 0.983729) + 0.238081)
+                });
+                product(
+                    [
+                        [1.60475, -0.53108, -0.07367],
+                        [-0.10208, 1.10813, -0.00605],
+                        [-0.00327, -0.07276, 1.07602],
+                    ],
+                    fitted,
+                )
+                .map(|channel| channel.clamp(0.0, 1.0))
+            }
+            crate::ToneMapping::Neutral => {
+                let start = 0.8 - 0.04;
+                let x = c[0].min(c[1]).min(c[2]);
+                let offset = if x < 0.08 { x - 6.25 * x * x } else { 0.04 };
+                let c = c.map(|channel| channel - offset);
+                let peak = c[0].max(c[1]).max(c[2]);
+                if peak < start {
+                    return c;
+                }
+                let d = 1.0 - start;
+                let new_peak = 1.0 - d * d / (peak + d - start);
+                let c = c.map(|channel| channel * new_peak / peak);
+                let g = 1.0 - 1.0 / (0.15 * (peak - new_peak) + 1.0);
+                c.map(|channel| channel + (new_peak - channel) * g)
+            }
+        }
+    }
+
+    #[test]
+    fn tone_mapping_operators_match_three_formulas() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let encode = |linear: f64| {
+            let linear = linear.clamp(0.0, 1.0);
+            let srgb = if linear <= 0.003_130_8 {
+                linear * 12.92
+            } else {
+                1.055 * linear.powf(1.0 / 2.4) - 0.055
+            };
+            (srgb * 255.0).round() as i32
+        };
+        let center = (48 * 96 + 48) * 4;
+        let mut outputs = Vec::new();
+        for operator in [
+            crate::ToneMapping::Neutral,
+            crate::ToneMapping::Aces,
+            crate::ToneMapping::Linear,
+            crate::ToneMapping::None,
+        ] {
+            for (base, exposure) in [
+                ([0.18, 0.4, 0.7], 1.0),
+                ([0.18, 0.4, 0.7], 3.0),
+                ([0.9, 0.5, 0.05], 0.6),
+                // A zero channel exercises the linear segment of the sRGB encode.
+                ([0.0, 0.03, 0.9], 2.0),
+            ] {
+                let mut material = Material {
+                    base_color: [base[0], base[1], base[2], 1.0],
+                    ..Material::default()
+                };
+                material.anisotropy[3] = 1.0;
+                let mut options = physical_options();
+                options.ao = None;
+                options.tone_mapping = operator;
+                options.lighting.exposure = exposure;
+                let image = render_test_scene(&mut renderer, physical_sphere(material), options);
+                let expected = three_tone_map(operator, base.map(f64::from), f64::from(exposure));
+                for (channel, &linear) in expected.iter().enumerate() {
+                    let actual = i32::from(image.rgba[center + channel]);
+                    let want = encode(linear);
+                    assert!(
+                        actual.abs_diff(want) <= 1,
+                        "{operator:?} {base:?}x{exposure} channel {channel}: {actual} vs {want}"
+                    );
+                }
+                outputs.push(image.rgba[center..center + 3].to_vec());
+            }
+        }
+        // The operators are distinguishable on these inputs: each changes the output.
+        for (index, output) in outputs.iter().enumerate().skip(4) {
+            assert_ne!(output, &outputs[index % 4], "case {index} matches neutral");
+        }
+        renderer
+            .take_uncaptured()
+            .expect("tone mapping GPU validation");
     }
 
     #[test]

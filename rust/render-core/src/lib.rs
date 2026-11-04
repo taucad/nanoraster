@@ -158,7 +158,7 @@ pub struct ResolvedLighting {
     /// Whether the studio environment contributes (specular *and* diffuse).
     pub environment: bool,
     pub space: LightingSpace,
-    /// Linear multiplier applied before the PBR Neutral tone map.
+    /// Linear multiplier applied before tone mapping.
     pub exposure: f32,
 }
 
@@ -243,6 +243,21 @@ pub fn ao_extent(width: u32, height: u32, resolution_scale: f32) -> (u32, u32) {
     (scaled(width), scaled(height))
 }
 
+/// Display transform from scene radiance to output colour: three.js r184's
+/// WebGPU tone-mapping operators, as the Tau viewer applies them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToneMapping {
+    /// Khronos PBR Neutral (`NeutralToneMapping`).
+    #[default]
+    Neutral,
+    /// ACES Filmic (`ACESFilmicToneMapping`, three's TSL fit).
+    Aces,
+    /// Exposure, then clamp to `[0, 1]` (`LinearToneMapping`).
+    Linear,
+    /// Radiance unchanged, ignoring exposure (`NoToneMapping`).
+    None,
+}
+
 /// Maximum number of simultaneous retained-half-space planes. Eight, so an
 /// axis-aligned box crop (six faces) still has two planes spare; the limit is
 /// the `Frame` uniform's plane array, not the shader's clipping arithmetic.
@@ -312,6 +327,8 @@ pub struct RenderOptions {
     /// Screen-space contact shadows; enabled by default. `None` disables AO
     /// and its estimator pass.
     pub ao: Option<AmbientOcclusion>,
+    /// Display transform; defaults to Khronos PBR Neutral.
+    pub tone_mapping: ToneMapping,
     /// Caller +X/+Y/+Z basis vectors expressed in glTF world coordinates.
     pub world_axes: [[f32; 3]; 3],
 }
@@ -334,6 +351,7 @@ impl Default for RenderOptions {
             scale_bar: false,
             lighting: ResolvedLighting::studio(),
             ao: Some(AmbientOcclusion::default()),
+            tone_mapping: ToneMapping::Neutral,
             world_axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         }
     }

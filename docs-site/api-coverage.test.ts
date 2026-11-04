@@ -63,6 +63,7 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'scaleBar',
     'lighting',
     'ao',
+    'toneMapping',
     'label',
     'camera',
   ],
@@ -83,6 +84,7 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'scaleBar',
     'lighting',
     'ao',
+    'toneMapping',
     'timings',
     'views',
   ],
@@ -143,6 +145,7 @@ const defaults = {
   scaleBar: 'false',
   lighting: "'studio'",
   ao: 'enabled',
+  toneMapping: "'neutral'",
 } as const;
 
 const generateDoc = async (name: (typeof tableNames)[number]): Promise<GeneratedDoc> => {
@@ -287,8 +290,9 @@ describe('static agent documentation', () => {
     // Public AO and per-view selection fields bring the generated page to 835,243 bytes;
     // the per-source section timings table brings it to 860,310 on CI (855,064 locally);
     // the `lineColor` option brings it to 863,998 on CI;
-    // the GTAO controls add 14,412 bytes (858,795 to 873,207 locally), about 878,410 on CI.
-    expect(statSync(apiHtml).size).toBeLessThan(879_000);
+    // the GTAO controls add 14,412 bytes (858,795 to 873,207 locally), about 878,410 on CI;
+    // `toneMapping` adds 9,807 (883,014 locally), about 888,217 on CI.
+    expect(statSync(apiHtml).size).toBeLessThan(889_000);
 
     const optionsHtml = readFileSync(apiHtml, 'utf8');
     expect(optionsHtml).toContain('aria-label="RenderImageOptions properties"');

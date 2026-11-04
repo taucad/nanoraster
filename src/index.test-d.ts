@@ -477,3 +477,13 @@ void renderImages(glb, {
   },
   views: [{ id: 'front' }],
 });
+const toneMapped = { format: 'png', toneMapping: 'aces' } as const satisfies ImageOptions;
+expectTypeOf(toneMapped.toneMapping).toExtend<ImageOptions['toneMapping']>();
+expectTypeOf<ImagesOptions['toneMapping']>().toEqualTypeOf<
+  'neutral' | 'aces' | 'linear' | 'none' | undefined
+>();
+void ({
+  format: 'png',
+  // @ts-expect-error unknown tone mapping operator
+  toneMapping: 'agx',
+} as const satisfies ImageOptions);

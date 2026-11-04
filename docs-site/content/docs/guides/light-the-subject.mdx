@@ -143,6 +143,11 @@ The maximum dimension is 8192, subject to the initialized adapter's texture and
 buffer limits and available memory. A square 8192×8192 export has substantially
 higher storage and encoding costs than standard 7680×4320 8K.
 
+## Tone mapping
+
+`toneMapping` picks three.js's `'neutral'` (default), `'aces'`, `'linear'` or
+`'none'` operator; `'none'` ignores exposure.
+
 ## Variations
 
 **Lighting is shared across a batch.** `renderImages` takes one rig for the

@@ -4,7 +4,7 @@ use crate::encode::ImageFormat;
 use crate::{
     AmbientOcclusion, CameraProjection, ClipPlanes, LightingSpace, MAX_LIGHTS, MAX_SECTION_PLANES,
     PrimitiveRef, RenderCamera, RenderError, RenderOptions, ResolvedLight, ResolvedLighting,
-    SectionPlane, Sections,
+    SectionPlane, Sections, ToneMapping,
 };
 use serde::{Deserialize, Deserializer, de, de::DeserializeOwned};
 use std::collections::HashSet;
@@ -320,6 +320,7 @@ pub struct RenderRequest {
     pub lighting: Option<LightingRequest>,
     #[serde(default, deserialize_with = "present_ao")]
     pub ao: Option<AoRequest>,
+    pub tone_mapping: Option<String>,
 }
 
 /// Wire shape for one identified camera in a batch: camera identity plus
@@ -358,6 +359,7 @@ pub struct RenderImagesRequest {
     pub lighting: Option<LightingRequest>,
     #[serde(default, deserialize_with = "present_ao")]
     pub ao: Option<AoRequest>,
+    pub tone_mapping: Option<String>,
     pub timings: Option<bool>,
     pub views: Vec<RenderImageViewRequest>,
 }
@@ -423,6 +425,7 @@ struct CommonRequest<'a> {
     scale_bar: Option<bool>,
     lighting: Option<&'a LightingRequest>,
     ao: Option<&'a AoRequest>,
+    tone_mapping: Option<&'a str>,
 }
 
 impl RenderRequest {
@@ -464,6 +467,7 @@ impl RenderRequest {
             scale_bar: self.scale_bar,
             lighting: self.lighting.as_ref(),
             ao: self.ao.as_ref(),
+            tone_mapping: self.tone_mapping.as_deref(),
         }
     }
 }
@@ -576,6 +580,7 @@ impl RenderImagesRequest {
             scale_bar: self.scale_bar,
             lighting: self.lighting.as_ref(),
             ao: self.ao.as_ref(),
+            tone_mapping: self.tone_mapping.as_deref(),
         }
     }
 }
@@ -695,6 +700,17 @@ fn resolve_common(
         })
         .transpose()?
         .or(defaults.ao);
+    let tone_mapping = match request.tone_mapping {
+        None | Some("neutral") => ToneMapping::Neutral,
+        Some("aces") => ToneMapping::Aces,
+        Some("linear") => ToneMapping::Linear,
+        Some("none") => ToneMapping::None,
+        Some(other) => {
+            return Err(RenderError::Parse(format!(
+                "toneMapping {other:?} not neutral/aces/linear/none"
+            )));
+        }
+    };
     let visible_primitives = request
         .visible_primitives
         .map(|primitives| {
@@ -775,6 +791,7 @@ fn resolve_common(
             scale_bar,
             lighting,
             ao,
+            tone_mapping,
             world_axes: world.axes,
             ..defaults
         },
@@ -1439,6 +1456,42 @@ mod tests {
             assert!(validate_ao(&invalid).is_err());
         }
         assert!(validate_ao(&AmbientOcclusion::default()).is_ok());
+    }
+
+    #[test]
+    fn tone_mapping_resolves_every_operator_and_names_unknown_ones() {
+        let (default, _) = RenderRequest::from_json(r#"{"format":"raw"}"#)
+            .expect("request")
+            .resolve()
+            .expect("default tone mapping");
+        assert_eq!(default.tone_mapping, ToneMapping::Neutral);
+        for (name, expected) in [
+            ("neutral", ToneMapping::Neutral),
+            ("aces", ToneMapping::Aces),
+            ("linear", ToneMapping::Linear),
+            ("none", ToneMapping::None),
+        ] {
+            let (single, _) =
+                RenderRequest::from_json(&format!(r#"{{"format":"raw","toneMapping":"{name}"}}"#))
+                    .expect("request")
+                    .resolve()
+                    .expect("tone mapping");
+            assert_eq!(single.tone_mapping, expected);
+            let (batch, _, _, _) = RenderImagesRequest::from_json(&format!(
+                r#"{{"format":"raw","toneMapping":"{name}","views":[{{"id":"front"}}]}}"#
+            ))
+            .expect("batch request")
+            .resolve()
+            .expect("batch tone mapping");
+            assert_eq!(batch.tone_mapping, expected);
+        }
+        let error = RenderRequest::from_json(r#"{"format":"raw","toneMapping":"agx"}"#)
+            .and_then(|request| request.resolve())
+            .expect_err("unknown operator");
+        assert_eq!(
+            error.to_string(),
+            r#"parse: toneMapping "agx" not neutral/aces/linear/none"#
+        );
     }
 
     #[test]

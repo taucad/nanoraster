@@ -25,7 +25,9 @@ struct Frame {
     clip_lines: u32,
     orthographic: u32,
     background: vec4<f32>,
-    ao_control: vec4<f32>,
+    // x = AO visibility exponent; y = tone mapping operator (u32 bits:
+    // 0 neutral, 1 ACES Filmic, 2 linear, 3 none).
+    display: vec4<f32>,
     // Linear line colour override; a negative alpha keeps authored colours.
     line_color: vec4<f32>,
 }
@@ -293,8 +295,9 @@ fn reconstructed_ao(uv: vec2<f32>) -> f32 {
 @fragment
 fn fs_screen(in: ScreenOut) -> @location(0) vec4<f32> {
     let color = textureSampleLevel(composite_scene, scene_sampler, in.uv, 0.0);
-    let visibility = pow(reconstructed_ao(in.uv), frame.ao_control.x);
-    let display = tone_map(color.rgb / max(color.a, 0.000001), frame.exposure) * visibility;
+    let visibility = pow(reconstructed_ao(in.uv), frame.display.x);
+    let display = tone_map(color.rgb / max(color.a, 0.000001), frame.exposure,
+        bitcast<u32>(frame.display.y)) * visibility;
     let alpha = color.a + frame.background.a * (1.0 - color.a);
     let premultiplied = display * color.a + frame.background.rgb * frame.background.a * (1.0 - color.a);
     // Cap/edge blending and MSAA still need premultiplied-linear RGB. Readback
