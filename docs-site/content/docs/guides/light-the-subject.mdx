@@ -29,7 +29,7 @@ const image = await renderImage(glb, {
 
 </RenderDemo>
 
-`lights` replaces the studio light outright. It never adds to them.
+Without `headlamp`, `lights` replaces the studio headlamp.
 `direction` points from the surface toward the light, in view space by default
 (`+x` right, `+y` up, `+z` toward the viewer). The rig travels with the
 camera and lights every view the same way. The renderer normalises any
@@ -39,12 +39,9 @@ non-zero vector.
 `ambient` lifts the shadow side. `exposure` scales the rig before the PBR Neutral
 tone map.
 
-The studio preset uses a view-locked neutral room, `ambient: 0.1 / Math.PI`,
-and one direct light:
-
-| Light    | `direction` | `color`           |
-| -------- | ----------- | ----------------- |
-| Headlamp | `[1, 1, 1]` | `[1.5, 1.5, 1.5]` |
+The studio preset is the Tau viewer's: a view-locked neutral room,
+`ambient: 0.115 / Math.PI`, and `headlamp: { intensity: 1.5 }`, lighting from
+`[1, 1, 1]`. `environment: { cards }` swaps the room for rectangular emitters.
 
 ### 2. Render from the environment alone
 

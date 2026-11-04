@@ -480,12 +480,30 @@ shows each field in use.
 
 ### `RenderLightingRig`
 
-A rig replaces the studio lights outright. It inherits every other studio
-value that it leaves out. Directions are view-space by default: `+x` right,
+A rig inherits every studio value it leaves out; `lights` without `headlamp`
+also drops the headlamp. Directions are view-space by default: `+x` right,
 `+y` up, `+z` toward the viewer. `space: 'world'` uses the declared caller
 world.
 
 <auto-type-table path="./props.ts" name="RenderLightingRig" caption="RenderLightingRig properties" />
+
+### `RenderHeadlamp`
+
+The camera-relative key light.
+
+<auto-type-table path="./props.ts" name="RenderHeadlamp" caption="RenderHeadlamp properties" />
+
+### `RenderEnvironment`
+
+Environment intensity, or light cards in place of the neutral room.
+
+<auto-type-table path="./props.ts" name="RenderEnvironment" caption="RenderEnvironment properties" />
+
+### `RenderLightCard`
+
+One rectangular emitter, placed like a drei `Lightformer`.
+
+<auto-type-table path="./props.ts" name="RenderLightCard" caption="RenderLightCard properties" />
 
 ### `RenderLight`
 
@@ -673,24 +691,28 @@ Every bound and pattern that the validator applies, as the exact runtime
 values. Import them instead of restating values, so caller-side checks cannot
 drift.
 
-| Export                                | Runtime value                             | Unit or syntax              | Affected field              |
-| ------------------------------------- | ----------------------------------------- | --------------------------- | --------------------------- |
-| `renderImageDimensionRange`           | `readonly [16, 8192]`                     | pixels                      | `width`, `height`           |
-| `renderImageQualityRange`             | `readonly [0, 1]`                         | normalised encoder quality  | `quality`                   |
-| `renderImageMarginRange`              | `readonly [0, 0.5]`                       | minimum empty fraction      | `camera.margin`             |
-| `renderImageVerticalFieldOfViewRange` | `readonly [1, 179]`                       | degrees                     | `verticalFieldOfView`       |
-| `renderImageZoomRange`                | `readonly [0.01, 100]`                    | magnification               | `zoom`                      |
-| `renderImageLineWidthRange`           | `readonly [0.25, 16]`                     | output pixels               | `lineWidth`                 |
-| `renderImageAnnotatedMinDimension`    | `192`                                     | pixels                      | annotated `width`, `height` |
-| `renderImageLabelMaxLength`           | `64`                                      | Unicode code points         | `label`                     |
-| `renderImageLabelPattern`             | `/^[\u0020-\u007E\u00B5\u2014\u2212]+$/u` | supported characters        | `label`                     |
-| `renderImageViewIdPattern`            | `/^[\dA-Za-z][\w-]{0,63}$/u`              | identifier syntax           | `id`                        |
-| `renderImageBackgroundPattern`        | `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`   | hexadecimal colour          | `background`                |
-| `renderImageMaxLights`                | `8`                                       | lights per rig              | `lighting.lights`           |
-| `renderImageMaxSections`              | `8`                                       | planes per request          | `sections.planes`           |
-| `renderImageLightColorRange`          | `readonly [0, 32]`                        | linear radiance per channel | `lighting.lights[].color`   |
-| `renderImageAmbientRange`             | `readonly [0, 4]`                         | diffuse multiplier          | `lighting.ambient`          |
-| `renderImageExposureRange`            | `readonly [0.01, 16]`                     | linear multiplier           | `lighting.exposure`         |
+| Export                                 | Runtime value                             | Unit or syntax              | Affected field              |
+| -------------------------------------- | ----------------------------------------- | --------------------------- | --------------------------- |
+| `renderImageDimensionRange`            | `readonly [16, 8192]`                     | pixels                      | `width`, `height`           |
+| `renderImageQualityRange`              | `readonly [0, 1]`                         | normalised encoder quality  | `quality`                   |
+| `renderImageMarginRange`               | `readonly [0, 0.5]`                       | minimum empty fraction      | `camera.margin`             |
+| `renderImageVerticalFieldOfViewRange`  | `readonly [1, 179]`                       | degrees                     | `verticalFieldOfView`       |
+| `renderImageZoomRange`                 | `readonly [0.01, 100]`                    | magnification               | `zoom`                      |
+| `renderImageLineWidthRange`            | `readonly [0.25, 16]`                     | output pixels               | `lineWidth`                 |
+| `renderImageAnnotatedMinDimension`     | `192`                                     | pixels                      | annotated `width`, `height` |
+| `renderImageLabelMaxLength`            | `64`                                      | Unicode code points         | `label`                     |
+| `renderImageLabelPattern`              | `/^[\u0020-\u007E\u00B5\u2014\u2212]+$/u` | supported characters        | `label`                     |
+| `renderImageViewIdPattern`             | `/^[\dA-Za-z][\w-]{0,63}$/u`              | identifier syntax           | `id`                        |
+| `renderImageBackgroundPattern`         | `/^#[\dA-Fa-f]{6}(?:[\dA-Fa-f]{2})?$/u`   | hexadecimal colour          | `background`                |
+| `renderImageMaxLights`                 | `8`                                       | lights per rig              | `lighting.lights`           |
+| `renderImageMaxLightCards`             | `16`                                      | cards per environment       | `environment.cards`         |
+| `renderImageRigExtentRange`            | `readonly [-64, 64]`                      | scene radii                 | headlamp offsets, cards     |
+| `renderImageLightCardIntensityRange`   | `readonly [0, 4096]`                      | linear radiance             | `cards[].intensity`         |
+| `renderImageEnvironmentIntensityRange` | `readonly [0, 16]`                        | linear multiplier           | `environment.intensity`     |
+| `renderImageMaxSections`               | `8`                                       | planes per request          | `sections.planes`           |
+| `renderImageLightColorRange`           | `readonly [0, 32]`                        | linear radiance per channel | `lighting.lights[].color`   |
+| `renderImageAmbientRange`              | `readonly [0, 4]`                         | diffuse multiplier          | `lighting.ambient`          |
+| `renderImageExposureRange`             | `readonly [0.01, 16]`                     | linear multiplier           | `lighting.exposure`         |
 
 ```typescript
 import { renderImageDimensionRange } from 'nanoraster';
@@ -752,6 +774,22 @@ the first character.
 ### `renderImageMaxLights`
 
 The directional-light cap for one rig.
+
+### `renderImageMaxLightCards`
+
+The light-card cap for one environment.
+
+### `renderImageRigExtentRange`
+
+Bounds for headlamp offsets and card positions and sizes.
+
+### `renderImageLightCardIntensityRange`
+
+Bounds for a light card's radiance.
+
+### `renderImageEnvironmentIntensityRange`
+
+Bounds for the environment radiance multiplier.
 
 ### `renderImageMaxSections`
 
