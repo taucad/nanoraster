@@ -244,7 +244,11 @@ const sizes = {
 // against 2,425,745 / 1,137,162 / 942,622 on main (+7,846 / +1,702 / +1,659).
 // The three AO passes replace the hemisphere estimator. Admit the measured raw
 // and Brotli deltas only, retaining the 120-byte raw headroom.
-const ceilings = { raw: 2_433_711, gzip9: 1_137_170, brotli11: 940_527 };
+// GTAO controls, `toneMapping` and mesh-normal AO (Rust 1.99.1, 2026-11-04):
+// local raw 2,432,898 -> 2,441,746 (+8,848), gzip-9 1,138,912 -> 1,142,760
+// (+3,848), Brotli-11 943,800 -> 946,943 (+3,143). Admit the measured raw and
+// Brotli deltas only; the gzip ceiling and compressor allowances are unchanged.
+const ceilings = { raw: 2_442_559, gzip9: 1_137_170, brotli11: 943_670 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
