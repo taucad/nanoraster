@@ -189,6 +189,8 @@ struct AoTargets {
     /// Estimate and denoise extent: the output scaled by `resolutionScale`.
     extent: (u32, u32),
     depth_view: wgpu::TextureView,
+    /// View-space shading normals, octahedral RG8, written beside `depth_view`.
+    normal_view: wgpu::TextureView,
     test_depth_view: wgpu::TextureView,
     estimate_view: wgpu::TextureView,
     blur_view: wgpu::TextureView,
@@ -1395,6 +1397,10 @@ fn create_pipeline_pair(
     }
 }
 
+/// The AO depth pass's normal attachment: the viewer's compact octahedral
+/// encoding, two UNORM channels with zero reserved for the background.
+const AO_NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
+
 fn create_ao_pipelines(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -1445,11 +1451,18 @@ fn create_ao_pipelines(
                     constants: &[("TEXTURE_MASK", f64::from(texture_mask))],
                     ..Default::default()
                 },
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::R32Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: AO_NORMAL_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                ],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -1515,6 +1528,16 @@ fn create_ao_pipelines(
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
@@ -2498,6 +2521,12 @@ impl Renderer {
                     wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                     false,
                 ),
+                normal_view: texture(
+                    "AO view normal",
+                    AO_NORMAL_FORMAT,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    false,
+                ),
                 test_depth_view: texture(
                     "AO depth test",
                     DEPTH_FORMAT,
@@ -2921,15 +2950,19 @@ impl Renderer {
                     label: Some("AO opaque depth"),
                     #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
                     timestamp_writes: probe.as_mut().map(|p| p.pass("AO opaque depth")),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &ao_targets.depth_view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
+                    color_attachments: &[&ao_targets.depth_view, &ao_targets.normal_view].map(
+                        |view| {
+                            Some(wgpu::RenderPassColorAttachment {
+                                view,
+                                depth_slice: None,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })
                         },
-                    })],
+                    ),
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                         view: &ao_targets.test_depth_view,
                         depth_ops: Some(wgpu::Operations {
@@ -2995,6 +3028,10 @@ impl Renderer {
                         wgpu::BindGroupEntry {
                             binding: 4,
                             resource: wgpu::BindingResource::TextureView(&pipelines.blue_noise),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: wgpu::BindingResource::TextureView(&ao_targets.normal_view),
                         },
                     ],
                 });
@@ -4247,6 +4284,61 @@ mod tests {
             background: Some([1.0; 4]),
             ..RenderOptions::default()
         }
+    }
+
+    #[test]
+    fn ao_reads_mesh_normals_not_depth_reconstruction() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let options = RenderOptions {
+            width: 128,
+            height: 96,
+            lines: false,
+            ..RenderOptions::default()
+        };
+        // Identical depth, different interpolated normals: depth reconstruction
+        // would see one surface, while the viewer's MRT normals see two.
+        let mut flat = cube_scene();
+        let primitive = &mut flat.meshes[0].primitives[0];
+        primitive.normals.clear();
+        glb::flat_shade(primitive).expect("flat shade");
+        let smooth = cube_scene();
+        let darkening = |renderer: &mut Renderer, scene: glb::Scene| -> Vec<i32> {
+            let off = render_test_scene(
+                renderer,
+                scene.clone(),
+                RenderOptions {
+                    ao: None,
+                    ..options.clone()
+                },
+            );
+            let on = render_test_scene(renderer, scene, options.clone());
+            off.rgba
+                .iter()
+                .zip(&on.rgba)
+                .map(|(&off, &on)| i32::from(off) - i32::from(on))
+                .collect()
+        };
+        let flat = darkening(&mut renderer, flat);
+        let smooth = darkening(&mut renderer, smooth);
+        let total = |map: &[i32]| map.iter().map(|&value| value.max(0)).sum::<i32>();
+        let (smooth, flat) = (total(&smooth), total(&flat));
+        assert!(
+            smooth > flat + 1000,
+            "smooth normals bend the GTAO horizon: {smooth} vs {flat}"
+        );
+        let targets = renderer.state.targets.as_ref().expect("targets");
+        let normal = targets
+            .ao
+            .as_ref()
+            .expect("AO targets")
+            .normal_view
+            .texture();
+        assert_eq!(normal.format(), wgpu::TextureFormat::Rg8Unorm);
+        assert_eq!((normal.width(), normal.height()), (128, 96));
+        renderer
+            .take_uncaptured()
+            .expect("AO normal GPU validation");
     }
 
     #[test]

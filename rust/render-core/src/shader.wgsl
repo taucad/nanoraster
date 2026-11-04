@@ -246,9 +246,28 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
     return vec4<f32>(select(color * base.a, color, prim.pbr.z == 2.0), base.a);
 }
 
+// The AO pass's MRT: view depth plus the shading normal `fs_mesh` uses (normal
+// map and back-face flip included), as the viewer's scene pass writes
+// `normalView`, in its octahedral RG8 encoding.
+struct AoDepthOut {
+    @location(0) depth: f32,
+    @location(1) normal: vec2<f32>,
+}
+
+// The viewer's `encodeAoNormal`: octahedral over both hemispheres, scaled to
+// 1..255 so zero stays the cleared background.
+fn encode_ao_normal(normal: vec3<f32>) -> vec2<f32> {
+    let projected = normal / max(abs(normal.x) + abs(normal.y) + abs(normal.z), 0.000001);
+    let signs = select(vec2<f32>(-1.0), vec2<f32>(1.0), projected.xy >= vec2<f32>(0.0));
+    let folded = (1.0 - abs(projected.yx)) * signs;
+    return (select(folded, projected.xy, projected.z >= 0.0) * 0.5 + 0.5) * (254.0 / 255.0) + 1.0 / 255.0;
+}
+
 @fragment
-fn fs_ao_depth(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(0) f32 {
-    if (front_facing != (in.model_scale.w > 0.0) && prim.coat.z == 0.0) { discard; }
+fn fs_ao_depth(in: MeshOut, @builtin(front_facing) front_facing: bool) -> AoDepthOut {
+    let is_front = front_facing == (in.model_scale.w > 0.0);
+    let n = mapped_normal(in, normalize(select(-in.view_normal, in.view_normal, is_front)), 2u, prim.misc.x);
+    if (!is_front && prim.coat.z == 0.0) { discard; }
     if (frame.clip_surfaces != 0u) {
         for (var i = 0u; i < frame.section_count; i++) {
             let plane = frame.section_planes[i];
@@ -256,7 +275,10 @@ fn fs_ao_depth(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @locat
         }
     }
     if (prim.pbr.z == 1.0 && (prim.base_color * in.vertex_color * sample_map(in, 0u)).a < prim.pbr.w) { discard; }
-    return in.view_position.z;
+    var out: AoDepthOut;
+    out.depth = in.view_position.z;
+    out.normal = encode_ao_normal(n);
+    return out;
 }
 
 struct ScreenOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> }

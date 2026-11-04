@@ -2,7 +2,8 @@
 // GTAONode (samples split into slices and steps as GTAONode does, magic-square
 // noise, no temporal rotation) at `resolutionScale` of the drawing buffer, Tau's
 // 13-tap edge-aware denoiser with outlier trimming at the same resolution, then
-// a depth/normal-guided upsample.
+// a depth/normal-guided upsample. Every pass reads the depth pass's mesh normals
+// at the full-resolution texel of its depth, as the viewer's MRT provides them.
 struct AoFrame {
     projection: mat4x4<f32>,
     inverse_projection: mat4x4<f32>,
@@ -18,6 +19,7 @@ struct AoFrame {
 @group(0) @binding(2) var ao_input: texture_2d<f32>;
 @group(0) @binding(3) var ao_sampler: sampler;
 @group(0) @binding(4) var blue_noise: texture_2d<f32>;
+@group(0) @binding(5) var ao_normals: texture_2d<f32>;
 
 @vertex
 fn vs_ao(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
@@ -42,34 +44,14 @@ fn ao_position(p: vec2<f32>, z: f32) -> vec3<f32> {
     return far_point * (z / far_point.z);
 }
 
-fn ao_normal(p: vec2<i32>, center_z: f32) -> vec3<f32> {
-    let center = ao_position(vec2<f32>(p) + 0.5, center_z);
-    let left = vec2<i32>(p.x - 1, p.y);
-    let right = vec2<i32>(p.x + 1, p.y);
-    let bottom = vec2<i32>(p.x, p.y + 1);
-    let top = vec2<i32>(p.x, p.y - 1);
-    let l1 = ao_z(left); let l2 = ao_z(vec2<i32>(p.x - 2, p.y));
-    let r1 = ao_z(right); let r2 = ao_z(vec2<i32>(p.x + 2, p.y));
-    let b1 = ao_z(bottom); let b2 = ao_z(vec2<i32>(p.x, p.y + 2));
-    let t1 = ao_z(top); let t2 = ao_z(vec2<i32>(p.x, p.y - 2));
-    if ((l1 == 0.0 && r1 == 0.0) || (b1 == 0.0 && t1 == 0.0)) {
-        return vec3<f32>(0.0, 0.0, 1.0);
-    }
-    let dl = select(1e9, abs((2.0 * l1 - l2) - center_z), l1 != 0.0);
-    let dr = select(1e9, abs((2.0 * r1 - r2) - center_z), r1 != 0.0);
-    let db = select(1e9, abs((2.0 * b1 - b2) - center_z), b1 != 0.0);
-    let dt = select(1e9, abs((2.0 * t1 - t2) - center_z), t1 != 0.0);
-    let dx = select(ao_position(vec2<f32>(right) + 0.5, r1) - center,
-        center - ao_position(vec2<f32>(left) + 0.5, l1), dl < dr);
-    let dy = select(ao_position(vec2<f32>(top) + 0.5, t1) - center,
-        center - ao_position(vec2<f32>(bottom) + 0.5, b1), db < dt);
-    let n = cross(dx, dy);
-    // Cross-product magnitude scales with scene units squared. Test the angle
-    // between derivatives instead so millimetre CAD faces keep their normals.
-    if (dot(n, n) <= 1e-6 * dot(dx, dx) * dot(dy, dy)) {
-        return vec3<f32>(0.0, 0.0, 1.0);
-    }
-    return normalize(n);
+// The viewer's `decodeAoNormal` of the depth pass's octahedral RG8 normal:
+// one surface's normal at the texel, never a blend.
+fn ao_normal(p: vec2<i32>) -> vec3<f32> {
+    let encoded = textureLoad(ao_normals, ao_pixel(p), 0).rg;
+    let xy = (encoded * 255.0 - 1.0) / 254.0 * 2.0 - 1.0;
+    let n = vec3<f32>(xy, 1.0 - abs(xy.x) - abs(xy.y));
+    let fold = max(-n.z, 0.0);
+    return normalize(vec3<f32>(n.xy + select(vec2<f32>(fold), vec2<f32>(-fold), n.xy >= vec2<f32>(0.0)), n.z));
 }
 
 // three.js GTAONode's 5x5 magic-square rotation noise, quantized as its
@@ -132,7 +114,7 @@ fn fs_ao_estimate(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f
     let z = ao_z(full);
     if (z == 0.0) { return vec4<f32>(1.0, 0.5, 0.5, 1.0); }
     let view_position = ao_uv_position(uv, z);
-    let view_normal = ao_normal(full, z);
+    let view_normal = ao_normal(full);
     let radius = ao_frame.viewport.z;
     let thickness = ao_frame.controls.z;
     let falloff = ao_frame.viewport.w;
@@ -181,7 +163,7 @@ fn fs_ao_estimate(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f
         ao += nx * nxb + ny * nyb;
     }
     let visibility = pow(clamp(ao / slices, 0.0, 1.0), ao_frame.controls.y);
-    return vec4<f32>(visibility, view_normal * 0.5 + 0.5);
+    return vec4<f32>(visibility, 0.0, 0.0, 1.0);
 }
 
 fn ao_sample(uv: vec2<f32>) -> vec4<f32> {
@@ -199,7 +181,7 @@ fn fs_ao_blur(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f32> 
     let z = ao_z(full);
     if (z == 0.0) { return vec4<f32>(1.0, center.gba); }
     let center_position = ao_uv_position(uv, z);
-    let center_normal = normalize(center.gba * 2.0 - 1.0);
+    let center_normal = ao_normal(full);
     let depth_phi = ao_frame.controls.w;
     var values: array<f32, 13>;
     var weights: array<f32, 13>;
@@ -211,11 +193,12 @@ fn fs_ao_blur(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f32> 
             if (((x + y) % 2) != 0) { continue; }
             let neighbor_uv = uv + vec2<f32>(f32(x), f32(y)) / size;
             let neighbor = ao_sample(neighbor_uv);
-            let neighbor_z = ao_z(ao_full_pixel(neighbor_uv));
+            let neighbor_full = ao_full_pixel(neighbor_uv);
+            let neighbor_z = ao_z(neighbor_full);
             var weight = 0.0;
             if (neighbor_z != 0.0) {
                 let neighbor_position = ao_uv_position(neighbor_uv, neighbor_z);
-                let neighbor_normal = normalize(neighbor.gba * 2.0 - 1.0);
+                let neighbor_normal = ao_normal(neighbor_full);
                 let plane_distance = abs(dot(center_position - neighbor_position, center_normal));
                 weight = max(1.0 - plane_distance / depth_phi, 0.0)
                     * pow(max(dot(center_normal, neighbor_normal), 0.0), 8.0);
@@ -264,7 +247,7 @@ fn fs_ao_upsample(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f
     let base = floor(texel);
     let fraction = fract(texel);
     let center_position = ao_uv_position(uv, z);
-    let center_normal = ao_normal(p, z);
+    let center_normal = ao_normal(p);
     let depth_phi = ao_frame.controls.w;
     var sum = 0.0;
     var weight_sum = 0.0;
@@ -274,9 +257,9 @@ fn fs_ao_upsample(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f
         for (var y = 0; y < 2; y++) {
             let neighbor_uv = (base + vec2<f32>(f32(x) + 0.5, f32(y) + 0.5)) / dimensions;
             let neighbor = ao_sample(neighbor_uv);
-            let neighbor_normal = normalize(neighbor.gba * 2.0 - 1.0);
-            let agreement = dot(center_normal, neighbor_normal);
-            let neighbor_z = ao_z(ao_full_pixel(neighbor_uv));
+            let neighbor_full = ao_full_pixel(neighbor_uv);
+            let agreement = dot(center_normal, ao_normal(neighbor_full));
+            let neighbor_z = ao_z(neighbor_full);
             var distance = 1e30;
             if (neighbor_z != 0.0) {
                 distance = abs(dot(center_position - ao_uv_position(neighbor_uv, neighbor_z), center_normal));

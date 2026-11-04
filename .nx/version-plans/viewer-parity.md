@@ -9,3 +9,5 @@ Add `lineColor` to replace every authored line colour with one sRGB colour.
 Add the GTAO controls `ao.thicknessRatio`, `ao.denoiseDepthTolerance`, `ao.samples` and `ao.resolutionScale`. Their defaults are the viewer's values and reproduce the default output exactly.
 
 Add `toneMapping`: `'neutral'` (the default, unchanged output), `'aces'`, `'linear'` or `'none'`, matching three.js's operators.
+
+Ambient occlusion reads the mesh's interpolated shading normals, as the viewer does, instead of normals reconstructed from depth. Curved and smooth-shaded surfaces render with different occlusion.
