@@ -1166,6 +1166,23 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn view_lights_keep_view_space_and_convert_world_space() {
+        let light = ResolvedLight {
+            direction: [1.0, 2.0, 3.0],
+            color: [0.5, 0.5, 0.5],
+        };
+        let mut rig = ResolvedLighting {
+            lights: vec![light],
+            headlamp: None,
+            ..ResolvedLighting::studio()
+        };
+        let flip = |[x, y, z]: [f32; 3]| [-x, -y, -z];
+        assert_eq!(rig.view_lights(flip), vec![([1.0, 2.0, 3.0], [0.5; 3])]);
+        rig.space = LightingSpace::World;
+        assert_eq!(rig.view_lights(flip), vec![([-1.0, -2.0, -3.0], [0.5; 3])]);
+    }
+
     const FIXTURE: &[u8] = include_bytes!("../../../tests/fixtures/gear-12.glb");
     /// [`FIXTURE`] is not watertight, so section requests need their own.
     const SECTION_FIXTURE: &[u8] =

@@ -134,11 +134,8 @@ fn card_vectors(card: &crate::LightCard) -> [[f32; 4]; 3] {
             let mut forward = -position.normalize();
             let mut right = up.cross(forward);
             if right.length_squared() == 0.0 {
-                if up.z.abs() == 1.0 {
-                    forward.x += 0.0001;
-                } else {
-                    forward.z += 0.0001;
-                }
+                // Three nudges x when up is ±Z; up here is +Y, so it nudges z.
+                forward.z += 0.0001;
                 forward = forward.normalize();
                 right = up.cross(forward);
             }
