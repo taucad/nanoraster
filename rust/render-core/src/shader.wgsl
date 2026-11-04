@@ -26,6 +26,8 @@ struct Frame {
     orthographic: u32,
     background: vec4<f32>,
     ao_control: vec4<f32>,
+    // Linear line colour override; a negative alpha keeps authored colours.
+    line_color: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -444,5 +446,6 @@ fn fs_line(in: LineOut) -> @location(0) vec4<f32> {
             discard;
         }
     }
+    if (frame.line_color.a >= 0.0) { return frame.line_color; }
     return prim.base_color;
 }

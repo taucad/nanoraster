@@ -173,11 +173,12 @@ struct AoPipelines {
     texture_mask: u32,
     depth_mesh: wgpu::RenderPipeline,
     depth_constant_mesh: wgpu::RenderPipeline,
+    /// Half-resolution GTAO estimate.
     estimate: wgpu::RenderPipeline,
-    /// Full-resolution stochastic denoise, first and second pass.
-    blur: [wgpu::RenderPipeline; 2],
-    /// Half-resolution separable denoise, horizontal and vertical pass.
-    separable_blur: [wgpu::RenderPipeline; 2],
+    /// Half-resolution edge-aware denoise.
+    denoise: wgpu::RenderPipeline,
+    /// Guided upsample to the output resolution.
+    upsample: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     blue_noise: wgpu::TextureView,
@@ -189,6 +190,7 @@ struct AoTargets {
     test_depth_view: wgpu::TextureView,
     estimate_view: wgpu::TextureView,
     blur_view: wgpu::TextureView,
+    full_view: wgpu::TextureView,
 }
 
 struct GpuCap {
@@ -265,6 +267,7 @@ impl Drop for SizedTargets {
                 &ao.test_depth_view,
                 &ao.estimate_view,
                 &ao.blur_view,
+                &ao.full_view,
             ]);
         }
         for view in views {
@@ -942,13 +945,13 @@ fn position_clip_planes(
 // The one definition of the `Frame` uniform (see `shader.wgsl`): two mat4 and
 // a viewport vec4, then eight Lights at a 32-byte stride, a 16-byte lighting
 // tail, `MAX_SECTION_PLANES` section planes, a 16-byte section tail, 16-byte
-// background, and 16-byte AO control. 592 bytes at eight planes.
+// background, 16-byte AO control and 16-byte line colour. 608 bytes at eight planes.
 const FRAME_LIGHTS: usize = 36;
 const FRAME_LIGHT_STRIDE: usize = 8;
 const FRAME_TAIL: usize = 100;
 const FRAME_SECTION_PLANES: usize = 104;
 const FRAME_SECTION_TAIL: usize = FRAME_SECTION_PLANES + MAX_SECTION_PLANES * 4;
-const FRAME_FLOATS: usize = FRAME_SECTION_TAIL + 12;
+const FRAME_FLOATS: usize = FRAME_SECTION_TAIL + 16;
 
 fn frame_uniform(camera: CameraState, options: &RenderOptions) -> [f32; FRAME_FLOATS] {
     let lighting = &options.lighting;
@@ -988,7 +991,19 @@ fn frame_uniform(camera: CameraState, options: &RenderOptions) -> [f32; FRAME_FL
         background.b as f32,
         background.a as f32,
     ]);
-    data[FRAME_SECTION_TAIL + 8] = options.ao.map_or(1.0, |ao| ao.intensity);
+    // The AO passes apply the visibility exponent before denoising, as GTAO does.
+    data[FRAME_SECTION_TAIL + 8] = 1.0;
+    // Linear line colour; a negative alpha keeps each line's authored material colour.
+    data[FRAME_SECTION_TAIL + 12..FRAME_SECTION_TAIL + 16].copy_from_slice(
+        &options.line_color.map_or([0.0, 0.0, 0.0, -1.0], |color| {
+            [
+                srgb_to_linear(color[0]) as f32,
+                srgb_to_linear(color[1]) as f32,
+                srgb_to_linear(color[2]) as f32,
+                color[3],
+            ]
+        }),
+    );
     if let Some(sections) = &options.sections {
         // Clamped the way the light rig is: `RenderOptions` is public, so the
         // uniform's fixed array is the authority even when validation is not.
@@ -1542,14 +1557,8 @@ fn create_ao_pipelines(
         depth_mesh,
         depth_constant_mesh,
         estimate: fullscreen("fs_ao_estimate", None),
-        blur: [
-            fullscreen("fs_ao_blur", Some(0.0)),
-            fullscreen("fs_ao_blur", Some(1.0)),
-        ],
-        separable_blur: [
-            fullscreen("fs_ao_blur_separable", Some(0.0)),
-            fullscreen("fs_ao_blur_separable", Some(1.0)),
-        ],
+        denoise: fullscreen("fs_ao_blur", None),
+        upsample: fullscreen("fs_ao_upsample", None),
         layout,
         sampler: device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("AO denoise filtering"),
@@ -2453,9 +2462,10 @@ impl Renderer {
             view_formats: &[],
         });
         let ao_targets = ao.then(|| {
-            let texture = |label, format, usage| {
+            // The viewer estimates and denoises at half drawing-buffer resolution.
+            let texture = |label, format, usage, half: bool| {
                 let mut size = extent;
-                if width * height > 1_048_576 && format == wgpu::TextureFormat::Rgba8Unorm {
+                if half {
                     size.width = width.div_ceil(2);
                     size.height = height.div_ceil(2);
                 }
@@ -2477,21 +2487,31 @@ impl Renderer {
                     "AO view depth",
                     wgpu::TextureFormat::R32Float,
                     wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    false,
                 ),
                 test_depth_view: texture(
                     "AO depth test",
                     DEPTH_FORMAT,
                     self.state.pass_local_usage,
+                    false,
                 ),
                 estimate_view: texture(
                     "AO estimate",
                     wgpu::TextureFormat::Rgba8Unorm,
                     wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    true,
                 ),
                 blur_view: texture(
                     "AO denoise",
                     wgpu::TextureFormat::Rgba8Unorm,
                     wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    true,
+                ),
+                full_view: texture(
+                    "AO visibility",
+                    wgpu::TextureFormat::Rgba8Unorm,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    false,
                 ),
             }
         });
@@ -2852,20 +2872,26 @@ impl Renderer {
             let radius = ao.radius_pixels.unwrap_or_else(|| {
                 ((options.width as f32).hypot(options.height as f32) * 0.01).max(4.0)
             });
+            let orthographic = camera_projection_kind(&options.camera) == Projection::Orthographic;
+            // The viewer converts its pixel radius to world units once, at the
+            // camera target: one world radius for every pixel of the frame.
+            let world_per_pixel = 2.0 / (camera.projection.y_axis.y * options.height as f32)
+                * if orthographic { 1.0 } else { camera.target_depth.abs() };
+            let world_radius = radius * world_per_pixel;
             let mut ao_frame = [0f32; 40];
             ao_frame[..16].copy_from_slice(&camera.projection.to_cols_array());
             ao_frame[16..32].copy_from_slice(&camera.projection.inverse().to_cols_array());
-            ao_frame[32..36].copy_from_slice(&[
+            ao_frame[32..40].copy_from_slice(&[
                 options.width as f32,
                 options.height as f32,
-                radius,
+                world_radius,
                 ao.distance_falloff,
+                f32::from(orthographic),
+                ao.intensity,
+                // GTAO depth acceptance and denoise plane tolerance, as the viewer derives them.
+                world_radius / 0.09,
+                world_radius * 0.1,
             ]);
-            ao_frame[37] = options.width as f32 / ao_targets.estimate_view.texture().width() as f32;
-            ao_frame[38] =
-                options.height as f32 / ao_targets.estimate_view.texture().height() as f32;
-            ao_frame[36] =
-                f32::from(camera_projection_kind(&options.camera) == Projection::Orthographic);
             state
                 .queue
                 .write_buffer(&pipelines.frame_buffer, 0, bytemuck::cast_slice(&ao_frame));
@@ -2904,30 +2930,25 @@ impl Renderer {
                     draw_surface(&mut pass, instance, mesh);
                 }
             }
-            // The shader filters by resolution mode in separate entry points.
-            let blur = if ao_frame[37] > 1.0 || ao_frame[38] > 1.0 {
-                &pipelines.separable_blur
-            } else {
-                &pipelines.blur
-            };
             for (label, output, input, pipeline) in [
                 (
-                    "AO hemisphere",
+                    "AO horizons",
                     &ao_targets.estimate_view,
-                    &state.empty_ao,
+                    // Read only for its half-resolution dimensions.
+                    &ao_targets.blur_view,
                     &pipelines.estimate,
                 ),
                 (
-                    "AO denoise first",
+                    "AO denoise",
                     &ao_targets.blur_view,
                     &ao_targets.estimate_view,
-                    &blur[0],
+                    &pipelines.denoise,
                 ),
                 (
-                    "AO denoise second",
-                    &ao_targets.estimate_view,
+                    "AO upsample",
+                    &ao_targets.full_view,
                     &ao_targets.blur_view,
-                    &blur[1],
+                    &pipelines.upsample,
                 ),
             ] {
                 let resources = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2986,7 +3007,7 @@ impl Renderer {
             targets
                 .ao
                 .as_ref()
-                .map_or(&state.empty_ao, |ao| &ao.estimate_view),
+                .map_or(&state.empty_ao, |ao| &ao.full_view),
         );
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -5410,7 +5431,7 @@ mod tests {
         // tail and leaves the tail where `shader.wgsl` declares it.
         assert_eq!(MAX_SECTION_PLANES, 8);
         assert_eq!(FRAME_SECTION_TAIL, 136);
-        assert_eq!(FRAME_FLOATS * 4, 592);
+        assert_eq!(FRAME_FLOATS * 4, 608);
         assert_eq!(data[FRAME_SECTION_TAIL + 8], 3.0);
         assert_eq!(
             frame_uniform(

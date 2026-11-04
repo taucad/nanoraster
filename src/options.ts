@@ -249,6 +249,8 @@ type RenderImageSharedOptions = {
   readonly sections?: RenderSections;
   /** Transparent by default; otherwise `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. @default transparent */
   readonly background?: readonly [number, number, number, number] | string;
+  /** Replace every authored line colour; `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. @default authored colours */
+  readonly lineColor?: readonly [number, number, number, number] | string;
   /** Draw the bottom-right camera-aware XYZ indicator and front-on depth marker. @default false */
   readonly axes?: boolean;
   /**
@@ -568,6 +570,7 @@ const singularKeys = new Set([
   'visiblePrimitives',
   'sections',
   'background',
+  'lineColor',
   'label',
   'axes',
   'scaleBar',
@@ -587,6 +590,7 @@ const pluralKeys = new Set([
   'visiblePrimitives',
   'sections',
   'background',
+  'lineColor',
   'axes',
   'scaleBar',
   'lighting',
@@ -1134,9 +1138,9 @@ const validatePresentation = (options: CameraCommonOptions): void => {
   }
 };
 
-const parseHexColor = (value: string): readonly [number, number, number, number] => {
+const parseHexColor = (value: string, name = 'background'): readonly [number, number, number, number] => {
   if (!renderImageBackgroundPattern.test(value)) {
-    throw new TypeError('background must be #RRGGBB or #RRGGBBAA');
+    throw new TypeError(`${name} must be #RRGGBB or #RRGGBBAA`);
   }
   const hex = value.slice(1);
   return [
@@ -1172,9 +1176,9 @@ const validateAnnotatedDimensions = (options: CameraCommonOptions, annotated: bo
   }
 };
 
-const validateBackground = (background: unknown): void => {
+const validateBackground = (background: unknown, name = 'background'): void => {
   if (typeof background === 'string') {
-    parseHexColor(background);
+    parseHexColor(background, name);
     return;
   }
   if (
@@ -1185,7 +1189,7 @@ const validateBackground = (background: unknown): void => {
         (channel) => typeof channel !== 'number' || !Number.isFinite(channel) || channel < 0 || channel > 1,
       ))
   ) {
-    throw new TypeError('background must contain four channels between 0 and 1');
+    throw new TypeError(`${name} must contain four channels between 0 and 1`);
   }
 };
 
@@ -1215,6 +1219,7 @@ const validateCameraCommon = (options: CameraCommonOptions, annotated: boolean):
   assertOptionalBoolean(options.scaleBar, 'scaleBar');
   validateAnnotatedDimensions(options, annotated);
   validateBackground(options.background);
+  validateBackground(options.lineColor, 'lineColor');
   validateLighting(options.lighting);
   validateAo(options.ao);
   validatePresentation(options);
@@ -1256,6 +1261,7 @@ export const toImageRequestJson = (options: RenderImageOptions): string => {
     visiblePrimitives: options.visiblePrimitives,
     sections: options.sections,
     background: normalizedBackground(options.background),
+    lineColor: normalizedBackground(options.lineColor),
     label: options.label,
     axes: options.axes,
     scaleBar: options.scaleBar,
@@ -1359,6 +1365,7 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     visiblePrimitives: options.visiblePrimitives,
     sections: options.sections,
     background: normalizedBackground(options.background),
+    lineColor: normalizedBackground(options.lineColor),
     axes: options.axes,
     scaleBar: options.scaleBar,
     lighting: options.lighting,

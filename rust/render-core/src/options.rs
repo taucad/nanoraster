@@ -255,6 +255,7 @@ pub struct RenderRequest {
     pub visible_primitives: Option<Vec<PrimitiveRefRequest>>,
     pub sections: Option<SectionsRequest>,
     pub background: Option<[f32; 4]>,
+    pub line_color: Option<[f32; 4]>,
     pub label: Option<String>,
     pub axes: Option<bool>,
     pub scale_bar: Option<bool>,
@@ -293,6 +294,7 @@ pub struct RenderImagesRequest {
     pub visible_primitives: Option<Vec<PrimitiveRefRequest>>,
     pub sections: Option<SectionsRequest>,
     pub background: Option<[f32; 4]>,
+    pub line_color: Option<[f32; 4]>,
     pub axes: Option<bool>,
     pub scale_bar: Option<bool>,
     pub lighting: Option<LightingRequest>,
@@ -354,6 +356,7 @@ struct CommonRequest<'a> {
     visible_primitives: Option<&'a [PrimitiveRefRequest]>,
     sections: Option<&'a SectionsRequest>,
     background: Option<[f32; 4]>,
+    line_color: Option<[f32; 4]>,
     axes: Option<bool>,
     /// Whether the shared width/height must clear the annotated minimum. Only
     /// a singular request renders at them; a batch renders at each view's
@@ -395,6 +398,7 @@ impl RenderRequest {
             visible_primitives: self.visible_primitives.as_deref(),
             sections: self.sections.as_ref(),
             background: self.background,
+            line_color: self.line_color,
             axes: self.axes,
             annotated: self.axes.unwrap_or(false)
                 || self.scale_bar.unwrap_or(false)
@@ -508,6 +512,7 @@ impl RenderImagesRequest {
             visible_primitives: self.visible_primitives.as_deref(),
             sections: self.sections.as_ref(),
             background: self.background,
+            line_color: self.line_color,
             axes: self.axes,
             annotated: false,
             scale_bar: self.scale_bar,
@@ -582,14 +587,16 @@ fn resolve_common(
             LINE_WIDTH_RANGE.end()
         )));
     }
-    if let Some(background) = request.background
-        && background
-            .iter()
-            .any(|channel| !channel.is_finite() || !(0.0..=1.0).contains(channel))
-    {
-        return Err(RenderError::Parse(
-            "background channels outside 0..=1".into(),
-        ));
+    for (name, color) in [("background", request.background), ("lineColor", request.line_color)] {
+        if let Some(color) = color
+            && color
+                .iter()
+                .any(|channel| !channel.is_finite() || !(0.0..=1.0).contains(channel))
+        {
+            return Err(RenderError::Parse(format!(
+                "{name} channels outside 0..=1"
+            )));
+        }
     }
 
     let lighting = resolve_lighting(request.lighting, world)?;
@@ -694,6 +701,7 @@ fn resolve_common(
             visible_primitives,
             sections,
             background: request.background,
+            line_color: request.line_color,
             axes,
             scale_bar,
             lighting,

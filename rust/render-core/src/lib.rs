@@ -200,8 +200,8 @@ impl Default for AmbientOcclusion {
     fn default() -> Self {
         Self {
             radius_pixels: None,
-            intensity: 3.0,
-            distance_falloff: 0.2,
+            intensity: 0.75,
+            distance_falloff: 1.0,
         }
     }
 }
@@ -257,6 +257,9 @@ pub struct RenderOptions {
     /// Background clear color as sRGB straight-alpha `[r, g, b, a]` in 0..=1;
     /// `None` renders on transparent. JPEG output requires an opaque one.
     pub background: Option<[f32; 4]>,
+    /// Line colour as sRGB straight-alpha `[r, g, b, a]` in 0..=1, replacing
+    /// every authored line material's colour; `None` keeps the authored colours.
+    pub line_color: Option<[f32; 4]>,
     /// Optional authored view label. Its presence is the switch: a label is
     /// stamped top-left whenever one is set.
     pub label: Option<String>,
@@ -288,6 +291,7 @@ impl Default for RenderOptions {
             visible_primitives: None,
             sections: None,
             background: None,
+            line_color: None,
             label: None,
             axes: false,
             scale_bar: false,
