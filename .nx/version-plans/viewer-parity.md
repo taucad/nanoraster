@@ -11,3 +11,5 @@ Add the GTAO controls `ao.thicknessRatio`, `ao.denoiseDepthTolerance`, `ao.sampl
 Add `toneMapping`: `'neutral'` (the default, unchanged output), `'aces'`, `'linear'` or `'none'`, matching three.js's operators.
 
 Ambient occlusion reads the mesh's interpolated shading normals, as the viewer does, instead of normals reconstructed from depth. Curved and smooth-shaded surfaces render with different occlusion.
+
+Match the Tau viewer's lighting: `lighting.headlamp` sets the camera-relative key light, and `lighting.environment` takes `{ cards, intensity }`, prefiltering rectangular light cards into the environment the way the viewer prefilters its Lightformers. The default ambient becomes the viewer's dark-scheme 0.1 × 1.15, and a rig may omit `lights`.
