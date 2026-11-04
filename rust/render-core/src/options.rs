@@ -1258,8 +1258,8 @@ mod tests {
             single.ao,
             Some(AmbientOcclusion {
                 radius_pixels: None,
-                intensity: 3.0,
-                distance_falloff: 0.2,
+                intensity: 0.75,
+                distance_falloff: 1.0,
             })
         );
         let (batch, _, _, _) = RenderImagesRequest::from_json(

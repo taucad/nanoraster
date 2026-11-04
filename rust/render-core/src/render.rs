@@ -5432,7 +5432,20 @@ mod tests {
         assert_eq!(MAX_SECTION_PLANES, 8);
         assert_eq!(FRAME_SECTION_TAIL, 136);
         assert_eq!(FRAME_FLOATS * 4, 608);
-        assert_eq!(data[FRAME_SECTION_TAIL + 8], 3.0);
+        // The AO passes own the visibility exponent; the display pass applies 1.
+        assert_eq!(data[FRAME_SECTION_TAIL + 8], 1.0);
+        // No line colour override: a negative alpha keeps authored colours.
+        assert_eq!(data[FRAME_SECTION_TAIL + 15], -1.0);
+        assert_eq!(
+            &frame_uniform(
+                camera,
+                &RenderOptions {
+                    line_color: Some([1.0, 0.0, 0.0, 0.5]),
+                    ..RenderOptions::default()
+                }
+            )[FRAME_SECTION_TAIL + 12..FRAME_SECTION_TAIL + 16],
+            &[1.0, 0.0, 0.0, 0.5]
+        );
         assert_eq!(
             frame_uniform(
                 camera,
@@ -5445,7 +5458,7 @@ mod tests {
                     ..RenderOptions::default()
                 }
             )[FRAME_SECTION_TAIL + 8],
-            2.0
+            1.0
         );
         let full = frame_uniform(
             camera,
