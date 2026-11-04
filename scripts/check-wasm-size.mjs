@@ -253,7 +253,13 @@ const sizes = {
 // (+11,761), Brotli-11 946,943 -> 953,592 (+6,649). Admit the measured raw and
 // Brotli deltas, and the gzip delta too: the gzip ceiling's 0.5% allowance no
 // longer covers the build. Compressor allowances are unchanged.
-const ceilings = { raw: 2_470_853, gzip9: 1_148_931, brotli11: 950_319 };
+// Unused N8AO blue-noise texture removed (Rust 1.99.1, Node 24.22.1,
+// 2026-11-04): same-host 2b47c47 2,470,040 / 1,154,521 / 953,592 ->
+// 2,403,892 / 1,087,523 / 888,068 (-66,148 / -66,998 / -65,524). GTAO uses
+// magic-square noise, so the 65,536-byte texture and its binding were dead.
+// Lower every limit by exactly the measured delta: the compressed ceilings
+// move so that ceiling plus allowance drops by it, keeping existing headroom.
+const ceilings = { raw: 2_404_705, gzip9: 1_082_266, brotli11: 885_121 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
