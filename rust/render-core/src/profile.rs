@@ -1,5 +1,5 @@
 //! Native opt-in pass queries and descriptor accounting; compiled out of releases.
-use super::{RenderError, SizedTargets};
+use super::{AoTargets, RenderError, SizedTargets};
 use serde_json::{Value, json};
 use std::time::Instant;
 
@@ -57,12 +57,25 @@ pub(super) fn ledger(t: &SizedTargets) -> Value {
     if let Some(composite) = &t.composite_view {
         textures.push(texture("composite HDR", composite));
     }
-    if let Some(ao) = &t.ao {
+    // Destructure rather than pick fields, so an AO target added later cannot
+    // be left out of the ledger without this failing to compile.
+    if let Some(AoTargets {
+        extent: _,
+        depth_view,
+        normal_view,
+        test_depth_view,
+        estimate_view,
+        blur_view,
+        full_view,
+    }) = &t.ao
+    {
         textures.extend([
-            texture("AO view depth", &ao.depth_view),
-            texture("AO test depth", &ao.test_depth_view),
-            texture("AO estimate", &ao.estimate_view),
-            texture("AO denoise", &ao.blur_view),
+            texture("AO view depth", depth_view),
+            texture("AO view normal", normal_view),
+            texture("AO test depth", test_depth_view),
+            texture("AO estimate", estimate_view),
+            texture("AO denoise", blur_view),
+            texture("AO visibility", full_view),
         ]);
     }
     let readback: Vec<_> = t.readback.iter().map(|b| b.size()).collect();

@@ -7408,6 +7408,64 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "bench")]
+    #[test]
+    fn ledger_counts_every_ao_target_at_its_extent() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let ao_targets = |ledger: &serde_json::Value| -> Vec<(String, u64, u64, String)> {
+            ledger["textures"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|t| t["label"].as_str().unwrap().starts_with("AO "))
+                .map(|t| {
+                    (
+                        t["label"].as_str().unwrap().to_owned(),
+                        t["width"].as_u64().unwrap(),
+                        t["height"].as_u64().unwrap(),
+                        t["format"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect()
+        };
+
+        renderer.ensure_targets(768, 433, false, Some(0.5), false);
+        let ledger = profile::ledger(renderer.state.targets.as_ref().expect("targets"));
+        let expected = [
+            ("AO view depth", 768, 433, "R32Float"),
+            ("AO view normal", 768, 433, "Rg8Unorm"),
+            ("AO test depth", 768, 433, "Depth32Float"),
+            ("AO estimate", 384, 217, "Rgba8Unorm"),
+            ("AO denoise", 384, 217, "Rgba8Unorm"),
+            ("AO visibility", 768, 433, "Rgba8Unorm"),
+        ]
+        .map(|(label, width, height, format)| (label.to_owned(), width, height, format.to_owned()));
+        assert_eq!(ao_targets(&ledger), expected);
+        let textures = ledger["textures"].as_array().unwrap();
+        assert_eq!(
+            ledger["textureBytes"].as_u64().unwrap(),
+            textures
+                .iter()
+                .map(|t| t["logicalBytes"].as_u64().unwrap())
+                .sum::<u64>(),
+            "the AO targets count toward the texture total"
+        );
+        let normal = textures
+            .iter()
+            .find(|t| t["label"] == "AO view normal")
+            .unwrap();
+        assert_eq!(normal["logicalBytes"], 768 * 433 * 2);
+
+        renderer.ensure_targets(768, 433, false, None, false);
+        let ledger = profile::ledger(renderer.state.targets.as_ref().expect("targets"));
+        assert!(
+            ao_targets(&ledger).is_empty(),
+            "AO off allocates no AO target"
+        );
+    }
+
     #[test]
     fn pipeline_and_target_caches_reuse_and_evict() {
         let mut renderer =
