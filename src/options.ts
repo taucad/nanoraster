@@ -362,7 +362,11 @@ type RenderImageSharedOptions = {
    * @default disabled
    */
   readonly sections?: RenderSections;
-  /** Transparent by default; otherwise `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. @default transparent */
+  /**
+   * Transparent by default; otherwise `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. The image is
+   * blended onto it in sRGB, as a browser shows the transparent image over that colour.
+   * @default transparent
+   */
   readonly background?: readonly [number, number, number, number] | string;
   /** Replace every authored line colour; `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. @default authored colours */
   readonly lineColor?: readonly [number, number, number, number] | string;

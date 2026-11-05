@@ -405,12 +405,32 @@ fn fs_fxaa(in: ScreenOut) -> @location(0) vec4<f32> {
     return textureSampleLevel(composite_scene, scene_sampler, uv + perpendicular * offset, 0.0);
 }
 
-// The requested background, composited under the finished frame in linear
-// light; readback unpremultiplies when the result keeps any transparency.
+// The sRGB OETF (three's `sRGBTransferOETF`), unclamped as the viewer's
+// final encode applies it.
+fn srgb_encode(color: vec3<f32>) -> vec3<f32> {
+    return select(1.055 * pow(color, vec3<f32>(1.0 / 2.4)) - 0.055, color * 12.92, color <= vec3<f32>(0.0031308));
+}
+
+// The requested background under the finished frame, as the viewer's page
+// shows its canvas: the frame's straight colour is sRGB-encoded, then
+// premultiplied (`encodeFrameOutput`), and blended source-over onto the
+// background in the encoded domain, `sRGB(c)·a + bg·(1 − a)`. That equals the
+// transparent render's straight-alpha image composited over the background.
+// Both blends agree where the frame is covered, empty or over transparency,
+// so those pixels stay exact; readback unpremultiplies whatever keeps any
+// transparency.
 @fragment
 fn fs_output(in: ScreenOut) -> @location(0) vec4<f32> {
     let color = textureLoad(composite_scene, vec2<i32>(in.position.xy), 0);
-    return color + frame.background * vec4<f32>(vec3<f32>(frame.background.a), 1.0) * (1.0 - color.a);
+    let background = frame.background;
+    if (color.a == 1.0 || color.a == 0.0 || background.a == 0.0) {
+        return color + background * vec4<f32>(vec3<f32>(background.a), 1.0) * (1.0 - color.a);
+    }
+    let straight = color.rgb / color.a;
+    let frame_encoded = min(srgb_encode(straight) * color.a, vec3<f32>(1.0));
+    let alpha = color.a + background.a * (1.0 - color.a);
+    let encoded = min(frame_encoded + srgb_encode(background.rgb) * background.a * (1.0 - color.a), vec3<f32>(1.0));
+    return vec4<f32>(srgb_decode(encoded / alpha) * alpha, alpha);
 }
 
 struct CapOut {

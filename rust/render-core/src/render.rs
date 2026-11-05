@@ -5653,6 +5653,60 @@ mod tests {
         }
     }
 
+    #[test]
+    fn opaque_background_composites_the_straight_image_in_the_encoded_domain() {
+        // The Tau viewer's page shows its canvas as `sRGB(c)·a + bg·(1 − a)`
+        // (`encodeFrameOutput`, then the browser's source-over), so an opaque
+        // background equals the transparent render's straight-alpha image
+        // composited over it in 8-bit sRGB, not a blend in linear light.
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let background = [0.2_f32, 0.4, 0.6];
+        let mut options = physical_options();
+        options.lines = true;
+        options.background = None;
+        let transparent = render_test_scene(&mut renderer, cube_with_edges(false), options.clone());
+        options.background = Some([background[0], background[1], background[2], 1.0]);
+        let shown = render_test_scene(&mut renderer, cube_with_edges(false), options);
+        let (mut partial, mut unlike_linear) = (0, 0);
+        for (straight, shown) in transparent
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(shown.rgba.as_chunks::<4>().0)
+        {
+            assert_eq!(shown[3], 255);
+            if straight[3] == 255 {
+                // Covered pixels take the exact linear path either way.
+                assert_eq!(shown[..3], straight[..3]);
+            }
+            let alpha = f32::from(straight[3]) / 255.0;
+            partial += usize::from((1..255).contains(&straight[3]));
+            for (channel, bg) in background.into_iter().enumerate() {
+                let encoded = f32::from(straight[channel]) * alpha + bg * 255.0 * (1.0 - alpha);
+                // Two 8-bit roundings of the transparent image, one of this one.
+                assert!(
+                    (f32::from(shown[channel]) - encoded).abs() <= 2.0,
+                    "{straight:?} over {background:?} shows {shown:?}"
+                );
+                let linear = crate::texture::encoded(
+                    crate::texture::linear(straight[channel], true) * alpha
+                        + crate::texture::linear(crate::texture::encoded(bg, false), true)
+                            * (1.0 - alpha),
+                    true,
+                );
+                unlike_linear += usize::from(shown[channel].abs_diff(linear) > 4);
+            }
+        }
+        assert!(
+            partial > 50,
+            "exercise partial coverage, not just opaque pixels"
+        );
+        assert!(unlike_linear > 0, "a linear-light blend would pass too");
+        renderer.destroy();
+    }
+
     /// A cube with its edges as a line primitive; `hidden` keeps the three edges that meet at the
     /// corner facing away from a camera in the +X/+Z quadrant.
     fn cube_with_edges(hidden: bool) -> glb::Scene {
@@ -6491,11 +6545,10 @@ mod tests {
                     options,
                 );
                 let x = size / 2;
+                // Black over white blends in sRGB, so the encoded value is
+                // one minus the coverage.
                 let coverage: f64 = (0..size)
-                    .map(|y| {
-                        let red = rendered.rgba[((y * size + x) * 4) as usize] as f32 / 255.0;
-                        1.0 - srgb_to_linear(red)
-                    })
+                    .map(|y| 1.0 - f64::from(rendered.rgba[((y * size + x) * 4) as usize]) / 255.0)
                     .sum();
                 assert!((coverage - f64::from(width)).abs() < 0.35);
             }

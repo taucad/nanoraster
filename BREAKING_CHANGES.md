@@ -33,6 +33,11 @@
   up half the stroke plus half a pixel of depth slope, which can show a faint
   tick where a hidden edge meets an outline. There is no option to restore the
   multisampled output.
+- A `background` is blended in sRGB, `sRGB(c)·a + bg·(1 − a)`, as the
+  viewer's page and any browser show the transparent image over it, instead
+  of in linear light. Partly covered silhouette and edge pixels over a
+  background change; covered pixels, empty pixels and transparent output do
+  not.
 
 - Ambient occlusion is enabled by default for single images and batches.
   Use `ao: { intensity: 0 }` to retain rendering without AO. Omitted options

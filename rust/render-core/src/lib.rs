@@ -396,7 +396,9 @@ pub struct RenderOptions {
     /// Optional section presentation.
     pub sections: Option<Sections>,
     /// Background clear color as sRGB straight-alpha `[r, g, b, a]` in 0..=1;
-    /// `None` renders on transparent. JPEG output requires an opaque one.
+    /// `None` renders on transparent. The image is blended onto it in sRGB,
+    /// as a browser shows the transparent image over that colour. JPEG output
+    /// requires an opaque one.
     pub background: Option<[f32; 4]>,
     /// Line colour as sRGB straight-alpha `[r, g, b, a]` in 0..=1, replacing
     /// every authored line material's colour; `None` keeps the authored colours.

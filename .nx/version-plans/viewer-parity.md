@@ -12,6 +12,6 @@ Add `toneMapping`: `'neutral'` (the default, unchanged), `'aces'`, `'linear'` or
 
 Add `lineColor` to replace every authored line colour with one sRGB colour.
 
-Surfaces render single-sample and take the viewer's FXAA, and edges draw after it with the viewer's exact square-pixel coverage, flat ends and surface depth margin (half the stroke plus half a pixel); edges no longer write depth. This replaces 4x multisampling, so silhouette and edge pixels change.
+Surfaces render single-sample and take the viewer's FXAA, and edges draw after it with the viewer's exact square-pixel coverage, flat ends and surface depth margin (half the stroke plus half a pixel); edges no longer write depth. This replaces 4x multisampling, so silhouette and edge pixels change. A `background` is blended in sRGB, as the viewer's page shows its canvas, instead of in linear light.
 
 Drop the N8AO blue-noise texture that the GTAO port left unused: the WASM shrinks by 66,148 bytes (65,524 Brotli-compressed) and the Linux x64 native addon by 66,520 bytes.
