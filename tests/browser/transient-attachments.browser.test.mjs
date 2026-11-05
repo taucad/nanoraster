@@ -11,13 +11,7 @@ async function supportsTransientAttachments() {
   const adapter = await navigator.gpu.requestAdapter();
   const device = await adapter.requestDevice();
   device.pushErrorScope('validation');
-  for (const [format, sampleCount] of [
-    ['rgba8unorm-srgb', 4],
-    ['rgba16float', 4],
-    ['depth32float', 1],
-  ]) {
-    device.createTexture({ size: [4, 4], format, sampleCount, usage: 48 }).destroy();
-  }
+  device.createTexture({ size: [4, 4], format: 'depth32float', usage: 48 }).destroy();
   const error = await device.popErrorScope();
   device.destroy();
   return error === null;
@@ -62,17 +56,18 @@ test('pass-local browser attachments preserve exact output through capability fa
             await renderer.render_image(scene, JSON.stringify({ width, height: 192, format: 'raw', ao: {} })),
           );
         }
-        expect(probes).toBe(3); // Once per device, never once per request.
-        const local = descriptors.filter(({ label }) =>
-          ['msaa', 'AO depth test', 'HDR multisample'].includes(label),
-        );
+        expect(probes).toBe(1); // Once per device, never once per request.
+        // Surfaces render single-sample, so the AO depth test is the only pass-local target.
+        const local = descriptors.filter(({ label }) => label === 'AO depth test');
         expect(local.length).toBeGreaterThan(3);
         expect(local.some(({ usage }) => (usage & 32) !== 0)).toBe(supported && !reject);
         expect(descriptors.filter(({ label }) => label === 'depth').every(({ usage }) => usage === 16)).toBe(
           true,
         );
-        const hdr = descriptors.filter(({ label }) => label === 'HDR multisample');
-        expect(hdr.some(({ usage }) => usage === 16)).toBe(true); // Transparency loads opaque samples.
+        // Transparency starts from a copy of the opaque image, so the composite keeps its storage.
+        const composite = descriptors.filter(({ label }) => label === 'composite HDR');
+        expect(composite.length).toBeGreaterThan(0);
+        expect(composite.every(({ usage }) => usage === 22)).toBe(true);
         expect(images[0]).toEqual(images[5]);
       } finally {
         renderer.dispose();
