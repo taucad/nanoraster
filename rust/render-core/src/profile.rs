@@ -48,8 +48,7 @@ fn texture(label: &str, view: &wgpu::TextureView) -> Value {
 
 pub(super) fn ledger(t: &SizedTargets) -> Value {
     let mut textures = vec![
-        texture("final MSAA", &t.msaa_view),
-        texture("HDR MSAA", &t.hdr_msaa),
+        texture("display HDR", &t.display_view),
         texture("opaque HDR", &t.opaque_view),
         texture("geometry depth", &t.depth_view),
         texture("resolve", &t.resolve_view),

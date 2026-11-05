@@ -1,5 +1,6 @@
 //! Surface-less wgpu render path: adapter with `compatible_surface: None`,
-//! 4x MSAA into an sRGB resolve texture, `copy_texture_to_buffer` readback
+//! single-sample HDR passes with the viewer's FXAA into an sRGB output
+//! texture, `copy_texture_to_buffer` readback
 //! with 256-byte row alignment. No canvas anywhere — the same code runs on
 //! native backends and browser WebGPU.
 //!
@@ -21,7 +22,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 
-const MSAA_SAMPLES: u32 = 4;
 // Native backends treat this as a hint; browser descriptors are validated once
 // per initialized device before any production targets use the optional flag.
 const TRANSIENT_ATTACHMENT_USAGE: wgpu::TextureUsages =
@@ -31,11 +31,7 @@ async fn pass_local_attachment_usage(device: &wgpu::Device) -> wgpu::TextureUsag
     #[cfg(target_arch = "wasm32")]
     {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        for (format, sample_count) in [
-            (COLOR_FORMAT, MSAA_SAMPLES),
-            (HDR_FORMAT, MSAA_SAMPLES),
-            (DEPTH_FORMAT, 1),
-        ] {
+        {
             device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some("transient capability probe"),
@@ -45,9 +41,9 @@ async fn pass_local_attachment_usage(device: &wgpu::Device) -> wgpu::TextureUsag
                         depth_or_array_layers: 1,
                     },
                     mip_level_count: 1,
-                    sample_count,
+                    sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
-                    format,
+                    format: DEPTH_FORMAT,
                     usage: TRANSIENT_ATTACHMENT_USAGE,
                     view_formats: &[],
                 })
@@ -166,7 +162,8 @@ struct PipelinePair {
     mip: wgpu::RenderPipeline,
     cap: wgpu::RenderPipeline,
     line: wgpu::RenderPipeline,
-    transmission_line: wgpu::RenderPipeline,
+    fxaa: wgpu::RenderPipeline,
+    output: wgpu::RenderPipeline,
 }
 
 struct AoPipelines {
@@ -230,8 +227,8 @@ struct SizedTargets {
     width: u32,
     height: u32,
     extent: wgpu::Extent3d,
-    msaa_view: wgpu::TextureView,
-    hdr_msaa: wgpu::TextureView,
+    /// The display-transformed surfaces, FXAA's input.
+    display_view: wgpu::TextureView,
     opaque_view: wgpu::TextureView,
     opaque_levels: Vec<wgpu::TextureView>,
     opaque_mips: wgpu::TextureView,
@@ -248,14 +245,13 @@ struct SizedTargets {
 
 // wgpu's WebGPU backend frees nothing on drop, so a retired target set would
 // hold its GPU memory until the JS garbage collector runs: about 100 MB at
-// 1276x798 with MSAA, HDR, transmission mips and AO. Browsers with a fixed GPU
+// 1276x798 with HDR, transmission mips and AO. Browsers with a fixed GPU
 // budget then fail a later allocation, surfacing as a rejected `map_async` on
 // a live device. Destroying is safe for work already submitted.
 impl Drop for SizedTargets {
     fn drop(&mut self) {
         let mut views = vec![
-            &self.msaa_view,
-            &self.hdr_msaa,
+            &self.display_view,
             &self.opaque_view,
             &self.opaque_mips,
             &self.depth_view,
@@ -323,31 +319,6 @@ fn validate_target_extent(
     Ok(())
 }
 
-fn hdr_multisample_target(
-    device: &wgpu::Device,
-    size: wgpu::Extent3d,
-    transparency: bool,
-    pass_local_usage: wgpu::TextureUsages,
-) -> wgpu::TextureView {
-    device
-        .create_texture(&wgpu::TextureDescriptor {
-            label: Some("HDR multisample"),
-            size,
-            mip_level_count: 1,
-            sample_count: MSAA_SAMPLES,
-            dimension: wgpu::TextureDimension::D2,
-            format: HDR_FORMAT,
-            // Transparent rendering loads the opaque samples in a later pass.
-            usage: if transparency {
-                wgpu::TextureUsages::RENDER_ATTACHMENT
-            } else {
-                pass_local_usage
-            },
-            view_formats: &[],
-        })
-        .create_view(&wgpu::TextureViewDescriptor::default())
-}
-
 fn composite_target(device: &wgpu::Device, size: wgpu::Extent3d) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
@@ -357,7 +328,10 @@ fn composite_target(device: &wgpu::Device, size: wgpu::Extent3d) -> wgpu::Textur
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: HDR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            // Starts as a copy of the opaque image; transparent surfaces blend over it.
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         })
         .create_view(&wgpu::TextureViewDescriptor::default())
@@ -1149,8 +1123,8 @@ fn create_pipeline_pair(
         attributes: &wgpu::vertex_attr_array![1 => Float32x3],
     };
     // Fat lines: one instance per segment carrying both endpoints; the vertex
-    // shader expands each into a screen-space body quad plus two round-cap
-    // rows (8-vertex triangle strip).
+    // shader expands each into a screen-space body quad plus two end rows
+    // (8-vertex triangle strip) that `fs_line` covers analytically.
     let segment_layout = wgpu::VertexBufferLayout {
         array_stride: 24,
         step_mode: wgpu::VertexStepMode::Instance,
@@ -1158,15 +1132,16 @@ fn create_pipeline_pair(
     };
 
     let color_target = Some(wgpu::ColorTargetState {
-        format: COLOR_FORMAT,
+        format: HDR_FORMAT,
         // Straight-alpha over on a transparent clear.
         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
         write_mask: wgpu::ColorWrites::ALL,
     });
+    // Edges blend over the surfaces without writing depth, like the viewer's.
     let line_depth_state = Some(wgpu::DepthStencilState {
         format: DEPTH_FORMAT,
-        depth_write_enabled: Some(true),
-        depth_compare: Some(wgpu::CompareFunction::Less),
+        depth_write_enabled: Some(false),
+        depth_compare: Some(wgpu::CompareFunction::LessEqual),
         stencil: wgpu::StencilState::default(),
         bias: wgpu::DepthBiasState::default(),
     });
@@ -1176,14 +1151,12 @@ fn create_pipeline_pair(
     // overhangs a nearer surface — grazing walls near silhouettes, bores,
     // ridges seen edge-on — a constant line-side bias loses to the surface's
     // depth gradient and the stroke gets chewed to a hairline. Pushing each
-    // surface back by its own screen-space depth slope times the stroke's
-    // half-width covers exactly that overhang at any resolution; `clamp`
-    // bounds the push on near-tangent surfaces so hidden edges behind them
-    // stay hidden. The half-width is the whole margin: depth is tested per
-    // sample, so nothing beyond the stroke needs covering, and any extra push
-    // shows a hidden edge that ends on a face's boundary (the far flank edges
-    // of a gear tooth) as a tick past its outline. Surface-only renders use
-    // the unbiased state.
+    // surface back by its own screen-space depth slope covers that overhang at
+    // any resolution. The margin is the viewer's (`syncGltfSurfaceDepthBias`
+    // on WebGPU): half the stroke plus the half pixel by which a fragment's
+    // centre, where depth is tested, can sit past the stroke's edge, two
+    // constant steps, and no clamp. Surface-only renders use the unbiased
+    // state.
     let mesh_depth_state = Some(wgpu::DepthStencilState {
         format: DEPTH_FORMAT,
         depth_write_enabled: Some(true),
@@ -1200,18 +1173,16 @@ fn create_pipeline_pair(
                 // discard when the surface is nearer, so the whole stroke width
                 // takes its spine's visibility and this bias can drop to the
                 // constant. It needs that depth pass whenever lines draw.
-                slope_scale: line_width_px * 0.5,
-                clamp: 0.01,
+                slope_scale: line_width_px * 0.5 + 0.5,
+                clamp: 0.0,
             }
         } else {
             wgpu::DepthBiasState::default()
         },
     });
-    let multisample = wgpu::MultisampleState {
-        count: MSAA_SAMPLES,
-        mask: !0,
-        alpha_to_coverage_enabled: false,
-    };
+    // Single-sample, as the viewer renders: surfaces take FXAA and edges
+    // their analytic coverage instead of multisampling.
+    let multisample = wgpu::MultisampleState::default();
 
     let surface_layout = wgpu::VertexBufferLayout {
         array_stride: 64,
@@ -1282,46 +1253,31 @@ fn create_pipeline_pair(
 
     // ponytail: pipelines compiled sequentially on purpose — llvmpipe SIGSEGVs
     // under concurrent pipeline compilation (bevy #13708).
-    let make_line = |transmission: bool| {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("line"),
-            layout: Some(pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_line"),
-                compilation_options: Default::default(),
-                buffers: &[Some(segment_layout.clone())],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_line"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: if transmission {
-                        HDR_FORMAT
-                    } else {
-                        COLOR_FORMAT
-                    },
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: line_depth_state.clone().map(|mut state| {
-                // The retained opaque image supplies refracted edges; their depth
-                // must not prevent the later glass surface or final edge drawing.
-                state.depth_write_enabled = Some(!transmission);
-                state
-            }),
-            multisample,
-            multiview_mask: None,
-            cache: None,
-        })
-    };
+    let line = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("line"),
+        layout: Some(pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_line"),
+            compilation_options: Default::default(),
+            buffers: &[Some(segment_layout.clone())],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_line"),
+            compilation_options: Default::default(),
+            targets: std::slice::from_ref(&color_target),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: line_depth_state,
+        multisample,
+        multiview_mask: None,
+        cache: None,
+    });
 
     let cap_layout = wgpu::VertexBufferLayout {
         array_stride: 60,
@@ -1366,9 +1322,12 @@ fn create_pipeline_pair(
         cache: None,
     });
 
-    let fullscreen = |mip: bool| {
+    // Fullscreen passes: the display transform (surfaces to `composite_scene`
+    // frame), opaque mips, FXAA (both depth-tested passes share the geometry
+    // depth, so they declare it), and the background composite to the output.
+    let fullscreen = |label, entry_point, format, depth: bool| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("HDR output transform"),
+            label: Some(label),
             layout: Some(pipeline_layout),
             vertex: wgpu::VertexState {
                 module: shader,
@@ -1378,27 +1337,23 @@ fn create_pipeline_pair(
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,
-                entry_point: Some(if mip { "fs_mip" } else { "fs_screen" }),
+                entry_point: Some(entry_point),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: if mip { HDR_FORMAT } else { COLOR_FORMAT },
+                    format,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
             primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: (!mip).then_some(wgpu::DepthStencilState {
+            depth_stencil: depth.then_some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(false),
                 depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
-            multisample: if mip {
-                wgpu::MultisampleState::default()
-            } else {
-                multisample
-            },
+            multisample,
             multiview_mask: None,
             cache: None,
         })
@@ -1408,11 +1363,12 @@ fn create_pipeline_pair(
         blend_mesh,
         constant_mesh,
         constant_blend_mesh,
-        screen: fullscreen(false),
-        mip: fullscreen(true),
+        screen: fullscreen("HDR display transform", "fs_screen", HDR_FORMAT, true),
+        mip: fullscreen("transmission mip", "fs_mip", HDR_FORMAT, false),
+        fxaa: fullscreen("surface FXAA", "fs_fxaa", HDR_FORMAT, true),
+        output: fullscreen("output composite", "fs_output", COLOR_FORMAT, false),
         cap,
-        line: make_line(false),
-        transmission_line: make_line(true),
+        line,
     }
 }
 
@@ -2483,21 +2439,6 @@ impl Renderer {
                 }
                 targets.composite_view =
                     transparency.then(|| composite_target(&self.state.device, targets.extent));
-                let usage = if transparency {
-                    wgpu::TextureUsages::RENDER_ATTACHMENT
-                } else {
-                    self.state.pass_local_usage
-                };
-                if targets.hdr_msaa.texture().usage() != usage {
-                    let next = hdr_multisample_target(
-                        &self.state.device,
-                        targets.extent,
-                        transparency,
-                        self.state.pass_local_usage,
-                    );
-                    targets.hdr_msaa.texture().destroy();
-                    targets.hdr_msaa = next;
-                }
             }
             return;
         }
@@ -2505,27 +2446,28 @@ impl Renderer {
         let retired = self.state.targets.as_ref().map(profile::ledger);
         self.counters.target_allocations += 1;
         let device = &self.state.device;
-        // Render targets: MSAA color + depth, single-sample sRGB resolve target.
+        // Render targets: single-sample HDR surfaces and depth, the display
+        // image FXAA reads, and the sRGB output.
         let extent = wgpu::Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
         };
-        let msaa_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("msaa"),
+        let display_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("display HDR"),
             size: extent,
             mip_level_count: 1,
-            sample_count: MSAA_SAMPLES,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: COLOR_FORMAT,
-            usage: self.state.pass_local_usage,
+            format: HDR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("depth"),
             size: extent,
             mip_level_count: 1,
-            sample_count: MSAA_SAMPLES,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -2604,8 +2546,6 @@ impl Renderer {
             view_formats: &[],
         });
 
-        let hdr_msaa =
-            hdr_multisample_target(device, extent, transparency, self.state.pass_local_usage);
         let mip_count = if transmission {
             width.max(height).ilog2() + 1
         } else {
@@ -2618,7 +2558,10 @@ impl Renderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: HDR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            // Copied to the composite target when transparent surfaces draw.
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let opaque_levels: Vec<_> = (0..mip_count)
@@ -2651,14 +2594,13 @@ impl Renderer {
             width,
             height,
             extent,
-            hdr_msaa,
+            display_view: display_texture.create_view(&wgpu::TextureViewDescriptor::default()),
             opaque_view,
             opaque_mips,
             opaque_levels,
             transmission,
             ao: ao_targets,
             composite_view,
-            msaa_view: msaa_texture.create_view(&wgpu::TextureViewDescriptor::default()),
             depth_view: depth_texture.create_view(&wgpu::TextureViewDescriptor::default()),
             resolve_view: resolve_texture.create_view(&wgpu::TextureViewDescriptor::default()),
             resolve_texture,
@@ -2833,6 +2775,20 @@ impl Renderer {
         // Each surface draws once. Transmission samples the retained opaque
         // HDR image; compositing precedes the sole display transform.
         for stage in 0..if has_transparency { 2 } else { 1 } {
+            if stage == 1 {
+                // Transparent surfaces blend over a copy of the opaque image,
+                // which transmission keeps sampling through its mips.
+                encoder.copy_texture_to_texture(
+                    targets.opaque_view.texture().as_image_copy(),
+                    targets
+                        .composite_view
+                        .as_ref()
+                        .expect("transparent target")
+                        .texture()
+                        .as_image_copy(),
+                    targets.extent,
+                );
+            }
             if stage == 1 && has_transmission {
                 for levels in targets.opaque_levels.windows(2) {
                     let resources = scene_group(&levels[0], &state.empty_scene, &state.empty_ao);
@@ -2866,24 +2822,20 @@ impl Renderer {
                     "transmission and alpha"
                 }),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &targets.hdr_msaa,
-                    depth_slice: None,
-                    resolve_target: Some(if stage == 0 {
+                    view: if stage == 0 {
                         &targets.opaque_view
                     } else {
                         targets.composite_view.as_ref().expect("transparent target")
-                    }),
+                    },
+                    depth_slice: None,
+                    resolve_target: None,
                     ops: wgpu::Operations {
                         load: if stage == 0 {
                             wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
                         } else {
                             wgpu::LoadOp::Load
                         },
-                        store: if stage == 0 && has_transparency {
-                            wgpu::StoreOp::Store
-                        } else {
-                            wgpu::StoreOp::Discard
-                        },
+                        store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -2931,7 +2883,7 @@ impl Renderer {
                     draw_surface(&mut pass, instance, mesh);
                 }
                 if has_transmission && options.lines {
-                    pass.set_pipeline(&pair.transmission_line);
+                    pass.set_pipeline(&pair.line);
                     draw_lines(&mut pass, scene, options);
                 }
             } else {
@@ -3104,61 +3056,89 @@ impl Renderer {
                 .as_ref()
                 .map_or(&state.empty_ao, |ao| &ao.full_view),
         );
-        {
+        // The viewer's presentation: display-transformed surfaces (and section
+        // caps), FXAA over them, then the analytically covered edges, and the
+        // background composited last. The opaque image's first level is free
+        // once displayed, so it holds the filtered frame the edges draw into.
+        let depth_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
+            view: &targets.depth_view,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        });
+        let filter_resources =
+            scene_group(&state.empty_scene, &targets.display_view, &state.empty_ao);
+        let output_resources =
+            scene_group(&state.empty_scene, &targets.opaque_view, &state.empty_ao);
+        for (label, view, resources) in [
+            ("display transform", &targets.display_view, &final_resources),
+            (
+                "surface FXAA and edges",
+                &targets.opaque_view,
+                &filter_resources,
+            ),
+            ("output composite", &targets.resolve_view, &output_resources),
+        ] {
+            let output = std::ptr::eq(view, &targets.resolve_view);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("display transform and exact edges"),
+                label: Some(label),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &targets.msaa_view,
+                    view,
                     depth_slice: None,
-                    resolve_target: Some(&targets.resolve_view),
+                    resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Discard,
+                        store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &targets.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
+                depth_stencil_attachment: if output {
+                    None
+                } else {
+                    depth_attachment.clone()
+                },
                 #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
-                timestamp_writes: probe
-                    .as_mut()
-                    .map(|p| p.pass("display transform and exact edges")),
+                timestamp_writes: probe.as_mut().map(|p| p.pass(label)),
                 #[cfg(not(all(feature = "bench", not(target_arch = "wasm32"))))]
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &state.frame_bind_group, &[]);
-            pass.set_bind_group(3, &final_resources, &[]);
+            pass.set_bind_group(3, resources, &[]);
             pass.set_bind_group(1, &state.default_material, &[]);
             pass.set_bind_group(2, &state.identity_object, &[]);
-            pass.set_pipeline(&pair.screen);
-            pass.draw(0..3, 0..1);
-            if let Some(cap) = &presentation.cap {
-                pass.set_pipeline(&pair.cap);
-                pass.set_vertex_buffer(0, cap.vertices.slice(..));
-                pass.set_index_buffer(cap.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..cap.index_count, 0, 0..1);
-            }
-            if options.lines {
-                pass.set_pipeline(&pair.line);
-                draw_lines(&mut pass, scene, options);
-            }
-            if let Some(object) = &presentation.identity_object {
-                for stroke in [&presentation.boundary, &presentation.open_chains]
-                    .into_iter()
-                    .flatten()
-                {
+            if output {
+                pass.set_pipeline(&pair.output);
+                pass.draw(0..3, 0..1);
+            } else if std::ptr::eq(view, &targets.display_view) {
+                pass.set_pipeline(&pair.screen);
+                pass.draw(0..3, 0..1);
+                if let Some(cap) = &presentation.cap {
+                    pass.set_pipeline(&pair.cap);
+                    pass.set_vertex_buffer(0, cap.vertices.slice(..));
+                    pass.set_index_buffer(cap.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..cap.index_count, 0, 0..1);
+                }
+            } else {
+                pass.set_pipeline(&pair.fxaa);
+                pass.draw(0..3, 0..1);
+                if options.lines {
                     pass.set_pipeline(&pair.line);
-                    pass.set_bind_group(1, &stroke.material, &[]);
-                    pass.set_bind_group(2, object, &[]);
-                    pass.set_vertex_buffer(0, stroke.segments.slice(..));
-                    pass.draw(0..8, 0..stroke.count);
+                    draw_lines(&mut pass, scene, options);
+                }
+                if let Some(object) = &presentation.identity_object {
+                    for stroke in [&presentation.boundary, &presentation.open_chains]
+                        .into_iter()
+                        .flatten()
+                    {
+                        pass.set_pipeline(&pair.line);
+                        pass.set_bind_group(1, &stroke.material, &[]);
+                        pass.set_bind_group(2, object, &[]);
+                        pass.set_vertex_buffer(0, stroke.segments.slice(..));
+                        pass.draw(0..8, 0..stroke.count);
+                    }
                 }
             }
         }
@@ -3252,9 +3232,9 @@ impl Renderer {
         view.buffer.unmap();
         self.take_uncaptured()?;
         // The sRGB target stores encoded premultiplied-linear RGB. Convert to
-        // the public straight-alpha contract after every cap/edge blend and MSAA
-        // resolve, rather than unpremultiplying the surface pass prematurely.
-        // The display pass composites every sample over the requested background;
+        // the public straight-alpha contract after every cap/edge blend,
+        // rather than unpremultiplying the surface pass prematurely.
+        // The output pass composites every pixel over the requested background;
         // an opaque background therefore resolves to alpha 255, including lines,
         // transparent surfaces and transmission. Its straight RGB is already final.
         // Snapshot this per submitted view: a later overlapping view may differ.
@@ -4724,7 +4704,7 @@ mod tests {
             ),
             (769, 433)
         );
-        assert_eq!(targets.depth_view.texture().sample_count(), MSAA_SAMPLES);
+        assert_eq!(targets.depth_view.texture().sample_count(), 1);
         let off = render_test_scene(
             &mut renderer,
             scene.clone(),
@@ -4733,17 +4713,31 @@ mod tests {
                 ..options.clone()
             },
         );
-        // AO cannot affect final geometric coverage; exact black authored lines
-        // remain black because the edge pass follows the surface composition.
+        // AO cannot affect geometric coverage. FXAA filters the AO-shaded
+        // surfaces, as the viewer's does, so shading may change how it blends a
+        // silhouette pixel, but alpha changes nowhere else; exact black
+        // authored lines remain black because the edge pass follows the
+        // surface composition.
+        let (width, height) = (options.width as usize, options.height as usize);
+        let alpha = |x: usize, y: usize| off.rgba[(y * width + x) * 4 + 3];
+        let at_silhouette = |index: usize| {
+            let (x, y) = (index % width, index / width);
+            let around = (y.saturating_sub(1)..=(y + 1).min(height - 1)).flat_map(|y| {
+                (x.saturating_sub(1)..=(x + 1).min(width - 1)).map(move |x| alpha(x, y))
+            });
+            let (low, high) = around.fold((255, 0), |(low, high), a| (a.min(low), a.max(high)));
+            low < 255 && high > 0
+        };
         let mut black = 0;
-        for (a, b) in first
+        for (index, (a, b)) in first
             .rgba
             .as_chunks::<4>()
             .0
             .iter()
             .zip(off.rgba.as_chunks::<4>().0)
+            .enumerate()
         {
-            assert_eq!(a[3], b[3]);
+            assert!(a[3] == b[3] || at_silhouette(index), "{a:?} {b:?}");
             if b[..3] == [0, 0, 0] && b[3] == 255 {
                 assert_eq!(a, b);
                 black += 1;
@@ -5643,8 +5637,12 @@ mod tests {
                     assert_eq!(&pixel[..3], &[0; 3]);
                 } else if pixel[3] < 255 {
                     partial += 1;
-                    for (channel, expected) in expected_color.into_iter().enumerate() {
-                        assert!(pixel[channel].abs_diff(expected) <= 3, "{pixel:?}");
+                    // FXAA leaves faint halo alphas whose 8-bit premultiplied
+                    // colour cannot round-trip within a few levels.
+                    if pixel[3] >= 32 {
+                        for (channel, expected) in expected_color.into_iter().enumerate() {
+                            assert!(pixel[channel].abs_diff(expected) <= 3, "{pixel:?}");
+                        }
                     }
                 }
             }
@@ -5682,11 +5680,12 @@ mod tests {
     }
 
     #[test]
-    fn hidden_edges_ending_on_a_face_boundary_leave_no_trace() {
+    fn hidden_edges_ending_on_a_face_boundary_leave_at_most_a_corner_tick() {
         // An edge behind a face that ends on the face's boundary (the far flank edges of a gear
         // tooth) shows through for as long as the surface bias exceeds what the stroke needs.
-        // Inside the solid's silhouette, hidden edges must change no pixel at any grazing angle or
-        // stroke width.
+        // The viewer's margin (half the stroke plus half a pixel, for depth tested at pixel
+        // centres) lets each of the three hidden edges show at most a faint tick where it meets
+        // the outline, at any grazing angle or stroke width, and never along its length.
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
         let mut leaks = Vec::new();
@@ -5731,23 +5730,28 @@ mod tests {
                 let visible =
                     render_test_scene(&mut renderer, cube_with_edges(false), options.clone());
                 let all = render_test_scene(&mut renderer, cube_with_edges(true), options);
-                let changed = solid
+                let differences: Vec<u8> = solid
                     .rgba
                     .as_chunks::<4>()
                     .0
                     .iter()
                     .zip(visible.rgba.as_chunks::<4>().0)
                     .zip(all.rgba.as_chunks::<4>().0)
-                    .filter(|((solid, a), b)| {
-                        solid[..3] != [255; 3] && a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > 2)
-                    })
-                    .count();
-                leaks.push((line_width, elevation.to_degrees().round(), changed));
+                    .filter(|((solid, _), _)| solid[..3] != [255; 3])
+                    .map(|((_, a), b)| a.iter().zip(b).map(|(a, b)| a.abs_diff(*b)).max().unwrap())
+                    .filter(|&difference| difference > 2)
+                    .collect();
+                leaks.push((
+                    line_width,
+                    elevation.to_degrees().round(),
+                    differences.len(),
+                    differences.iter().copied().max().unwrap_or(0),
+                ));
             }
         }
         assert!(
-            leaks.iter().all(|&(_, _, changed)| changed == 0),
-            "hidden edges showed through (width, elevation°, pixels): {leaks:?}"
+            leaks.iter().all(|&(_, _, changed, _)| changed <= 6),
+            "hidden edges showed through (width, elevation°, pixels, max level): {leaks:?}"
         );
     }
 
@@ -6500,7 +6504,7 @@ mod tests {
     }
 
     #[test]
-    fn line_caps_are_round_and_hidden_lines_stay_hidden() {
+    fn line_ends_are_butt_and_hidden_lines_stay_hidden() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
                 .expect("renderer");
@@ -6520,9 +6524,14 @@ mod tests {
             line_scene(&[[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]]),
             options.clone(),
         );
+        // The segment spans pixels 64..192. Like the viewer's edges, it ends
+        // flat at the endpoints: no cap reaches the pixels before it.
         let red = |x: u32, y: u32| line.rgba[((y * 256 + x) * 4) as usize];
-        assert!(red(61, 128) < 200);
-        assert_eq!(red(61, 124), 255);
+        assert_eq!(red(63, 128), 255);
+        assert_eq!(red(61, 128), 255);
+        assert!(red(64, 128) < 50);
+        assert!(red(191, 128) < 50);
+        assert_eq!(red(192, 128), 255);
 
         let surface = render_test_scene(&mut renderer, occluded_line_scene(false), options.clone());
         let hidden_line = render_test_scene(&mut renderer, occluded_line_scene(true), options);
@@ -7215,6 +7224,8 @@ mod tests {
 
     #[test]
     fn pass_local_targets_are_transient_but_loaded_depth_and_hdr_are_not() {
+        // Only the AO depth test is pass-local; every other target is read or
+        // loaded by a later pass and keeps its storage.
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
                 .expect("renderer");
@@ -7226,13 +7237,13 @@ mod tests {
                     .usage()
                     .contains(wgpu::TextureUsages::TRANSIENT_ATTACHMENT)
             };
-            assert!(transient(&targets.msaa_view));
             assert!(transient(&targets.ao.as_ref().unwrap().test_depth_view));
-            assert_eq!(transient(&targets.hdr_msaa), !transparency);
             assert!(!transient(&targets.depth_view));
             assert!(!transient(&targets.opaque_view));
-            assert_eq!(targets.msaa_view.texture().sample_count(), 4);
-            assert_eq!(targets.hdr_msaa.texture().sample_count(), 4);
+            assert!(!transient(&targets.display_view));
+            assert_eq!(targets.composite_view.is_some(), transparency);
+            assert_eq!(targets.display_view.texture().sample_count(), 1);
+            assert_eq!(targets.depth_view.texture().sample_count(), 1);
             assert_eq!(targets.depth_view.texture().format(), DEPTH_FORMAT);
         }
         assert_eq!(renderer.counters.target_allocations, 1);

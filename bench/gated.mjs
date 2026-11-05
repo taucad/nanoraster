@@ -64,7 +64,10 @@ const report = {
   // The workload grows with it: three AO passes and a normal attachment on the
   // AO depth pass. CI medians were 923-1,256 ms on lavapipe against 705.6 ms
   // for v11; bench.yml's MAX_MEDIAN_MS admits them.
-  name: 'gear-parse-raster-encode-512x384-v12',
+  // v13: surfaces render single-sample with the viewer's FXAA, edges take its
+  // analytic square-pixel coverage, butt ends and surface depth margin, and
+  // no longer write depth. Silhouette and edge pixels change on purpose.
+  name: 'gear-parse-raster-encode-512x384-v13',
   adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,
