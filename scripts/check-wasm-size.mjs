@@ -239,7 +239,39 @@ const sizes = {
 // are identical. CI's Linux artifact measures 2,425,745 / 1,137,162 /
 // 942,622. Admit the observed compressor change only: raw/brotli ceilings
 // and the existing 0.5% compressed allowance remain unchanged.
-const ceilings = { raw: 2_427_613, gzip9: 1_137_170, brotli11: 938_868 };
+// Viewer-matched GTAO with denoise and guided upsample, plus `lineColor`
+// (Rust 1.99.1): CI's Linux artifact measures 2,433,591 / 1,138,864 / 944,281
+// against 2,425,745 / 1,137,162 / 942,622 on main (+7,846 / +1,702 / +1,659).
+// The three AO passes replace the hemisphere estimator. Admit the measured raw
+// and Brotli deltas only, retaining the 120-byte raw headroom.
+// GTAO controls, `toneMapping` and mesh-normal AO (Rust 1.99.1, 2026-11-04):
+// local raw 2,432,898 -> 2,441,746 (+8,848), gzip-9 1,138,912 -> 1,142,760
+// (+3,848), Brotli-11 943,800 -> 946,943 (+3,143). Admit the measured raw and
+// Brotli deltas only; the gzip ceiling and compressor allowances are unchanged.
+// Headlamp, light cards and the GGX card prefilter (Rust 1.99.1, 2026-11-04):
+// local raw 2,441,746 -> 2,470,040 (+28,294), gzip-9 1,142,760 -> 1,154,521
+// (+11,761), Brotli-11 946,943 -> 953,592 (+6,649). Admit the measured raw and
+// Brotli deltas, and the gzip delta too: the gzip ceiling's 0.5% allowance no
+// longer covers the build. Compressor allowances are unchanged.
+// Unused N8AO blue-noise texture removed (Rust 1.99.1, Node 24.22.1,
+// 2026-11-04): same-host 2b47c47 2,470,040 / 1,154,521 / 953,592 ->
+// 2,403,892 / 1,087,523 / 888,068 (-66,148 / -66,998 / -65,524). GTAO uses
+// magic-square noise, so the 65,536-byte texture and its binding were dead.
+// Lower every limit by exactly the measured delta: the compressed ceilings
+// move so that ceiling plus allowance drops by it, keeping existing headroom.
+// Viewer FXAA surfaces and analytic edges (Rust 1.99.1, Node 24.22.1,
+// 2026-11-05): same-host 6d25720 demo build 2,403,890 / 1,087,523 / 888,465
+// -> 2,410,810 / 1,090,162 / 890,464 (+6,920 / +2,639 / +1,999). The bytes are
+// the FXAA 3.11 and linear-light output passes, square-pixel edge coverage and
+// the display-HDR target, net of the deleted 4x MSAA targets. Admit exactly
+// the measured deltas; headroom and compressor allowances are unchanged.
+// sRGB background blend (Rust 1.99.1, Node 24.22.1, 2026-11-05): same-host
+// 2886032 demo build 2,410,810 / 1,090,162 / 890,464 -> 2,411,949 /
+// 1,090,522 / 890,797 (+1,139 / +360 / +333). The bytes are the output pass's
+// sRGB encode and its encoded-domain blend, as the viewer's page composites
+// its canvas. Admit exactly the measured deltas; headroom and compressor
+// allowances are unchanged.
+const ceilings = { raw: 2_412_764, gzip9: 1_085_265, brotli11: 887_453 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.

@@ -25,7 +25,10 @@ The native test verifies hashes and compares every material's sphere interior
 separately. The gate is mean
 absolute RGB error <2/255 per material, without exposure adjustment, image
 registration or brightness masking. The three-pixel silhouette exclusion
-isolates shading from differences between WebGL and wgpu 4× MSAA coverage.
+isolates shading from coverage differences between WebGL's MSAA and
+nanoraster's single-sample FXAA, which follows the Tau viewer. FXAA also
+smooths high-contrast detail inside a sphere: the dispersive glass row, whose
+narrow refracted stripes it filters, has a 3/255 gate.
 
 To refresh: generate the catalog in Tau, select a fixture in the calibration
 page, front orthographic camera / vertical span 0.141 m / DPR 1, then save PNG

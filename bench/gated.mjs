@@ -58,7 +58,17 @@ const report = {
   // longer tick through it. Edge pixels near such outlines change on purpose.
   // v11: omitted AO now enables contact occlusion. This intentionally changes
   // image bytes and the default workload; explicit AO-off remains available.
-  name: 'gear-parse-raster-encode-512x384-v11',
+  // v12: AO ports the Tau viewer's GTAO with its denoise and upsample, and the
+  // default lighting, tone mapping and AO settings match the viewer. Shaded
+  // pixels change on purpose; geometry, framing and codecs are untouched.
+  // The workload grows with it: three AO passes and a normal attachment on the
+  // AO depth pass. CI medians were 923-1,256 ms on lavapipe against 705.6 ms
+  // for v11; bench.yml's MAX_MEDIAN_MS admits them.
+  // v13: surfaces render single-sample with the viewer's FXAA, edges take its
+  // analytic square-pixel coverage, butt ends and surface depth margin, and
+  // no longer write depth. Silhouette and edge pixels change on purpose.
+  // CI's first v13 median was 1,666.8 ms; bench.yml's MAX_MEDIAN_MS admits it.
+  name: 'gear-parse-raster-encode-512x384-v13',
   adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,

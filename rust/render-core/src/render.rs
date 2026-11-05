@@ -1,5 +1,6 @@
 //! Surface-less wgpu render path: adapter with `compatible_surface: None`,
-//! 4x MSAA into an sRGB resolve texture, `copy_texture_to_buffer` readback
+//! single-sample HDR passes with the viewer's FXAA into an sRGB output
+//! texture, `copy_texture_to_buffer` readback
 //! with 256-byte row alignment. No canvas anywhere — the same code runs on
 //! native backends and browser WebGPU.
 //!
@@ -12,8 +13,8 @@
 use crate::encode::{ImageFormat, encode_owned};
 use crate::glb::{self, MODE_TRIANGLES, Material};
 use crate::{
-    CameraProjection, LightingSpace, MAX_LIGHTS, MAX_SECTION_PLANES, Projection, RenderCamera,
-    RenderError, RenderOptions, with_view_result,
+    CameraProjection, MAX_SECTION_PLANES, Projection, RenderCamera, RenderError, RenderOptions,
+    with_view_result,
 };
 use glam::{Mat4, Vec3};
 use std::fmt::Display;
@@ -21,7 +22,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 
-const MSAA_SAMPLES: u32 = 4;
 // Native backends treat this as a hint; browser descriptors are validated once
 // per initialized device before any production targets use the optional flag.
 const TRANSIENT_ATTACHMENT_USAGE: wgpu::TextureUsages =
@@ -31,11 +31,7 @@ async fn pass_local_attachment_usage(device: &wgpu::Device) -> wgpu::TextureUsag
     #[cfg(target_arch = "wasm32")]
     {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        for (format, sample_count) in [
-            (COLOR_FORMAT, MSAA_SAMPLES),
-            (HDR_FORMAT, MSAA_SAMPLES),
-            (DEPTH_FORMAT, 1),
-        ] {
+        {
             device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some("transient capability probe"),
@@ -45,9 +41,9 @@ async fn pass_local_attachment_usage(device: &wgpu::Device) -> wgpu::TextureUsag
                         depth_or_array_layers: 1,
                     },
                     mip_level_count: 1,
-                    sample_count,
+                    sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
-                    format,
+                    format: DEPTH_FORMAT,
                     usage: TRANSIENT_ATTACHMENT_USAGE,
                     view_formats: &[],
                 })
@@ -166,29 +162,35 @@ struct PipelinePair {
     mip: wgpu::RenderPipeline,
     cap: wgpu::RenderPipeline,
     line: wgpu::RenderPipeline,
-    transmission_line: wgpu::RenderPipeline,
+    fxaa: wgpu::RenderPipeline,
+    output: wgpu::RenderPipeline,
 }
 
 struct AoPipelines {
     texture_mask: u32,
     depth_mesh: wgpu::RenderPipeline,
     depth_constant_mesh: wgpu::RenderPipeline,
+    /// GTAO estimate at `resolutionScale`.
     estimate: wgpu::RenderPipeline,
-    /// Full-resolution stochastic denoise, first and second pass.
-    blur: [wgpu::RenderPipeline; 2],
-    /// Half-resolution separable denoise, horizontal and vertical pass.
-    separable_blur: [wgpu::RenderPipeline; 2],
+    /// Edge-aware denoise at `resolutionScale`.
+    denoise: wgpu::RenderPipeline,
+    /// Guided upsample to the output resolution.
+    upsample: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    blue_noise: wgpu::TextureView,
     frame_buffer: wgpu::Buffer,
 }
 
 struct AoTargets {
+    /// Estimate and denoise extent: the output scaled by `resolutionScale`.
+    extent: (u32, u32),
     depth_view: wgpu::TextureView,
+    /// View-space shading normals, octahedral RG8, written beside `depth_view`.
+    normal_view: wgpu::TextureView,
     test_depth_view: wgpu::TextureView,
     estimate_view: wgpu::TextureView,
     blur_view: wgpu::TextureView,
+    full_view: wgpu::TextureView,
 }
 
 struct GpuCap {
@@ -225,8 +227,8 @@ struct SizedTargets {
     width: u32,
     height: u32,
     extent: wgpu::Extent3d,
-    msaa_view: wgpu::TextureView,
-    hdr_msaa: wgpu::TextureView,
+    /// The display-transformed surfaces, FXAA's input.
+    display_view: wgpu::TextureView,
     opaque_view: wgpu::TextureView,
     opaque_levels: Vec<wgpu::TextureView>,
     opaque_mips: wgpu::TextureView,
@@ -243,14 +245,13 @@ struct SizedTargets {
 
 // wgpu's WebGPU backend frees nothing on drop, so a retired target set would
 // hold its GPU memory until the JS garbage collector runs: about 100 MB at
-// 1276x798 with MSAA, HDR, transmission mips and AO. Browsers with a fixed GPU
+// 1276x798 with HDR, transmission mips and AO. Browsers with a fixed GPU
 // budget then fail a later allocation, surfacing as a rejected `map_async` on
 // a live device. Destroying is safe for work already submitted.
 impl Drop for SizedTargets {
     fn drop(&mut self) {
         let mut views = vec![
-            &self.msaa_view,
-            &self.hdr_msaa,
+            &self.display_view,
             &self.opaque_view,
             &self.opaque_mips,
             &self.depth_view,
@@ -265,6 +266,7 @@ impl Drop for SizedTargets {
                 &ao.test_depth_view,
                 &ao.estimate_view,
                 &ao.blur_view,
+                &ao.full_view,
             ]);
         }
         for view in views {
@@ -317,31 +319,6 @@ fn validate_target_extent(
     Ok(())
 }
 
-fn hdr_multisample_target(
-    device: &wgpu::Device,
-    size: wgpu::Extent3d,
-    transparency: bool,
-    pass_local_usage: wgpu::TextureUsages,
-) -> wgpu::TextureView {
-    device
-        .create_texture(&wgpu::TextureDescriptor {
-            label: Some("HDR multisample"),
-            size,
-            mip_level_count: 1,
-            sample_count: MSAA_SAMPLES,
-            dimension: wgpu::TextureDimension::D2,
-            format: HDR_FORMAT,
-            // Transparent rendering loads the opaque samples in a later pass.
-            usage: if transparency {
-                wgpu::TextureUsages::RENDER_ATTACHMENT
-            } else {
-                pass_local_usage
-            },
-            view_formats: &[],
-        })
-        .create_view(&wgpu::TextureViewDescriptor::default())
-}
-
 fn composite_target(device: &wgpu::Device, size: wgpu::Extent3d) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
@@ -351,7 +328,10 @@ fn composite_target(device: &wgpu::Device, size: wgpu::Extent3d) -> wgpu::Textur
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: HDR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            // Starts as a copy of the opaque image; transparent surfaces blend over it.
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         })
         .create_view(&wgpu::TextureViewDescriptor::default())
@@ -430,7 +410,15 @@ struct DeviceState {
     pass_local_usage: wgpu::TextureUsages,
     shader: wgpu::ShaderModule,
     frame_buffer: wgpu::Buffer,
+    /// The frame group for the current view's environment: `room_frame`, or
+    /// the card environment's group.
     frame_bind_group: wgpu::BindGroup,
+    frame_layout: wgpu::BindGroupLayout,
+    dfg_map: wgpu::TextureView,
+    lighting_sampler: wgpu::Sampler,
+    room_frame: wgpu::BindGroup,
+    /// Last prefiltered card environment, kept while its cards repeat.
+    card_frame: Option<(Vec<crate::LightCard>, wgpu::BindGroup)>,
     prim_layout: wgpu::BindGroupLayout,
     scene_layout: wgpu::BindGroupLayout,
     scene_sampler: wgpu::Sampler,
@@ -942,13 +930,14 @@ fn position_clip_planes(
 // The one definition of the `Frame` uniform (see `shader.wgsl`): two mat4 and
 // a viewport vec4, then eight Lights at a 32-byte stride, a 16-byte lighting
 // tail, `MAX_SECTION_PLANES` section planes, a 16-byte section tail, 16-byte
-// background, and 16-byte AO control. 592 bytes at eight planes.
+// background, 16-byte display control (AO exponent, tone mapping operator) and
+// 16-byte line colour. 608 bytes at eight planes.
 const FRAME_LIGHTS: usize = 36;
 const FRAME_LIGHT_STRIDE: usize = 8;
 const FRAME_TAIL: usize = 100;
 const FRAME_SECTION_PLANES: usize = 104;
 const FRAME_SECTION_TAIL: usize = FRAME_SECTION_PLANES + MAX_SECTION_PLANES * 4;
-const FRAME_FLOATS: usize = FRAME_SECTION_TAIL + 12;
+const FRAME_FLOATS: usize = FRAME_SECTION_TAIL + 16;
 
 fn frame_uniform(camera: CameraState, options: &RenderOptions) -> [f32; FRAME_FLOATS] {
     let lighting = &options.lighting;
@@ -961,23 +950,35 @@ fn frame_uniform(camera: CameraState, options: &RenderOptions) -> [f32; FRAME_FL
         line_width_px(options),
         crate::section::stripe_spacing(camera, camera_projection_kind(&options.camera)),
     ]);
-    for (index, light) in lighting.lights.iter().take(MAX_LIGHTS).enumerate() {
-        // World-space rigs are rotated into view space here, once per view,
-        // so the shader stays view-space and never learns the difference.
-        let direction = match lighting.space {
-            LightingSpace::View => Vec3::from(light.direction),
-            LightingSpace::World => camera.view.transform_vector3(Vec3::from(light.direction)),
-        }
-        .normalize_or_zero();
+    // World-space rigs are rotated into view space here, once per view, so
+    // the shader stays view-space and never learns the difference. The
+    // camera-relative headlamp takes the first slot.
+    let mut count = 0u32;
+    for (index, (direction, color)) in lighting
+        .view_lights(|direction| {
+            camera
+                .view
+                .transform_vector3(Vec3::from(direction))
+                .to_array()
+        })
+        .into_iter()
+        .enumerate()
+    {
         let base = FRAME_LIGHTS + index * FRAME_LIGHT_STRIDE;
-        data[base..base + 3].copy_from_slice(&direction.to_array());
-        data[base + 4..base + 7].copy_from_slice(&light.color);
+        data[base..base + 3].copy_from_slice(&Vec3::from(direction).normalize_or_zero().to_array());
+        data[base + 4..base + 7].copy_from_slice(&color);
+        count += 1;
     }
-    // The tail's two u32 fields ride in the same f32 array by bit pattern.
-    data[FRAME_TAIL] = f32::from_bits(lighting.lights.len().min(MAX_LIGHTS) as u32);
+    // The light count rides in the same f32 array by bit pattern.
+    data[FRAME_TAIL] = f32::from_bits(count);
     data[FRAME_TAIL + 1] = lighting.ambient;
     data[FRAME_TAIL + 2] = lighting.exposure;
-    data[FRAME_TAIL + 3] = f32::from_bits(u32::from(lighting.environment));
+    // Environment radiance multiplier; zero switches the environment off.
+    data[FRAME_TAIL + 3] = if lighting.environment {
+        lighting.environment_intensity
+    } else {
+        0.0
+    };
     data[FRAME_SECTION_TAIL + 3] = f32::from_bits(u32::from(
         camera_projection_kind(&options.camera) == Projection::Orthographic,
     ));
@@ -988,7 +989,25 @@ fn frame_uniform(camera: CameraState, options: &RenderOptions) -> [f32; FRAME_FL
         background.b as f32,
         background.a as f32,
     ]);
-    data[FRAME_SECTION_TAIL + 8] = options.ao.map_or(1.0, |ao| ao.intensity);
+    // The AO passes apply the visibility exponent before denoising, as GTAO does.
+    data[FRAME_SECTION_TAIL + 8] = 1.0;
+    data[FRAME_SECTION_TAIL + 9] = f32::from_bits(match options.tone_mapping {
+        crate::ToneMapping::Neutral => 0u32,
+        crate::ToneMapping::Aces => 1,
+        crate::ToneMapping::Linear => 2,
+        crate::ToneMapping::None => 3,
+    });
+    // Linear line colour; a negative alpha keeps each line's authored material colour.
+    data[FRAME_SECTION_TAIL + 12..FRAME_SECTION_TAIL + 16].copy_from_slice(
+        &options.line_color.map_or([0.0, 0.0, 0.0, -1.0], |color| {
+            [
+                srgb_to_linear(color[0]) as f32,
+                srgb_to_linear(color[1]) as f32,
+                srgb_to_linear(color[2]) as f32,
+                color[3],
+            ]
+        }),
+    );
     if let Some(sections) = &options.sections {
         // Clamped the way the light rig is: `RenderOptions` is public, so the
         // uniform's fixed array is the authority even when validation is not.
@@ -1104,8 +1123,8 @@ fn create_pipeline_pair(
         attributes: &wgpu::vertex_attr_array![1 => Float32x3],
     };
     // Fat lines: one instance per segment carrying both endpoints; the vertex
-    // shader expands each into a screen-space body quad plus two round-cap
-    // rows (8-vertex triangle strip).
+    // shader expands each into a screen-space body quad plus two end rows
+    // (8-vertex triangle strip) that `fs_line` covers analytically.
     let segment_layout = wgpu::VertexBufferLayout {
         array_stride: 24,
         step_mode: wgpu::VertexStepMode::Instance,
@@ -1113,15 +1132,16 @@ fn create_pipeline_pair(
     };
 
     let color_target = Some(wgpu::ColorTargetState {
-        format: COLOR_FORMAT,
+        format: HDR_FORMAT,
         // Straight-alpha over on a transparent clear.
         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
         write_mask: wgpu::ColorWrites::ALL,
     });
+    // Edges blend over the surfaces without writing depth, like the viewer's.
     let line_depth_state = Some(wgpu::DepthStencilState {
         format: DEPTH_FORMAT,
-        depth_write_enabled: Some(true),
-        depth_compare: Some(wgpu::CompareFunction::Less),
+        depth_write_enabled: Some(false),
+        depth_compare: Some(wgpu::CompareFunction::LessEqual),
         stencil: wgpu::StencilState::default(),
         bias: wgpu::DepthBiasState::default(),
     });
@@ -1131,14 +1151,12 @@ fn create_pipeline_pair(
     // overhangs a nearer surface — grazing walls near silhouettes, bores,
     // ridges seen edge-on — a constant line-side bias loses to the surface's
     // depth gradient and the stroke gets chewed to a hairline. Pushing each
-    // surface back by its own screen-space depth slope times the stroke's
-    // half-width covers exactly that overhang at any resolution; `clamp`
-    // bounds the push on near-tangent surfaces so hidden edges behind them
-    // stay hidden. The half-width is the whole margin: depth is tested per
-    // sample, so nothing beyond the stroke needs covering, and any extra push
-    // shows a hidden edge that ends on a face's boundary (the far flank edges
-    // of a gear tooth) as a tick past its outline. Surface-only renders use
-    // the unbiased state.
+    // surface back by its own screen-space depth slope covers that overhang at
+    // any resolution. The margin is the viewer's (`syncGltfSurfaceDepthBias`
+    // on WebGPU): half the stroke plus the half pixel by which a fragment's
+    // centre, where depth is tested, can sit past the stroke's edge, two
+    // constant steps, and no clamp. Surface-only renders use the unbiased
+    // state.
     let mesh_depth_state = Some(wgpu::DepthStencilState {
         format: DEPTH_FORMAT,
         depth_write_enabled: Some(true),
@@ -1155,18 +1173,16 @@ fn create_pipeline_pair(
                 // discard when the surface is nearer, so the whole stroke width
                 // takes its spine's visibility and this bias can drop to the
                 // constant. It needs that depth pass whenever lines draw.
-                slope_scale: line_width_px * 0.5,
-                clamp: 0.01,
+                slope_scale: line_width_px * 0.5 + 0.5,
+                clamp: 0.0,
             }
         } else {
             wgpu::DepthBiasState::default()
         },
     });
-    let multisample = wgpu::MultisampleState {
-        count: MSAA_SAMPLES,
-        mask: !0,
-        alpha_to_coverage_enabled: false,
-    };
+    // Single-sample, as the viewer renders: surfaces take FXAA and edges
+    // their analytic coverage instead of multisampling.
+    let multisample = wgpu::MultisampleState::default();
 
     let surface_layout = wgpu::VertexBufferLayout {
         array_stride: 64,
@@ -1237,46 +1253,31 @@ fn create_pipeline_pair(
 
     // ponytail: pipelines compiled sequentially on purpose — llvmpipe SIGSEGVs
     // under concurrent pipeline compilation (bevy #13708).
-    let make_line = |transmission: bool| {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("line"),
-            layout: Some(pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_line"),
-                compilation_options: Default::default(),
-                buffers: &[Some(segment_layout.clone())],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_line"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: if transmission {
-                        HDR_FORMAT
-                    } else {
-                        COLOR_FORMAT
-                    },
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: line_depth_state.clone().map(|mut state| {
-                // The retained opaque image supplies refracted edges; their depth
-                // must not prevent the later glass surface or final edge drawing.
-                state.depth_write_enabled = Some(!transmission);
-                state
-            }),
-            multisample,
-            multiview_mask: None,
-            cache: None,
-        })
-    };
+    let line = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("line"),
+        layout: Some(pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_line"),
+            compilation_options: Default::default(),
+            buffers: &[Some(segment_layout.clone())],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_line"),
+            compilation_options: Default::default(),
+            targets: std::slice::from_ref(&color_target),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: line_depth_state,
+        multisample,
+        multiview_mask: None,
+        cache: None,
+    });
 
     let cap_layout = wgpu::VertexBufferLayout {
         array_stride: 60,
@@ -1321,9 +1322,12 @@ fn create_pipeline_pair(
         cache: None,
     });
 
-    let fullscreen = |mip: bool| {
+    // Fullscreen passes: the display transform (surfaces to `composite_scene`
+    // frame), opaque mips, FXAA (both depth-tested passes share the geometry
+    // depth, so they declare it), and the background composite to the output.
+    let fullscreen = |label, entry_point, format, depth: bool| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("HDR output transform"),
+            label: Some(label),
             layout: Some(pipeline_layout),
             vertex: wgpu::VertexState {
                 module: shader,
@@ -1333,27 +1337,23 @@ fn create_pipeline_pair(
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,
-                entry_point: Some(if mip { "fs_mip" } else { "fs_screen" }),
+                entry_point: Some(entry_point),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: if mip { HDR_FORMAT } else { COLOR_FORMAT },
+                    format,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
             primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: (!mip).then_some(wgpu::DepthStencilState {
+            depth_stencil: depth.then_some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(false),
                 depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
-            multisample: if mip {
-                wgpu::MultisampleState::default()
-            } else {
-                multisample
-            },
+            multisample,
             multiview_mask: None,
             cache: None,
         })
@@ -1363,17 +1363,21 @@ fn create_pipeline_pair(
         blend_mesh,
         constant_mesh,
         constant_blend_mesh,
-        screen: fullscreen(false),
-        mip: fullscreen(true),
+        screen: fullscreen("HDR display transform", "fs_screen", HDR_FORMAT, true),
+        mip: fullscreen("transmission mip", "fs_mip", HDR_FORMAT, false),
+        fxaa: fullscreen("surface FXAA", "fs_fxaa", HDR_FORMAT, true),
+        output: fullscreen("output composite", "fs_output", COLOR_FORMAT, false),
         cap,
-        line: make_line(false),
-        transmission_line: make_line(true),
+        line,
     }
 }
 
+/// The AO depth pass's normal attachment: the viewer's compact octahedral
+/// encoding, two UNORM channels with zero reserved for the background.
+const AO_NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
+
 fn create_ao_pipelines(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
     mesh_shader: &wgpu::ShaderModule,
     mesh_layout: &wgpu::PipelineLayout,
     texture_mask: u32,
@@ -1421,11 +1425,18 @@ fn create_ao_pipelines(
                     constants: &[("TEXTURE_MASK", f64::from(texture_mask))],
                     ..Default::default()
                 },
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::R32Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: AO_NORMAL_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                ],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -1490,7 +1501,7 @@ fn create_ao_pipelines(
                 binding: 4,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
@@ -1507,7 +1518,7 @@ fn create_ao_pipelines(
         label: Some("AO estimate and denoise"),
         source: wgpu::ShaderSource::Wgsl(include_str!("ao.wgsl").into()),
     });
-    let fullscreen = |entry: &str, blur_index: Option<f64>| {
+    let fullscreen = |entry: &str| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(entry),
             layout: Some(&pipeline_layout),
@@ -1520,10 +1531,7 @@ fn create_ao_pipelines(
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some(entry),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &blur_index.map_or(Vec::new(), |index| vec![("BLUR_INDEX", index)]),
-                    ..Default::default()
-                },
+                compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: wgpu::TextureFormat::Rgba8Unorm,
                     blend: None,
@@ -1541,15 +1549,9 @@ fn create_ao_pipelines(
         texture_mask,
         depth_mesh,
         depth_constant_mesh,
-        estimate: fullscreen("fs_ao_estimate", None),
-        blur: [
-            fullscreen("fs_ao_blur", Some(0.0)),
-            fullscreen("fs_ao_blur", Some(1.0)),
-        ],
-        separable_blur: [
-            fullscreen("fs_ao_blur_separable", Some(0.0)),
-            fullscreen("fs_ao_blur_separable", Some(1.0)),
-        ],
+        estimate: fullscreen("fs_ao_estimate"),
+        denoise: fullscreen("fs_ao_blur"),
+        upsample: fullscreen("fs_ao_upsample"),
         layout,
         sampler: device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("AO denoise filtering"),
@@ -1557,38 +1559,80 @@ fn create_ao_pipelines(
             mag_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         }),
-        // Decoded from n8ao 1.10.2 src/BlueNoise.js (project LICENSE: CC0-1.0).
-        blue_noise: device
-            .create_texture_with_data(
-                queue,
-                &wgpu::TextureDescriptor {
-                    label: Some("N8AO blue noise (CC0-1.0)"),
-                    size: wgpu::Extent3d {
-                        width: 128,
-                        height: 128,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                },
-                wgpu::util::TextureDataOrder::LayerMajor,
-                include_bytes!("../assets/n8ao-blue-noise.bin"),
-            )
-            .create_view(&wgpu::TextureViewDescriptor::default()),
         frame_buffer: device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("AO frame"),
-            size: 160,
+            size: 176,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }),
     }
 }
 
+/// Group 0 of the mesh pipelines: the frame uniform and the lighting maps.
+fn frame_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    frame_buffer: &wgpu::Buffer,
+    environment: &wgpu::TextureView,
+    dfg_map: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("frame"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: frame_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(environment),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(dfg_map),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
 impl DeviceState {
+    /// Bind the environment this view's rig lights with, prefiltering a card
+    /// environment the first time its cards appear.
+    fn select_environment(&mut self, lighting: &crate::ResolvedLighting) {
+        let crate::EnvironmentSource::Cards(cards) = &lighting.environment_source else {
+            self.frame_bind_group = self.room_frame.clone();
+            return;
+        };
+        if self
+            .card_frame
+            .as_ref()
+            .is_none_or(|(kept, _)| kept != cards)
+        {
+            let environment = crate::lighting::card_environment(&self.device, &self.queue, cards);
+            let group = frame_group(
+                &self.device,
+                &self.frame_layout,
+                &self.frame_buffer,
+                &environment,
+                &self.dfg_map,
+                &self.lighting_sampler,
+            );
+            self.card_frame = Some((cards.clone(), group));
+        }
+        self.frame_bind_group = self
+            .card_frame
+            .as_ref()
+            .expect("card environment kept")
+            .1
+            .clone();
+    }
+
     async fn new(
         power: wgpu::PowerPreference,
         lost: &Arc<AtomicBool>,
@@ -1730,28 +1774,14 @@ impl DeviceState {
             mag_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let frame_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("frame"),
-            layout: &frame_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: frame_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&studio_map),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&dfg_map),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&lighting_sampler),
-                },
-            ],
-        });
+        let room_frame = frame_group(
+            &device,
+            &frame_layout,
+            &frame_buffer,
+            &studio_map,
+            &dfg_map,
+            &lighting_sampler,
+        );
 
         let prim_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("prim"),
@@ -1930,7 +1960,12 @@ impl DeviceState {
             pass_local_usage,
             shader,
             frame_buffer,
-            frame_bind_group,
+            frame_bind_group: room_frame.clone(),
+            frame_layout,
+            dfg_map,
+            lighting_sampler,
+            room_frame,
+            card_frame: None,
             prim_layout,
             scene_layout,
             scene_sampler,
@@ -2375,7 +2410,6 @@ impl Renderer {
         self.counters.pipeline_sets += 1;
         self.state.ao_pipelines = Some(create_ao_pipelines(
             &self.state.device,
-            &self.state.queue,
             &self.state.shader,
             &self.state.pipeline_layout,
             texture_mask,
@@ -2389,14 +2423,15 @@ impl Renderer {
         width: u32,
         height: u32,
         transmission: bool,
-        ao: bool,
+        ao_scale: Option<f32>,
         transparency: bool,
     ) {
+        let ao_extent = ao_scale.map(|scale| crate::ao_extent(width, height, scale));
         if let Some(targets) = &mut self.state.targets
             && targets.width == width
             && targets.height == height
             && targets.transmission == transmission
-            && targets.ao.is_some() == ao
+            && targets.ao.as_ref().map(|ao| ao.extent) == ao_extent
         {
             if targets.composite_view.is_some() != transparency {
                 if let Some(old) = targets.composite_view.take() {
@@ -2404,21 +2439,6 @@ impl Renderer {
                 }
                 targets.composite_view =
                     transparency.then(|| composite_target(&self.state.device, targets.extent));
-                let usage = if transparency {
-                    wgpu::TextureUsages::RENDER_ATTACHMENT
-                } else {
-                    self.state.pass_local_usage
-                };
-                if targets.hdr_msaa.texture().usage() != usage {
-                    let next = hdr_multisample_target(
-                        &self.state.device,
-                        targets.extent,
-                        transparency,
-                        self.state.pass_local_usage,
-                    );
-                    targets.hdr_msaa.texture().destroy();
-                    targets.hdr_msaa = next;
-                }
             }
             return;
         }
@@ -2426,38 +2446,41 @@ impl Renderer {
         let retired = self.state.targets.as_ref().map(profile::ledger);
         self.counters.target_allocations += 1;
         let device = &self.state.device;
-        // Render targets: MSAA color + depth, single-sample sRGB resolve target.
+        // Render targets: single-sample HDR surfaces and depth, the display
+        // image FXAA reads, and the sRGB output.
         let extent = wgpu::Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
         };
-        let msaa_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("msaa"),
+        let display_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("display HDR"),
             size: extent,
             mip_level_count: 1,
-            sample_count: MSAA_SAMPLES,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: COLOR_FORMAT,
-            usage: self.state.pass_local_usage,
+            format: HDR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("depth"),
             size: extent,
             mip_level_count: 1,
-            sample_count: MSAA_SAMPLES,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
-        let ao_targets = ao.then(|| {
-            let texture = |label, format, usage| {
+        let ao_targets = ao_extent.map(|(ao_width, ao_height)| {
+            // GTAONode estimates (and Tau denoises) at `resolutionScale` of the
+            // drawing buffer, rounded per axis; the viewer's scale is 0.5.
+            let texture = |label, format, usage, scaled: bool| {
                 let mut size = extent;
-                if width * height > 1_048_576 && format == wgpu::TextureFormat::Rgba8Unorm {
-                    size.width = width.div_ceil(2);
-                    size.height = height.div_ceil(2);
+                if scaled {
+                    size.width = ao_width;
+                    size.height = ao_height;
                 }
                 device
                     .create_texture(&wgpu::TextureDescriptor {
@@ -2473,25 +2496,42 @@ impl Renderer {
                     .create_view(&wgpu::TextureViewDescriptor::default())
             };
             AoTargets {
+                extent: (ao_width, ao_height),
                 depth_view: texture(
                     "AO view depth",
                     wgpu::TextureFormat::R32Float,
                     wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    false,
+                ),
+                normal_view: texture(
+                    "AO view normal",
+                    AO_NORMAL_FORMAT,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    false,
                 ),
                 test_depth_view: texture(
                     "AO depth test",
                     DEPTH_FORMAT,
                     self.state.pass_local_usage,
+                    false,
                 ),
                 estimate_view: texture(
                     "AO estimate",
                     wgpu::TextureFormat::Rgba8Unorm,
                     wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    true,
                 ),
                 blur_view: texture(
                     "AO denoise",
                     wgpu::TextureFormat::Rgba8Unorm,
                     wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    true,
+                ),
+                full_view: texture(
+                    "AO visibility",
+                    wgpu::TextureFormat::Rgba8Unorm,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    false,
                 ),
             }
         });
@@ -2506,8 +2546,6 @@ impl Renderer {
             view_formats: &[],
         });
 
-        let hdr_msaa =
-            hdr_multisample_target(device, extent, transparency, self.state.pass_local_usage);
         let mip_count = if transmission {
             width.max(height).ilog2() + 1
         } else {
@@ -2520,7 +2558,10 @@ impl Renderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: HDR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            // Copied to the composite target when transparent surfaces draw.
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let opaque_levels: Vec<_> = (0..mip_count)
@@ -2553,14 +2594,13 @@ impl Renderer {
             width,
             height,
             extent,
-            hdr_msaa,
+            display_view: display_texture.create_view(&wgpu::TextureViewDescriptor::default()),
             opaque_view,
             opaque_mips,
             opaque_levels,
             transmission,
             ao: ao_targets,
             composite_view,
-            msaa_view: msaa_texture.create_view(&wgpu::TextureViewDescriptor::default()),
             depth_view: depth_texture.create_view(&wgpu::TextureViewDescriptor::default()),
             resolve_view: resolve_texture.create_view(&wgpu::TextureViewDescriptor::default()),
             resolve_texture,
@@ -2633,7 +2673,10 @@ impl Renderer {
             options.width,
             options.height,
             has_transmission,
-            ao_active,
+            options
+                .ao
+                .filter(|_| ao_active)
+                .map(|ao| ao.resolution_scale),
             has_transparency,
         );
         if ao_active {
@@ -2661,6 +2704,7 @@ impl Renderer {
             || presentation.open_chains.is_some();
         let pipeline_index =
             self.ensure_pipelines(line_width_px(options), wireframe, scene.features);
+        self.state.select_environment(&options.lighting);
         let slot = self
             .state
             .targets
@@ -2731,6 +2775,20 @@ impl Renderer {
         // Each surface draws once. Transmission samples the retained opaque
         // HDR image; compositing precedes the sole display transform.
         for stage in 0..if has_transparency { 2 } else { 1 } {
+            if stage == 1 {
+                // Transparent surfaces blend over a copy of the opaque image,
+                // which transmission keeps sampling through its mips.
+                encoder.copy_texture_to_texture(
+                    targets.opaque_view.texture().as_image_copy(),
+                    targets
+                        .composite_view
+                        .as_ref()
+                        .expect("transparent target")
+                        .texture()
+                        .as_image_copy(),
+                    targets.extent,
+                );
+            }
             if stage == 1 && has_transmission {
                 for levels in targets.opaque_levels.windows(2) {
                     let resources = scene_group(&levels[0], &state.empty_scene, &state.empty_ao);
@@ -2764,24 +2822,20 @@ impl Renderer {
                     "transmission and alpha"
                 }),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &targets.hdr_msaa,
-                    depth_slice: None,
-                    resolve_target: Some(if stage == 0 {
+                    view: if stage == 0 {
                         &targets.opaque_view
                     } else {
                         targets.composite_view.as_ref().expect("transparent target")
-                    }),
+                    },
+                    depth_slice: None,
+                    resolve_target: None,
                     ops: wgpu::Operations {
                         load: if stage == 0 {
                             wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
                         } else {
                             wgpu::LoadOp::Load
                         },
-                        store: if stage == 0 && has_transparency {
-                            wgpu::StoreOp::Store
-                        } else {
-                            wgpu::StoreOp::Discard
-                        },
+                        store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -2829,7 +2883,7 @@ impl Renderer {
                     draw_surface(&mut pass, instance, mesh);
                 }
                 if has_transmission && options.lines {
-                    pass.set_pipeline(&pair.transmission_line);
+                    pass.set_pipeline(&pair.line);
                     draw_lines(&mut pass, scene, options);
                 }
             } else {
@@ -2852,20 +2906,35 @@ impl Renderer {
             let radius = ao.radius_pixels.unwrap_or_else(|| {
                 ((options.width as f32).hypot(options.height as f32) * 0.01).max(4.0)
             });
-            let mut ao_frame = [0f32; 40];
+            let orthographic = camera_projection_kind(&options.camera) == Projection::Orthographic;
+            // The viewer converts its pixel radius to world units once, at the
+            // camera target: one world radius for every pixel of the frame.
+            let world_per_pixel = 2.0 / (camera.projection.y_axis.y * options.height as f32)
+                * if orthographic {
+                    1.0
+                } else {
+                    camera.target_depth.abs()
+                };
+            let world_radius = radius * world_per_pixel;
+            let (slices, steps) = crate::gtao_slices_and_steps(ao.samples);
+            let mut ao_frame = [0f32; 44];
             ao_frame[..16].copy_from_slice(&camera.projection.to_cols_array());
             ao_frame[16..32].copy_from_slice(&camera.projection.inverse().to_cols_array());
-            ao_frame[32..36].copy_from_slice(&[
+            ao_frame[32..44].copy_from_slice(&[
                 options.width as f32,
                 options.height as f32,
-                radius,
+                world_radius,
                 ao.distance_falloff,
+                f32::from(orthographic),
+                ao.intensity,
+                // GTAO depth acceptance and denoise plane tolerance, as the viewer derives them.
+                world_radius * ao.thickness_ratio,
+                world_radius * ao.denoise_depth_tolerance,
+                slices,
+                steps,
+                0.0,
+                0.0,
             ]);
-            ao_frame[37] = options.width as f32 / ao_targets.estimate_view.texture().width() as f32;
-            ao_frame[38] =
-                options.height as f32 / ao_targets.estimate_view.texture().height() as f32;
-            ao_frame[36] =
-                f32::from(camera_projection_kind(&options.camera) == Projection::Orthographic);
             state
                 .queue
                 .write_buffer(&pipelines.frame_buffer, 0, bytemuck::cast_slice(&ao_frame));
@@ -2874,15 +2943,19 @@ impl Renderer {
                     label: Some("AO opaque depth"),
                     #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
                     timestamp_writes: probe.as_mut().map(|p| p.pass("AO opaque depth")),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &ao_targets.depth_view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
+                    color_attachments: &[&ao_targets.depth_view, &ao_targets.normal_view].map(
+                        |view| {
+                            Some(wgpu::RenderPassColorAttachment {
+                                view,
+                                depth_slice: None,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })
                         },
-                    })],
+                    ),
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                         view: &ao_targets.test_depth_view,
                         depth_ops: Some(wgpu::Operations {
@@ -2904,30 +2977,25 @@ impl Renderer {
                     draw_surface(&mut pass, instance, mesh);
                 }
             }
-            // The shader filters by resolution mode in separate entry points.
-            let blur = if ao_frame[37] > 1.0 || ao_frame[38] > 1.0 {
-                &pipelines.separable_blur
-            } else {
-                &pipelines.blur
-            };
             for (label, output, input, pipeline) in [
                 (
-                    "AO hemisphere",
+                    "AO horizons",
                     &ao_targets.estimate_view,
-                    &state.empty_ao,
+                    // Read only for its half-resolution dimensions.
+                    &ao_targets.blur_view,
                     &pipelines.estimate,
                 ),
                 (
-                    "AO denoise first",
+                    "AO denoise",
                     &ao_targets.blur_view,
                     &ao_targets.estimate_view,
-                    &blur[0],
+                    &pipelines.denoise,
                 ),
                 (
-                    "AO denoise second",
-                    &ao_targets.estimate_view,
+                    "AO upsample",
+                    &ao_targets.full_view,
                     &ao_targets.blur_view,
-                    &blur[1],
+                    &pipelines.upsample,
                 ),
             ] {
                 let resources = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2952,7 +3020,7 @@ impl Renderer {
                         },
                         wgpu::BindGroupEntry {
                             binding: 4,
-                            resource: wgpu::BindingResource::TextureView(&pipelines.blue_noise),
+                            resource: wgpu::BindingResource::TextureView(&ao_targets.normal_view),
                         },
                     ],
                 });
@@ -2986,63 +3054,91 @@ impl Renderer {
             targets
                 .ao
                 .as_ref()
-                .map_or(&state.empty_ao, |ao| &ao.estimate_view),
+                .map_or(&state.empty_ao, |ao| &ao.full_view),
         );
-        {
+        // The viewer's presentation: display-transformed surfaces (and section
+        // caps), FXAA over them, then the analytically covered edges, and the
+        // background composited last. The opaque image's first level is free
+        // once displayed, so it holds the filtered frame the edges draw into.
+        let depth_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
+            view: &targets.depth_view,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        });
+        let filter_resources =
+            scene_group(&state.empty_scene, &targets.display_view, &state.empty_ao);
+        let output_resources =
+            scene_group(&state.empty_scene, &targets.opaque_view, &state.empty_ao);
+        for (label, view, resources) in [
+            ("display transform", &targets.display_view, &final_resources),
+            (
+                "surface FXAA and edges",
+                &targets.opaque_view,
+                &filter_resources,
+            ),
+            ("output composite", &targets.resolve_view, &output_resources),
+        ] {
+            let output = std::ptr::eq(view, &targets.resolve_view);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("display transform and exact edges"),
+                label: Some(label),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &targets.msaa_view,
+                    view,
                     depth_slice: None,
-                    resolve_target: Some(&targets.resolve_view),
+                    resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Discard,
+                        store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &targets.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
+                depth_stencil_attachment: if output {
+                    None
+                } else {
+                    depth_attachment.clone()
+                },
                 #[cfg(all(feature = "bench", not(target_arch = "wasm32")))]
-                timestamp_writes: probe
-                    .as_mut()
-                    .map(|p| p.pass("display transform and exact edges")),
+                timestamp_writes: probe.as_mut().map(|p| p.pass(label)),
                 #[cfg(not(all(feature = "bench", not(target_arch = "wasm32"))))]
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &state.frame_bind_group, &[]);
-            pass.set_bind_group(3, &final_resources, &[]);
+            pass.set_bind_group(3, resources, &[]);
             pass.set_bind_group(1, &state.default_material, &[]);
             pass.set_bind_group(2, &state.identity_object, &[]);
-            pass.set_pipeline(&pair.screen);
-            pass.draw(0..3, 0..1);
-            if let Some(cap) = &presentation.cap {
-                pass.set_pipeline(&pair.cap);
-                pass.set_vertex_buffer(0, cap.vertices.slice(..));
-                pass.set_index_buffer(cap.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..cap.index_count, 0, 0..1);
-            }
-            if options.lines {
-                pass.set_pipeline(&pair.line);
-                draw_lines(&mut pass, scene, options);
-            }
-            if let Some(object) = &presentation.identity_object {
-                for stroke in [&presentation.boundary, &presentation.open_chains]
-                    .into_iter()
-                    .flatten()
-                {
+            if output {
+                pass.set_pipeline(&pair.output);
+                pass.draw(0..3, 0..1);
+            } else if std::ptr::eq(view, &targets.display_view) {
+                pass.set_pipeline(&pair.screen);
+                pass.draw(0..3, 0..1);
+                if let Some(cap) = &presentation.cap {
+                    pass.set_pipeline(&pair.cap);
+                    pass.set_vertex_buffer(0, cap.vertices.slice(..));
+                    pass.set_index_buffer(cap.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..cap.index_count, 0, 0..1);
+                }
+            } else {
+                pass.set_pipeline(&pair.fxaa);
+                pass.draw(0..3, 0..1);
+                if options.lines {
                     pass.set_pipeline(&pair.line);
-                    pass.set_bind_group(1, &stroke.material, &[]);
-                    pass.set_bind_group(2, object, &[]);
-                    pass.set_vertex_buffer(0, stroke.segments.slice(..));
-                    pass.draw(0..8, 0..stroke.count);
+                    draw_lines(&mut pass, scene, options);
+                }
+                if let Some(object) = &presentation.identity_object {
+                    for stroke in [&presentation.boundary, &presentation.open_chains]
+                        .into_iter()
+                        .flatten()
+                    {
+                        pass.set_pipeline(&pair.line);
+                        pass.set_bind_group(1, &stroke.material, &[]);
+                        pass.set_bind_group(2, object, &[]);
+                        pass.set_vertex_buffer(0, stroke.segments.slice(..));
+                        pass.draw(0..8, 0..stroke.count);
+                    }
                 }
             }
         }
@@ -3136,9 +3232,9 @@ impl Renderer {
         view.buffer.unmap();
         self.take_uncaptured()?;
         // The sRGB target stores encoded premultiplied-linear RGB. Convert to
-        // the public straight-alpha contract after every cap/edge blend and MSAA
-        // resolve, rather than unpremultiplying the surface pass prematurely.
-        // The display pass composites every sample over the requested background;
+        // the public straight-alpha contract after every cap/edge blend,
+        // rather than unpremultiplying the surface pass prematurely.
+        // The output pass composites every pixel over the requested background;
         // an opaque background therefore resolves to alpha 255, including lines,
         // transparent surfaces and transmission. Its straight RGB is already final.
         // Snapshot this per submitted view: a later overlapping view may differ.
@@ -4208,6 +4304,61 @@ mod tests {
     }
 
     #[test]
+    fn ao_reads_mesh_normals_not_depth_reconstruction() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let options = RenderOptions {
+            width: 128,
+            height: 96,
+            lines: false,
+            ..RenderOptions::default()
+        };
+        // Identical depth, different interpolated normals: depth reconstruction
+        // would see one surface, while the viewer's MRT normals see two.
+        let mut flat = cube_scene();
+        let primitive = &mut flat.meshes[0].primitives[0];
+        primitive.normals.clear();
+        glb::flat_shade(primitive).expect("flat shade");
+        let smooth = cube_scene();
+        let darkening = |renderer: &mut Renderer, scene: glb::Scene| -> Vec<i32> {
+            let off = render_test_scene(
+                renderer,
+                scene.clone(),
+                RenderOptions {
+                    ao: None,
+                    ..options.clone()
+                },
+            );
+            let on = render_test_scene(renderer, scene, options.clone());
+            off.rgba
+                .iter()
+                .zip(&on.rgba)
+                .map(|(&off, &on)| i32::from(off) - i32::from(on))
+                .collect()
+        };
+        let flat = darkening(&mut renderer, flat);
+        let smooth = darkening(&mut renderer, smooth);
+        let total = |map: &[i32]| map.iter().map(|&value| value.max(0)).sum::<i32>();
+        let (smooth, flat) = (total(&smooth), total(&flat));
+        assert!(
+            smooth > flat + 1000,
+            "smooth normals bend the GTAO horizon: {smooth} vs {flat}"
+        );
+        let targets = renderer.state.targets.as_ref().expect("targets");
+        let normal = targets
+            .ao
+            .as_ref()
+            .expect("AO targets")
+            .normal_view
+            .texture();
+        assert_eq!(normal.format(), wgpu::TextureFormat::Rg8Unorm);
+        assert_eq!((normal.width(), normal.height()), (128, 96));
+        renderer
+            .take_uncaptured()
+            .expect("AO normal GPU validation");
+    }
+
+    #[test]
     fn synthesised_flat_normals_match_authored_face_normals() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
@@ -4269,6 +4420,7 @@ mod tests {
                     radius_pixels: None,
                     intensity: 0.0,
                     distance_falloff: 0.2,
+                    ..crate::AmbientOcclusion::default()
                 }),
                 ..options.clone()
             },
@@ -4281,6 +4433,7 @@ mod tests {
                     radius_pixels: None,
                     intensity: 3.0,
                     distance_falloff: 0.2,
+                    ..crate::AmbientOcclusion::default()
                 }),
                 ..options
             },
@@ -4299,6 +4452,7 @@ mod tests {
             radius_pixels: None,
             intensity: 3.0,
             distance_falloff: 0.2,
+            ..crate::AmbientOcclusion::default()
         });
         render_test_scene(
             &mut renderer,
@@ -4306,6 +4460,83 @@ mod tests {
             with_attributes,
         );
         renderer.take_uncaptured().expect("AO GPU validation");
+    }
+
+    #[test]
+    fn gtao_controls_each_change_output_and_explicit_defaults_do_not() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let scene = glb::parse_glb(include_bytes!("../../../tests/fixtures/gear-12.glb"))
+            .expect("gear fixture");
+        let render = |renderer: &mut Renderer, ao: crate::AmbientOcclusion| {
+            render_test_scene(
+                renderer,
+                scene.clone(),
+                RenderOptions {
+                    width: 255,
+                    height: 193,
+                    lines: false,
+                    ao: Some(ao),
+                    ..RenderOptions::default()
+                },
+            )
+            .rgba
+        };
+        let defaults = crate::AmbientOcclusion::default();
+        let baseline = render(&mut renderer, defaults);
+        assert_eq!(
+            render(
+                &mut renderer,
+                crate::AmbientOcclusion {
+                    thickness_ratio: 1.0 / 0.09,
+                    denoise_depth_tolerance: 0.1,
+                    samples: 16,
+                    resolution_scale: 0.5,
+                    ..defaults
+                }
+            ),
+            baseline
+        );
+        for (name, ao) in [
+            (
+                "thicknessRatio",
+                crate::AmbientOcclusion {
+                    thickness_ratio: 0.5,
+                    ..defaults
+                },
+            ),
+            (
+                "denoiseDepthTolerance",
+                crate::AmbientOcclusion {
+                    denoise_depth_tolerance: 2.0,
+                    ..defaults
+                },
+            ),
+            (
+                "samples",
+                crate::AmbientOcclusion {
+                    samples: 40,
+                    ..defaults
+                },
+            ),
+            (
+                "resolutionScale",
+                crate::AmbientOcclusion {
+                    resolution_scale: 1.0,
+                    ..defaults
+                },
+            ),
+        ] {
+            let changed = render(&mut renderer, ao)
+                .iter()
+                .zip(&baseline)
+                .filter(|(a, b)| a != b)
+                .count();
+            assert!(changed > 0, "ao.{name} left every pixel unchanged");
+        }
+        renderer
+            .take_uncaptured()
+            .expect("GTAO controls GPU validation");
     }
 
     #[test]
@@ -4320,6 +4551,7 @@ mod tests {
                 radius_pixels: None,
                 intensity: 3.0,
                 distance_falloff: 0.2,
+                ..crate::AmbientOcclusion::default()
             }),
             ..RenderOptions::default()
         };
@@ -4451,6 +4683,7 @@ mod tests {
                 radius_pixels: None,
                 intensity: 3.0,
                 distance_falloff: 0.2,
+                ..crate::AmbientOcclusion::default()
             }),
             ..RenderOptions::default()
         };
@@ -4471,7 +4704,7 @@ mod tests {
             ),
             (769, 433)
         );
-        assert_eq!(targets.depth_view.texture().sample_count(), MSAA_SAMPLES);
+        assert_eq!(targets.depth_view.texture().sample_count(), 1);
         let off = render_test_scene(
             &mut renderer,
             scene.clone(),
@@ -4480,17 +4713,31 @@ mod tests {
                 ..options.clone()
             },
         );
-        // AO cannot affect final geometric coverage; exact black authored lines
-        // remain black because the edge pass follows the surface composition.
+        // AO cannot affect geometric coverage. FXAA filters the AO-shaded
+        // surfaces, as the viewer's does, so shading may change how it blends a
+        // silhouette pixel, but alpha changes nowhere else; exact black
+        // authored lines remain black because the edge pass follows the
+        // surface composition.
+        let (width, height) = (options.width as usize, options.height as usize);
+        let alpha = |x: usize, y: usize| off.rgba[(y * width + x) * 4 + 3];
+        let at_silhouette = |index: usize| {
+            let (x, y) = (index % width, index / width);
+            let around = (y.saturating_sub(1)..=(y + 1).min(height - 1)).flat_map(|y| {
+                (x.saturating_sub(1)..=(x + 1).min(width - 1)).map(move |x| alpha(x, y))
+            });
+            let (low, high) = around.fold((255, 0), |(low, high), a| (a.min(low), a.max(high)));
+            low < 255 && high > 0
+        };
         let mut black = 0;
-        for (a, b) in first
+        for (index, (a, b)) in first
             .rgba
             .as_chunks::<4>()
             .0
             .iter()
             .zip(off.rgba.as_chunks::<4>().0)
+            .enumerate()
         {
-            assert_eq!(a[3], b[3]);
+            assert!(a[3] == b[3] || at_silhouette(index), "{a:?} {b:?}");
             if b[..3] == [0, 0, 0] && b[3] == 255 {
                 assert_eq!(a, b);
                 black += 1;
@@ -4546,6 +4793,7 @@ mod tests {
                     radius_pixels: Some(16.0),
                     intensity: 3.0,
                     distance_falloff: 0.2,
+                    ..crate::AmbientOcclusion::default()
                 }),
                 ..options
             },
@@ -4773,6 +5021,86 @@ mod tests {
     }
 
     #[test]
+    fn light_cards_prefilter_an_environment_that_lights_from_their_side() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let matte = || {
+            physical_sphere(Material {
+                base_color: [0.8, 0.8, 0.8, 1.0],
+                metallic: 0.0,
+                roughness: 1.0,
+                ..Material::default()
+            })
+        };
+        let environment_only = |source, intensity| {
+            let mut options = physical_options();
+            options.lighting.headlamp = None;
+            options.lighting.ambient = 0.0;
+            options.lighting.environment_source = source;
+            options.lighting.environment_intensity = intensity;
+            options
+        };
+        // One broad card overhead, in view space, facing down by default.
+        let overhead = crate::EnvironmentSource::Cards(vec![crate::LightCard {
+            position: [0.0, 3.0, 0.0],
+            size: [6.0, 6.0],
+            intensity: 4.0,
+            rotation: None,
+        }]);
+        let luminance = |image: &Rendered, x: u32, y: u32| {
+            let index = ((y * image.width + x) * 4) as usize;
+            image.rgba[index..index + 3]
+                .iter()
+                .map(|&channel| u32::from(channel))
+                .sum::<u32>()
+        };
+        let lit = render_test_scene(
+            &mut renderer,
+            matte(),
+            environment_only(overhead.clone(), 1.0),
+        );
+        let (top, bottom) = (luminance(&lit, 48, 18), luminance(&lit, 48, 78));
+        assert!(
+            top > bottom + 120,
+            "overhead card lights the top: {top} vs {bottom}"
+        );
+
+        // The kept environment is reused, and intensity scales it.
+        let again = render_test_scene(
+            &mut renderer,
+            matte(),
+            environment_only(overhead.clone(), 1.0),
+        );
+        assert_eq!(lit.rgba, again.rgba);
+        let brighter = render_test_scene(&mut renderer, matte(), environment_only(overhead, 2.0));
+        assert!(luminance(&brighter, 48, 18) > top);
+
+        // No cards is a black environment: the same pixels as none at all.
+        let black = render_test_scene(
+            &mut renderer,
+            matte(),
+            environment_only(crate::EnvironmentSource::Cards(Vec::new()), 1.0),
+        );
+        let mut off = environment_only(crate::EnvironmentSource::Room, 1.0);
+        off.lighting.environment = false;
+        assert_eq!(
+            black.rgba,
+            render_test_scene(&mut renderer, matte(), off).rgba
+        );
+
+        // Switching back to the room restores its pixels exactly.
+        let room = environment_only(crate::EnvironmentSource::Room, 1.0);
+        let mut fresh =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let first = render_test_scene(&mut fresh, matte(), room.clone());
+        assert_eq!(
+            render_test_scene(&mut renderer, matte(), room).rgba,
+            first.rgba
+        );
+        renderer.take_uncaptured().expect("no uncaptured GPU error");
+    }
+
+    #[test]
     fn large_emission_stays_finite_through_hdr_and_display() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
@@ -4788,6 +5116,118 @@ mod tests {
             "bright emitter must tone-map to white: {pixel:?}"
         );
         renderer.take_uncaptured().expect("no uncaptured GPU error");
+    }
+
+    /// three.js r184 `ToneMappingFunctions.js`, transcribed in f64 as the
+    /// golden reference: `neutralToneMapping`, `acesFilmicToneMapping` (the TSL
+    /// fit, whose `mat3` literals are row-major), `linearToneMapping`, and
+    /// `NoToneMapping`, which skips exposure.
+    fn three_tone_map(operator: crate::ToneMapping, color: [f64; 3], exposure: f64) -> [f64; 3] {
+        let c = color.map(|channel| channel * exposure);
+        match operator {
+            crate::ToneMapping::None => color,
+            crate::ToneMapping::Linear => c.map(|channel| channel.clamp(0.0, 1.0)),
+            crate::ToneMapping::Aces => {
+                let product = |m: [[f64; 3]; 3], v: [f64; 3]| {
+                    m.map(|row| row[0] * v[0] + row[1] * v[1] + row[2] * v[2])
+                };
+                let v = product(
+                    [
+                        [0.59719, 0.35458, 0.04823],
+                        [0.07600, 0.90834, 0.01566],
+                        [0.02840, 0.13383, 0.83777],
+                    ],
+                    c.map(|channel| channel / 0.6),
+                );
+                let fitted = v.map(|x| {
+                    (x * (x + 0.0245786) - 0.000090537)
+                        / (x * ((x + 0.4329510) * 0.983729) + 0.238081)
+                });
+                product(
+                    [
+                        [1.60475, -0.53108, -0.07367],
+                        [-0.10208, 1.10813, -0.00605],
+                        [-0.00327, -0.07276, 1.07602],
+                    ],
+                    fitted,
+                )
+                .map(|channel| channel.clamp(0.0, 1.0))
+            }
+            crate::ToneMapping::Neutral => {
+                let start = 0.8 - 0.04;
+                let x = c[0].min(c[1]).min(c[2]);
+                let offset = if x < 0.08 { x - 6.25 * x * x } else { 0.04 };
+                let c = c.map(|channel| channel - offset);
+                let peak = c[0].max(c[1]).max(c[2]);
+                if peak < start {
+                    return c;
+                }
+                let d = 1.0 - start;
+                let new_peak = 1.0 - d * d / (peak + d - start);
+                let c = c.map(|channel| channel * new_peak / peak);
+                let g = 1.0 - 1.0 / (0.15 * (peak - new_peak) + 1.0);
+                c.map(|channel| channel + (new_peak - channel) * g)
+            }
+        }
+    }
+
+    #[test]
+    fn tone_mapping_operators_match_three_formulas() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let encode = |linear: f64| {
+            let linear = linear.clamp(0.0, 1.0);
+            let srgb = if linear <= 0.003_130_8 {
+                linear * 12.92
+            } else {
+                1.055 * linear.powf(1.0 / 2.4) - 0.055
+            };
+            (srgb * 255.0).round() as i32
+        };
+        let center = (48 * 96 + 48) * 4;
+        let mut outputs = Vec::new();
+        for operator in [
+            crate::ToneMapping::Neutral,
+            crate::ToneMapping::Aces,
+            crate::ToneMapping::Linear,
+            crate::ToneMapping::None,
+        ] {
+            for (base, exposure) in [
+                ([0.18, 0.4, 0.7], 1.0),
+                ([0.18, 0.4, 0.7], 3.0),
+                ([0.9, 0.5, 0.05], 0.6),
+                // A zero channel exercises the linear segment of the sRGB encode.
+                ([0.0, 0.03, 0.9], 2.0),
+            ] {
+                let mut material = Material {
+                    base_color: [base[0], base[1], base[2], 1.0],
+                    ..Material::default()
+                };
+                material.anisotropy[3] = 1.0;
+                let mut options = physical_options();
+                options.ao = None;
+                options.tone_mapping = operator;
+                options.lighting.exposure = exposure;
+                let image = render_test_scene(&mut renderer, physical_sphere(material), options);
+                let expected = three_tone_map(operator, base.map(f64::from), f64::from(exposure));
+                for (channel, &linear) in expected.iter().enumerate() {
+                    let actual = i32::from(image.rgba[center + channel]);
+                    let want = encode(linear);
+                    assert!(
+                        actual.abs_diff(want) <= 1,
+                        "{operator:?} {base:?}x{exposure} channel {channel}: {actual} vs {want}"
+                    );
+                }
+                outputs.push(image.rgba[center..center + 3].to_vec());
+            }
+        }
+        // The operators are distinguishable on these inputs: each changes the output.
+        for (index, output) in outputs.iter().enumerate().skip(4) {
+            assert_ne!(output, &outputs[index % 4], "case {index} matches neutral");
+        }
+        renderer
+            .take_uncaptured()
+            .expect("tone mapping GPU validation");
     }
 
     #[test]
@@ -4808,6 +5248,7 @@ mod tests {
         options.lighting.ambient = 0.0;
         options.lighting.environment = false;
         options.lighting.lights.clear();
+        options.lighting.headlamp = None;
         let second = render_test_scene(
             &mut renderer,
             physical_sphere(material.clone()),
@@ -5196,8 +5637,12 @@ mod tests {
                     assert_eq!(&pixel[..3], &[0; 3]);
                 } else if pixel[3] < 255 {
                     partial += 1;
-                    for (channel, expected) in expected_color.into_iter().enumerate() {
-                        assert!(pixel[channel].abs_diff(expected) <= 3, "{pixel:?}");
+                    // FXAA leaves faint halo alphas whose 8-bit premultiplied
+                    // colour cannot round-trip within a few levels.
+                    if pixel[3] >= 32 {
+                        for (channel, expected) in expected_color.into_iter().enumerate() {
+                            assert!(pixel[channel].abs_diff(expected) <= 3, "{pixel:?}");
+                        }
                     }
                 }
             }
@@ -5206,6 +5651,60 @@ mod tests {
                 "exercise partial coverage, not just opaque pixels"
             );
         }
+    }
+
+    #[test]
+    fn opaque_background_composites_the_straight_image_in_the_encoded_domain() {
+        // The Tau viewer's page shows its canvas as `sRGB(c)·a + bg·(1 − a)`
+        // (`encodeFrameOutput`, then the browser's source-over), so an opaque
+        // background equals the transparent render's straight-alpha image
+        // composited over it in 8-bit sRGB, not a blend in linear light.
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
+        let background = [0.2_f32, 0.4, 0.6];
+        let mut options = physical_options();
+        options.lines = true;
+        options.background = None;
+        let transparent = render_test_scene(&mut renderer, cube_with_edges(false), options.clone());
+        options.background = Some([background[0], background[1], background[2], 1.0]);
+        let shown = render_test_scene(&mut renderer, cube_with_edges(false), options);
+        let (mut partial, mut unlike_linear) = (0, 0);
+        for (straight, shown) in transparent
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(shown.rgba.as_chunks::<4>().0)
+        {
+            assert_eq!(shown[3], 255);
+            if straight[3] == 255 {
+                // Covered pixels take the exact linear path either way.
+                assert_eq!(shown[..3], straight[..3]);
+            }
+            let alpha = f32::from(straight[3]) / 255.0;
+            partial += usize::from((1..255).contains(&straight[3]));
+            for (channel, bg) in background.into_iter().enumerate() {
+                let encoded = f32::from(straight[channel]) * alpha + bg * 255.0 * (1.0 - alpha);
+                // Two 8-bit roundings of the transparent image, one of this one.
+                assert!(
+                    (f32::from(shown[channel]) - encoded).abs() <= 2.0,
+                    "{straight:?} over {background:?} shows {shown:?}"
+                );
+                let linear = crate::texture::encoded(
+                    crate::texture::linear(straight[channel], true) * alpha
+                        + crate::texture::linear(crate::texture::encoded(bg, false), true)
+                            * (1.0 - alpha),
+                    true,
+                );
+                unlike_linear += usize::from(shown[channel].abs_diff(linear) > 4);
+            }
+        }
+        assert!(
+            partial > 50,
+            "exercise partial coverage, not just opaque pixels"
+        );
+        assert!(unlike_linear > 0, "a linear-light blend would pass too");
+        renderer.destroy();
     }
 
     /// A cube with its edges as a line primitive; `hidden` keeps the three edges that meet at the
@@ -5235,11 +5734,12 @@ mod tests {
     }
 
     #[test]
-    fn hidden_edges_ending_on_a_face_boundary_leave_no_trace() {
+    fn hidden_edges_ending_on_a_face_boundary_leave_at_most_a_corner_tick() {
         // An edge behind a face that ends on the face's boundary (the far flank edges of a gear
         // tooth) shows through for as long as the surface bias exceeds what the stroke needs.
-        // Inside the solid's silhouette, hidden edges must change no pixel at any grazing angle or
-        // stroke width.
+        // The viewer's margin (half the stroke plus half a pixel, for depth tested at pixel
+        // centres) lets each of the three hidden edges show at most a faint tick where it meets
+        // the outline, at any grazing angle or stroke width, and never along its length.
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance)).expect("GPU");
         let mut leaks = Vec::new();
@@ -5284,23 +5784,28 @@ mod tests {
                 let visible =
                     render_test_scene(&mut renderer, cube_with_edges(false), options.clone());
                 let all = render_test_scene(&mut renderer, cube_with_edges(true), options);
-                let changed = solid
+                let differences: Vec<u8> = solid
                     .rgba
                     .as_chunks::<4>()
                     .0
                     .iter()
                     .zip(visible.rgba.as_chunks::<4>().0)
                     .zip(all.rgba.as_chunks::<4>().0)
-                    .filter(|((solid, a), b)| {
-                        solid[..3] != [255; 3] && a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > 2)
-                    })
-                    .count();
-                leaks.push((line_width, elevation.to_degrees().round(), changed));
+                    .filter(|((solid, _), _)| solid[..3] != [255; 3])
+                    .map(|((_, a), b)| a.iter().zip(b).map(|(a, b)| a.abs_diff(*b)).max().unwrap())
+                    .filter(|&difference| difference > 2)
+                    .collect();
+                leaks.push((
+                    line_width,
+                    elevation.to_degrees().round(),
+                    differences.len(),
+                    differences.iter().copied().max().unwrap_or(0),
+                ));
             }
         }
         assert!(
-            leaks.iter().all(|&(_, _, changed)| changed == 0),
-            "hidden edges showed through (width, elevation°, pixels): {leaks:?}"
+            leaks.iter().all(|&(_, _, changed, _)| changed <= 6),
+            "hidden edges showed through (width, elevation°, pixels, max level): {leaks:?}"
         );
     }
 
@@ -5364,8 +5869,11 @@ mod tests {
                     direction: [3.0, 0.0, 0.0],
                     color: [0.25, 0.5, 0.75],
                 }],
+                headlamp: None,
                 ambient: 0.5,
                 environment: false,
+                environment_source: crate::EnvironmentSource::Room,
+                environment_intensity: 3.0,
                 space: LightingSpace::World,
                 exposure: 2.0,
             },
@@ -5394,7 +5902,8 @@ mod tests {
         assert_eq!(data[FRAME_TAIL].to_bits(), 1);
         assert_eq!(data[FRAME_TAIL + 1], 0.5);
         assert_eq!(data[FRAME_TAIL + 2], 2.0);
-        assert_eq!(data[FRAME_TAIL + 3].to_bits(), 0);
+        // A switched-off environment writes zero whatever its intensity.
+        assert_eq!(data[FRAME_TAIL + 3], 0.0);
         assert_eq!(
             &data[FRAME_SECTION_PLANES..FRAME_SECTION_PLANES + 4],
             [1.0, 0.0, 0.0, -2.0]
@@ -5410,8 +5919,21 @@ mod tests {
         // tail and leaves the tail where `shader.wgsl` declares it.
         assert_eq!(MAX_SECTION_PLANES, 8);
         assert_eq!(FRAME_SECTION_TAIL, 136);
-        assert_eq!(FRAME_FLOATS * 4, 592);
-        assert_eq!(data[FRAME_SECTION_TAIL + 8], 3.0);
+        assert_eq!(FRAME_FLOATS * 4, 608);
+        // The AO passes own the visibility exponent; the display pass applies 1.
+        assert_eq!(data[FRAME_SECTION_TAIL + 8], 1.0);
+        // No line colour override: a negative alpha keeps authored colours.
+        assert_eq!(data[FRAME_SECTION_TAIL + 15], -1.0);
+        assert_eq!(
+            &frame_uniform(
+                camera,
+                &RenderOptions {
+                    line_color: Some([1.0, 0.0, 0.0, 0.5]),
+                    ..RenderOptions::default()
+                }
+            )[FRAME_SECTION_TAIL + 12..FRAME_SECTION_TAIL + 16],
+            &[1.0, 0.0, 0.0, 0.5]
+        );
         assert_eq!(
             frame_uniform(
                 camera,
@@ -5419,12 +5941,13 @@ mod tests {
                     ao: Some(crate::AmbientOcclusion {
                         radius_pixels: None,
                         intensity: 2.0,
-                        distance_falloff: 0.2
+                        distance_falloff: 0.2,
+                        ..crate::AmbientOcclusion::default()
                     }),
                     ..RenderOptions::default()
                 }
             )[FRAME_SECTION_TAIL + 8],
-            2.0
+            1.0
         );
         let full = frame_uniform(
             camera,
@@ -5456,12 +5979,34 @@ mod tests {
 
         let studio = frame_uniform(camera, &RenderOptions::default());
         assert_eq!(studio[FRAME_TAIL].to_bits(), 1);
-        assert_eq!(studio[FRAME_TAIL + 3].to_bits(), 1);
-        // View space ignores the view matrix; the direction is only normalised.
+        assert_eq!(studio[FRAME_TAIL + 3], 1.0);
+        // The headlamp is view space: it ignores the view matrix and its
+        // (right, up, 2) offsets are only normalised.
         assert_close(
             Vec3::from_slice(&studio[FRAME_LIGHTS..FRAME_LIGHTS + 3]),
             Vec3::ONE.normalize(),
         );
+        assert_eq!(&studio[FRAME_LIGHTS + 4..FRAME_LIGHTS + 7], [1.5; 3]);
+
+        // The headlamp keeps the first slot and stays view-relative while a
+        // world-space light beside it turns with the view.
+        let mut both = options.clone();
+        both.lighting.headlamp = Some(crate::Headlamp {
+            intensity: 2.0,
+            right_offset: -2.0,
+            up_offset: 0.0,
+        });
+        both.lighting.environment = true;
+        let data = frame_uniform(camera, &both);
+        assert_eq!(data[FRAME_TAIL].to_bits(), 2);
+        assert_close(
+            Vec3::from_slice(&data[FRAME_LIGHTS..FRAME_LIGHTS + 3]),
+            Vec3::new(-1.0, 0.0, 1.0).normalize(),
+        );
+        assert_eq!(&data[FRAME_LIGHTS + 4..FRAME_LIGHTS + 7], [2.0; 3]);
+        let second = FRAME_LIGHTS + FRAME_LIGHT_STRIDE;
+        assert_close(Vec3::from_slice(&data[second..second + 3]), Vec3::NEG_Z);
+        assert_eq!(data[FRAME_TAIL + 3], 3.0);
     }
 
     #[test]
@@ -6000,11 +6545,10 @@ mod tests {
                     options,
                 );
                 let x = size / 2;
+                // Black over white blends in sRGB, so the encoded value is
+                // one minus the coverage.
                 let coverage: f64 = (0..size)
-                    .map(|y| {
-                        let red = rendered.rgba[((y * size + x) * 4) as usize] as f32 / 255.0;
-                        1.0 - srgb_to_linear(red)
-                    })
+                    .map(|y| 1.0 - f64::from(rendered.rgba[((y * size + x) * 4) as usize]) / 255.0)
                     .sum();
                 assert!((coverage - f64::from(width)).abs() < 0.35);
             }
@@ -6013,7 +6557,7 @@ mod tests {
     }
 
     #[test]
-    fn line_caps_are_round_and_hidden_lines_stay_hidden() {
+    fn line_ends_are_butt_and_hidden_lines_stay_hidden() {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
                 .expect("renderer");
@@ -6033,9 +6577,14 @@ mod tests {
             line_scene(&[[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]]),
             options.clone(),
         );
+        // The segment spans pixels 64..192. Like the viewer's edges, it ends
+        // flat at the endpoints: no cap reaches the pixels before it.
         let red = |x: u32, y: u32| line.rgba[((y * 256 + x) * 4) as usize];
-        assert!(red(61, 128) < 200);
-        assert_eq!(red(61, 124), 255);
+        assert_eq!(red(63, 128), 255);
+        assert_eq!(red(61, 128), 255);
+        assert!(red(64, 128) < 50);
+        assert!(red(191, 128) < 50);
+        assert_eq!(red(192, 128), 255);
 
         let surface = render_test_scene(&mut renderer, occluded_line_scene(false), options.clone());
         let hidden_line = render_test_scene(&mut renderer, occluded_line_scene(true), options);
@@ -6728,24 +7277,26 @@ mod tests {
 
     #[test]
     fn pass_local_targets_are_transient_but_loaded_depth_and_hdr_are_not() {
+        // Only the AO depth test is pass-local; every other target is read or
+        // loaded by a later pass and keeps its storage.
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
                 .expect("renderer");
         for transparency in [false, true, false, true] {
-            renderer.ensure_targets(320, 240, false, true, transparency);
+            renderer.ensure_targets(320, 240, false, Some(0.5), transparency);
             let targets = renderer.state.targets.as_ref().unwrap();
             let transient = |view: &wgpu::TextureView| {
                 view.texture()
                     .usage()
                     .contains(wgpu::TextureUsages::TRANSIENT_ATTACHMENT)
             };
-            assert!(transient(&targets.msaa_view));
             assert!(transient(&targets.ao.as_ref().unwrap().test_depth_view));
-            assert_eq!(transient(&targets.hdr_msaa), !transparency);
             assert!(!transient(&targets.depth_view));
             assert!(!transient(&targets.opaque_view));
-            assert_eq!(targets.msaa_view.texture().sample_count(), 4);
-            assert_eq!(targets.hdr_msaa.texture().sample_count(), 4);
+            assert!(!transient(&targets.display_view));
+            assert_eq!(targets.composite_view.is_some(), transparency);
+            assert_eq!(targets.display_view.texture().sample_count(), 1);
+            assert_eq!(targets.depth_view.texture().sample_count(), 1);
             assert_eq!(targets.depth_view.texture().format(), DEPTH_FORMAT);
         }
         assert_eq!(renderer.counters.target_allocations, 1);
@@ -6904,7 +7455,7 @@ mod tests {
         let mut renderer =
             pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
                 .expect("renderer");
-        renderer.ensure_targets(768, 432, false, false, false);
+        renderer.ensure_targets(768, 432, false, None, false);
         let ledger = profile::ledger(renderer.state.targets.as_ref().expect("targets"));
         assert_eq!(
             ledger["readbackBytes"].as_array().unwrap().len(),
@@ -6918,6 +7469,64 @@ mod tests {
                 .iter()
                 .any(|t| t["label"] == "composite HDR"),
             "opaque output resolves directly into opaque HDR"
+        );
+    }
+
+    #[cfg(feature = "bench")]
+    #[test]
+    fn ledger_counts_every_ao_target_at_its_extent() {
+        let mut renderer =
+            pollster::block_on(Renderer::new(wgpu::PowerPreference::HighPerformance))
+                .expect("renderer");
+        let ao_targets = |ledger: &serde_json::Value| -> Vec<(String, u64, u64, String)> {
+            ledger["textures"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|t| t["label"].as_str().unwrap().starts_with("AO "))
+                .map(|t| {
+                    (
+                        t["label"].as_str().unwrap().to_owned(),
+                        t["width"].as_u64().unwrap(),
+                        t["height"].as_u64().unwrap(),
+                        t["format"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect()
+        };
+
+        renderer.ensure_targets(768, 433, false, Some(0.5), false);
+        let ledger = profile::ledger(renderer.state.targets.as_ref().expect("targets"));
+        let expected = [
+            ("AO view depth", 768, 433, "R32Float"),
+            ("AO view normal", 768, 433, "Rg8Unorm"),
+            ("AO test depth", 768, 433, "Depth32Float"),
+            ("AO estimate", 384, 217, "Rgba8Unorm"),
+            ("AO denoise", 384, 217, "Rgba8Unorm"),
+            ("AO visibility", 768, 433, "Rgba8Unorm"),
+        ]
+        .map(|(label, width, height, format)| (label.to_owned(), width, height, format.to_owned()));
+        assert_eq!(ao_targets(&ledger), expected);
+        let textures = ledger["textures"].as_array().unwrap();
+        assert_eq!(
+            ledger["textureBytes"].as_u64().unwrap(),
+            textures
+                .iter()
+                .map(|t| t["logicalBytes"].as_u64().unwrap())
+                .sum::<u64>(),
+            "the AO targets count toward the texture total"
+        );
+        let normal = textures
+            .iter()
+            .find(|t| t["label"] == "AO view normal")
+            .unwrap();
+        assert_eq!(normal["logicalBytes"], 768 * 433 * 2);
+
+        renderer.ensure_targets(768, 433, false, None, false);
+        let ledger = profile::ledger(renderer.state.targets.as_ref().expect("targets"));
+        assert!(
+            ao_targets(&ledger).is_empty(),
+            "AO off allocates no AO target"
         );
     }
 
@@ -6966,23 +7575,23 @@ mod tests {
                 .any(|(key, _)| *key == u64::from(2.0f32.to_bits() << 1 | 1))
         );
 
-        renderer.ensure_targets(320, 240, false, false, false);
+        renderer.ensure_targets(320, 240, false, None, false);
         assert_eq!(renderer.counters.target_allocations, 1);
-        renderer.ensure_targets(320, 240, false, false, false);
+        renderer.ensure_targets(320, 240, false, None, false);
         assert_eq!(renderer.counters.target_allocations, 1);
-        renderer.ensure_targets(640, 480, false, false, false);
+        renderer.ensure_targets(640, 480, false, None, false);
         assert_eq!(renderer.counters.target_allocations, 2);
         // The retention guard keeps ordinary sizes and evicts oversized ones.
         renderer.trim_targets();
         assert!(renderer.state.targets.is_some());
-        renderer.ensure_targets(4096, 4096, false, false, false);
+        renderer.ensure_targets(4096, 4096, false, None, false);
         renderer.trim_targets();
         assert!(renderer.state.targets.is_none());
         // Nothing retained: trimming again is a no-op.
         renderer.trim_targets();
         assert!(renderer.state.targets.is_none());
 
-        renderer.ensure_targets(640, 480, false, false, false);
+        renderer.ensure_targets(640, 480, false, None, false);
         let targets = renderer.state.targets.as_ref().expect("targets");
         assert_eq!(targets.readback.len(), 1);
         assert_eq!(targets.unpadded_bytes_per_row, 640 * 4);
@@ -6990,7 +7599,7 @@ mod tests {
             targets.padded_bytes_per_row % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
             0
         );
-        renderer.ensure_targets(640, 480, false, true, false);
+        renderer.ensure_targets(640, 480, false, Some(0.5), false);
         assert!(
             renderer
                 .state
@@ -7001,8 +7610,23 @@ mod tests {
                 .is_some()
         );
         assert_eq!(renderer.counters.target_allocations, 5);
-        renderer.ensure_targets(640, 480, false, true, false);
+        renderer.ensure_targets(640, 480, false, Some(0.5), false);
         assert_eq!(renderer.counters.target_allocations, 5);
+        // A new AO resolution scale is a new estimate extent.
+        renderer.ensure_targets(640, 480, false, Some(1.0), false);
+        assert_eq!(renderer.counters.target_allocations, 6);
+        assert_eq!(
+            renderer
+                .state
+                .targets
+                .as_ref()
+                .expect("AO targets")
+                .ao
+                .as_ref()
+                .expect("AO")
+                .extent,
+            (640, 480)
+        );
         renderer.ensure_ao_pipelines(0);
         let pipeline_sets = renderer.counters.pipeline_sets;
         renderer.ensure_ao_pipelines(0);

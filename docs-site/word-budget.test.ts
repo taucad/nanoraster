@@ -46,8 +46,12 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // Bounded AO and 8K output add per-invocation controls, resolution and memory
 // guidance to the lighting guide, plus its API link: measured 782 / 3395 words
 // and 13,635 site-wide. No unrelated page ceiling changes.
+// The viewer lighting rig adds three public types and four range constants,
+// each with the `###` heading api-coverage requires, a one-line summary, its
+// type table and a constants row; the fields are documented in JSDoc. Measured
+// 3,518 / 13,751; the lighting guide shrinks.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 3_395,
+  'api.mdx': 3_520,
   'guides/choose-visible-geometry.mdx': 373,
   'guides/render-section-views.mdx': 360,
   'guides/format-and-annotate.mdx': 830,
@@ -65,7 +69,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'install.mdx': 740,
   'tutorial.mdx': 696,
 };
-const siteCeiling = 13_635;
+const siteCeiling = 13_755;
 
 const pages = globSync('**/*.mdx', { cwd: docsDir })
   .toSorted()

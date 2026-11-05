@@ -111,10 +111,28 @@ test('reduced AO keeps native coverage and survives resize without history', asy
     const repeated = await renderer.render_image(glb, JSON.stringify(options));
     expect(first.byteLength).toBe(1537 * 865 * 4);
     expect(first.every((value, i) => value === repeated[i])).toBe(true);
+    // AO cannot affect geometric coverage. FXAA filters the AO-shaded surfaces,
+    // as the viewer's does, so shading may change how it blends a silhouette
+    // pixel, but alpha changes nowhere else.
+    const { width, height } = options;
+    const atSilhouette = (pixel) => {
+      const x = pixel % width;
+      const y = Math.floor(pixel / width);
+      let low = 255;
+      let high = 0;
+      for (let v = Math.max(y - 1, 0); v <= Math.min(y + 1, height - 1); v++) {
+        for (let u = Math.max(x - 1, 0); u <= Math.min(x + 1, width - 1); u++) {
+          const alpha = off[(v * width + u) * 4 + 3];
+          low = Math.min(low, alpha);
+          high = Math.max(high, alpha);
+        }
+      }
+      return low < 255 && high > 0;
+    };
     let sameCoverage = true;
     let cleanBlackEdges = 0;
     for (let i = 0; i < first.length; i += 4) {
-      if (first[i + 3] !== off[i + 3]) sameCoverage = false;
+      if (first[i + 3] !== off[i + 3] && !atSilhouette(i / 4)) sameCoverage = false;
       if (off[i] === 0 && off[i + 1] === 0 && off[i + 2] === 0 && off[i + 3] === 255) {
         if (first[i] !== 0 || first[i + 1] !== 0 || first[i + 2] !== 0) sameCoverage = false;
         cleanBlackEdges++;
@@ -399,8 +417,10 @@ test('a true cut through the racing-drone canopy always produces a section image
   const common = {
     // The palette oracle isolates cap material from AO color attenuation.
     ao: { intensity: 0 },
-    width: 192,
-    height: 192,
+    // FXAA blends the stripes of a small cap; at this size their interiors
+    // keep the exact palette.
+    width: 256,
+    height: 256,
     format: 'raw',
     world: { up: '+z', forward: '-y', unit: 'meter' },
     // Caps are single-sided: view from the removed octant so every cut face
@@ -420,7 +440,7 @@ test('a true cut through the racing-drone canopy always produces a section image
       const options = { ...common, sections: { planes: planes.slice(0, count) } };
       const first = await renderer.renderImage(racingDroneGlb, options);
       const second = await renderer.renderImage(racingDroneGlb, options);
-      expect(first).toMatchObject({ width: 192, height: 192, mimeType: 'application/octet-stream' });
+      expect(first).toMatchObject({ width: 256, height: 256, mimeType: 'application/octet-stream' });
       expect(first.bytes).toEqual(second.bytes);
       expect(countDefaultMaterialCapPixels(first.bytes), 'default-material cap pixels').toBeGreaterThan(
         ordinaryCapPalette + 4,
@@ -513,7 +533,10 @@ test('metal and glass match captured WebGL material matrices', async () => {
       ao: reference.ao ?? { intensity: 0 },
     });
     for (const error of materialErrors(base, actual.bytes, expected)) {
-      expect(error.mae, `${reference.id} row ${error.row} roughness ${error.roughness}`).toBeLessThan(2);
+      // The oracle is an MSAA capture without FXAA. nanoraster filters like the
+      // Tau viewer, and FXAA smooths the narrow stripes seen through dispersive glass.
+      const limit = reference.id === 'effects' && error.row === 0 ? 3 : 2;
+      expect(error.mae, `${reference.id} row ${error.row} roughness ${error.roughness}`).toBeLessThan(limit);
       expect(error.alphaMae).toBeLessThan(2);
     }
   }

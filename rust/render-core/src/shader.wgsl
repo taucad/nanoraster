@@ -18,14 +18,19 @@ struct Frame {
     light_count: u32,
     ambient: f32,
     exposure: f32,
-    environment: u32,
+    // Environment radiance multiplier; zero switches the environment off.
+    environment: f32,
     section_planes: array<vec4<f32>, 8>,
     section_count: u32,
     clip_surfaces: u32,
     clip_lines: u32,
     orthographic: u32,
     background: vec4<f32>,
-    ao_control: vec4<f32>,
+    // x = AO visibility exponent; y = tone mapping operator (u32 bits:
+    // 0 neutral, 1 ACES Filmic, 2 linear, 3 none).
+    display: vec4<f32>,
+    // Linear line colour override; a negative alpha keeps authored colours.
+    line_color: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -175,7 +180,7 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
     var sheen_light = vec3<f32>(0.0);
     var coat_light = vec3<f32>(0.0);
     let coat_fresnel = fresnel_schlick(vec3<f32>(0.04), max(dot(coat_n, v), 0.0));
-    if (frame.environment != 0u) {
+    if (frame.environment > 0.0) {
         let bent = cross(cross(b, v), b);
         let bending = pow(1.0 - aniso * (1.0 - rough), 4.0);
         let reflection_n = normalize(mix(select(n, normalize(bent), dot(bent, bent) > 0.000001), n, bending));
@@ -189,12 +194,12 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
         let single_m = environment_brdf(metallic, f90, fab_v);
         let multi_d = multi_scatter(dielectric, single_d, fab_v);
         let multi_m = multi_scatter(metallic, single_m, fab_v);
-        let irradiance = room_radiance(n, 1.0);
-        specular_light += (environment_radiance(v, reflection_n, rough) * mix(single_d, single_m, metal)
+        let irradiance = room_radiance(n, 1.0) * frame.environment;
+        specular_light += (environment_radiance(v, reflection_n, rough) * frame.environment * mix(single_d, single_m, metal)
             + irradiance * mix(multi_d, multi_m, metal)) * sheen_energy;
         diffuse_light += diffuse * irradiance * (1.0 - single_d - multi_d) * sheen_energy;
         sheen_light += irradiance * sheen * sheen_albedo(nv, sheen_rough);
-        coat_light += environment_radiance(v, coat_n, coat_rough)
+        coat_light += environment_radiance(v, coat_n, coat_rough) * frame.environment
             * environment_brdf(vec3<f32>(0.04), vec3<f32>(1.0), dfg(coat_rough, dot(coat_n, v)));
     }
     diffuse_light *= ao;
@@ -242,9 +247,28 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(
     return vec4<f32>(select(color * base.a, color, prim.pbr.z == 2.0), base.a);
 }
 
+// The AO pass's MRT: view depth plus the shading normal `fs_mesh` uses (normal
+// map and back-face flip included), as the viewer's scene pass writes
+// `normalView`, in its octahedral RG8 encoding.
+struct AoDepthOut {
+    @location(0) depth: f32,
+    @location(1) normal: vec2<f32>,
+}
+
+// The viewer's `encodeAoNormal`: octahedral over both hemispheres, scaled to
+// 1..255 so zero stays the cleared background.
+fn encode_ao_normal(normal: vec3<f32>) -> vec2<f32> {
+    let projected = normal / max(abs(normal.x) + abs(normal.y) + abs(normal.z), 0.000001);
+    let signs = select(vec2<f32>(-1.0), vec2<f32>(1.0), projected.xy >= vec2<f32>(0.0));
+    let folded = (1.0 - abs(projected.yx)) * signs;
+    return (select(folded, projected.xy, projected.z >= 0.0) * 0.5 + 0.5) * (254.0 / 255.0) + 1.0 / 255.0;
+}
+
 @fragment
-fn fs_ao_depth(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @location(0) f32 {
-    if (front_facing != (in.model_scale.w > 0.0) && prim.coat.z == 0.0) { discard; }
+fn fs_ao_depth(in: MeshOut, @builtin(front_facing) front_facing: bool) -> AoDepthOut {
+    let is_front = front_facing == (in.model_scale.w > 0.0);
+    let n = mapped_normal(in, normalize(select(-in.view_normal, in.view_normal, is_front)), 2u, prim.misc.x);
+    if (!is_front && prim.coat.z == 0.0) { discard; }
     if (frame.clip_surfaces != 0u) {
         for (var i = 0u; i < frame.section_count; i++) {
             let plane = frame.section_planes[i];
@@ -252,7 +276,10 @@ fn fs_ao_depth(in: MeshOut, @builtin(front_facing) front_facing: bool) -> @locat
         }
     }
     if (prim.pbr.z == 1.0 && (prim.base_color * in.vertex_color * sample_map(in, 0u)).a < prim.pbr.w) { discard; }
-    return in.view_position.z;
+    var out: AoDepthOut;
+    out.depth = in.view_position.z;
+    out.normal = encode_ao_normal(n);
+    return out;
 }
 
 struct ScreenOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> }
@@ -291,13 +318,119 @@ fn reconstructed_ao(uv: vec2<f32>) -> f32 {
 @fragment
 fn fs_screen(in: ScreenOut) -> @location(0) vec4<f32> {
     let color = textureSampleLevel(composite_scene, scene_sampler, in.uv, 0.0);
-    let visibility = pow(reconstructed_ao(in.uv), frame.ao_control.x);
-    let display = tone_map(color.rgb / max(color.a, 0.000001), frame.exposure) * visibility;
-    let alpha = color.a + frame.background.a * (1.0 - color.a);
-    let premultiplied = display * color.a + frame.background.rgb * frame.background.a * (1.0 - color.a);
-    // Cap/edge blending and MSAA still need premultiplied-linear RGB. Readback
-    // unpremultiplies the resolved result for the public straight-alpha API.
-    return vec4<f32>(premultiplied, alpha);
+    let visibility = pow(reconstructed_ao(in.uv), frame.display.x);
+    let display = tone_map(color.rgb / max(color.a, 0.000001), frame.exposure,
+        bitcast<u32>(frame.display.y)) * visibility;
+    // Premultiplied linear over a transparent clear, as the viewer composes
+    // its surfaces: FXAA, then edges, then `fs_output` add the background.
+    return vec4<f32>(display * color.a, color.a);
+}
+
+const FXAA_LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
+
+fn fxaa_luma(uv: vec2<f32>) -> f32 {
+    return dot(textureSampleLevel(composite_scene, scene_sampler, uv, 0.0).rgb, FXAA_LUMA);
+}
+
+// The viewer's surface anti-aliasing (its `createViewportFxaa`: FXAA 3.11 on
+// linear, tone-mapped colour, Rec. 709 luma, 0.75 subpixel quality and a
+// six-step edge search), filtering the single-sample surface image in
+// `composite_scene` before the edges draw over it.
+@fragment
+fn fs_fxaa(in: ScreenOut) -> @location(0) vec4<f32> {
+    let texel = 1.0 / vec2<f32>(textureDimensions(composite_scene));
+    let uv = in.position.xy * texel;
+    let color = textureSampleLevel(composite_scene, scene_sampler, uv, 0.0);
+    let center = dot(color.rgb, FXAA_LUMA);
+    let down = fxaa_luma(uv + texel * vec2<f32>(0.0, -1.0));
+    let up = fxaa_luma(uv + texel * vec2<f32>(0.0, 1.0));
+    let left = fxaa_luma(uv + texel * vec2<f32>(-1.0, 0.0));
+    let right = fxaa_luma(uv + texel * vec2<f32>(1.0, 0.0));
+    let highest = max(max(max(center, down), max(up, left)), right);
+    let range = highest - min(min(min(center, down), min(up, left)), right);
+    if (range < max(0.0312, highest * 0.125)) {
+        return color;
+    }
+    let down_left = fxaa_luma(uv + texel * vec2<f32>(-1.0, -1.0));
+    let down_right = fxaa_luma(uv + texel * vec2<f32>(1.0, -1.0));
+    let up_left = fxaa_luma(uv + texel * vec2<f32>(-1.0, 1.0));
+    let up_right = fxaa_luma(uv + texel * vec2<f32>(1.0, 1.0));
+    let down_up = down + up;
+    let left_right = left + right;
+    let left_corners = down_left + up_left;
+    let right_corners = down_right + up_right;
+    let horizontal = abs(left_corners - left * 2.0) + abs(down_up - center * 2.0) * 2.0
+        + abs(right_corners - right * 2.0);
+    let vertical = abs(up_right + up_left - up * 2.0) + abs(left_right - center * 2.0) * 2.0
+        + abs(down_left + down_right - down * 2.0);
+    let is_horizontal = horizontal >= vertical;
+    let first = select(left, down, is_horizontal);
+    let second = select(right, up, is_horizontal);
+    let gradient1 = abs(first - center);
+    let gradient2 = abs(second - center);
+    let first_steepest = gradient1 >= gradient2;
+    let step = select(texel.x, texel.y, is_horizontal) * select(1.0, -1.0, first_steepest);
+    let average = (select(second, first, first_steepest) + center) * 0.5;
+    let threshold = max(gradient1, gradient2) * 0.25;
+    let perpendicular = select(vec2<f32>(step, 0.0), vec2<f32>(0.0, step), is_horizontal);
+    let along = select(vec2<f32>(0.0, texel.y), vec2<f32>(texel.x, 0.0), is_horizontal);
+    let edge_uv = uv + perpendicular * 0.5;
+    var uv1 = edge_uv - along;
+    var uv2 = edge_uv + along;
+    var end1 = fxaa_luma(uv1) - average;
+    var end2 = fxaa_luma(uv2) - average;
+    var reached1 = abs(end1) >= threshold;
+    var reached2 = abs(end2) >= threshold;
+    if (!reached1) { uv1 -= along; }
+    if (!reached2) { uv2 += along; }
+    for (var i = 2; i < 6; i++) {
+        if (reached1 && reached2) { break; }
+        if (!reached1) { end1 = fxaa_luma(uv1) - average; }
+        if (!reached2) { end2 = fxaa_luma(uv2) - average; }
+        reached1 = abs(end1) >= threshold;
+        reached2 = abs(end2) >= threshold;
+        let quality = select(select(select(8.0, 4.0, i == 4), 2.0, i == 3), 1.5, i == 2);
+        if (!reached1) { uv1 -= along * quality; }
+        if (!reached2) { uv2 += along * quality; }
+    }
+    let distance1 = select(uv.y - uv1.y, uv.x - uv1.x, is_horizontal);
+    let distance2 = select(uv2.y - uv.y, uv2.x - uv.x, is_horizontal);
+    let end = select(end2, end1, distance1 < distance2);
+    let correct = (end < 0.0) != (center < average);
+    let edge_offset = select(0.0, 0.5 - min(distance1, distance2) / (distance1 + distance2), correct);
+    let neighborhood = ((down_up + left_right) * 2.0 + left_corners + right_corners) / 12.0;
+    let subpixel = clamp(abs(neighborhood - center) / range, 0.0, 1.0);
+    let smooth_subpixel = subpixel * subpixel * (3.0 - 2.0 * subpixel);
+    let offset = max(edge_offset, smooth_subpixel * smooth_subpixel * 0.75);
+    return textureSampleLevel(composite_scene, scene_sampler, uv + perpendicular * offset, 0.0);
+}
+
+// The sRGB OETF (three's `sRGBTransferOETF`), unclamped as the viewer's
+// final encode applies it.
+fn srgb_encode(color: vec3<f32>) -> vec3<f32> {
+    return select(1.055 * pow(color, vec3<f32>(1.0 / 2.4)) - 0.055, color * 12.92, color <= vec3<f32>(0.0031308));
+}
+
+// The requested background under the finished frame, as the viewer's page
+// shows its canvas: the frame's straight colour is sRGB-encoded, then
+// premultiplied (`encodeFrameOutput`), and blended source-over onto the
+// background in the encoded domain, `sRGB(c)·a + bg·(1 − a)`. That equals the
+// transparent render's straight-alpha image composited over the background.
+// Both blends agree where the frame is covered, empty or over transparency,
+// so those pixels stay exact; readback unpremultiplies whatever keeps any
+// transparency.
+@fragment
+fn fs_output(in: ScreenOut) -> @location(0) vec4<f32> {
+    let color = textureLoad(composite_scene, vec2<i32>(in.position.xy), 0);
+    let background = frame.background;
+    if (color.a == 1.0 || color.a == 0.0 || background.a == 0.0) {
+        return color + background * vec4<f32>(vec3<f32>(background.a), 1.0) * (1.0 - color.a);
+    }
+    let straight = color.rgb / color.a;
+    let frame_encoded = min(srgb_encode(straight) * color.a, vec3<f32>(1.0));
+    let alpha = color.a + background.a * (1.0 - color.a);
+    let encoded = min(frame_encoded + srgb_encode(background.rgb) * background.a * (1.0 - color.a), vec3<f32>(1.0));
+    return vec4<f32>(srgb_decode(encoded / alpha) * alpha, alpha);
 }
 
 struct CapOut {
@@ -344,17 +477,32 @@ fn fs_cap(in: CapOut) -> @location(0) vec4<f32> {
     return mix(in.base_color, in.stripe_color, stripe);
 }
 
-// Fat lines: each segment instance is an 8-vertex triangle strip — a body
-// quad plus one cap row half a width beyond each endpoint, the layout of
-// three.js LineSegmentsGeometry. uv.x runs across the stroke and uv.y along
-// it, both in half-width units at the caps: the body spans uv.y in [-1, 1]
-// and the cap rows sit at ±2, so fs_line can discard outside the endpoint
-// circles. Round caps make consecutive segments of an edge loop union into
-// a smooth constant-width stroke — square caps left corner bulges poking
-// out of every joint of a tessellated curve, reading as a sawtooth.
+// Fat lines, ported from the Tau viewer's WebGPU edge material (its
+// `Line2NodeMaterial` with analytic coverage and butt caps, on three.js
+// LineSegmentsGeometry). Each segment instance is an 8-vertex triangle strip:
+// a body quad plus one row beyond each endpoint. The quad is the stroke
+// widened by the projection of a square pixel onto the stroke's normal
+// (|nx| + |ny|), so every pixel the stroke touches gets one fragment. That
+// fragment computes the exact area of its square pixel inside the stroke
+// from its distance to the screen-space segment and writes it as alpha;
+// fragments whose centre lies beyond an endpoint are discarded (butt caps,
+// so the segments of a tessellated curve abut instead of stacking caps).
+// Lines blend without writing depth, as the viewer's edges do.
 struct LineOut {
     @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
+    // xy = the segment endpoint nearer the view centre, in framebuffer
+    // pixels (top-left origin); zw = unit direction along the segment.
+    @location(0) @interpolate(flat) screen: vec4<f32>,
+    // Extent along the direction on either side of that anchor, in pixels.
+    @location(1) @interpolate(flat) extent: vec2<f32>,
+}
+
+fn culled_line() -> LineOut {
+    var out: LineOut;
+    out.position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    out.screen = vec4<f32>(0.0);
+    out.extent = vec2<f32>(0.0);
+    return out;
 }
 
 @vertex
@@ -377,10 +525,7 @@ fn vs_line(
             let start_distance = dot(plane.xyz, world_start.xyz) + plane.w;
             let end_distance = dot(plane.xyz, world_end.xyz) + plane.w;
             if (start_distance < 0.0 && end_distance < 0.0) {
-                var out: LineOut;
-                out.position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
-                out.uv = vec2<f32>(0.0);
-                return out;
+                return culled_line();
             }
             if (start_distance < 0.0) {
                 world_start = mix(world_start, world_end, start_distance / (start_distance - end_distance));
@@ -396,10 +541,7 @@ fn vs_line(
     // division so a fixed camera may cross a segment without expanding it to
     // infinity. A segment wholly behind the plane becomes an off-screen point.
     if (clip_start.z < 0.0 && clip_end.z < 0.0) {
-        var out: LineOut;
-        out.position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
-        out.uv = vec2<f32>(0.0);
-        return out;
+        return culled_line();
     }
     if (clip_start.z < 0.0) {
         let amount = -clip_start.z / (clip_end.z - clip_start.z);
@@ -411,38 +553,74 @@ fn vs_line(
 
     let resolution = frame.viewport.xy;
     let aspect = resolution.x / resolution.y;
-    var dir = clip_end.xy / clip_end.w - clip_start.xy / clip_start.w;
-    dir.x = dir.x * aspect;
+    let ndc_start = clip_start.xy / clip_start.w;
+    let ndc_end = clip_end.xy / clip_end.w;
+    let start_px = vec2<f32>(ndc_start.x * 0.5 + 0.5, 0.5 - ndc_start.y * 0.5) * resolution;
+    let end_px = vec2<f32>(ndc_end.x * 0.5 + 0.5, 0.5 - ndc_end.y * 0.5) * resolution;
+    let length_px = length(end_px - start_px);
     // A zero-length projected segment (duplicate tessellation point, or a
-    // segment aimed dead-on at the camera) still draws as a round dot via
-    // its caps instead of a NaN quad.
-    dir = select(normalize(dir), vec2<f32>(1.0, 0.0), dot(dir, dir) == 0.0);
+    // segment aimed dead-on at the camera) covers no pixel centre.
+    let along_px = select((end_px - start_px) / length_px, vec2<f32>(1.0, 0.0), length_px == 0.0);
+    let anchor_is_start = dot(ndc_start, ndc_start) < dot(ndc_end, ndc_end);
 
-    // Perpendicular half-width offset, plus a half-width lengthwise
-    // extension on the cap rows. One pixel is 2/resolution.y NDC, so
+    var dir = ndc_end - ndc_start;
+    dir.x = dir.x * aspect;
+    dir = select(normalize(dir), vec2<f32>(1.0, 0.0), dot(dir, dir) == 0.0);
+    // The square pixel's extent across the stroke.
+    let footprint = abs(dir.x) + abs(dir.y);
+
+    // Perpendicular half-width offset, plus the same lengthwise extension on
+    // the end rows. One pixel is 2/resolution.y NDC, so
     // width_px/resolution.y is the half-width per side.
     let cap = select(0.0, select(-1.0, 1.0, at_end), is_cap);
     var offset = vec2<f32>(dir.y, -dir.x) * side + dir * cap;
-    offset = offset * frame.viewport.z / resolution.y;
+    offset = offset * (frame.viewport.z + footprint) / resolution.y;
     offset.x = offset.x / aspect;
 
     let clip = select(clip_start, clip_end, at_end);
     var out: LineOut;
     out.position = vec4<f32>(clip.xy + offset * clip.w, clip.zw);
-    let uv_body = select(-1.0, 1.0, at_end);
-    out.uv = vec2<f32>(side, select(uv_body, uv_body * 2.0, is_cap));
+    out.screen = vec4<f32>(select(end_px, start_px, anchor_is_start), along_px);
+    out.extent = select(vec2<f32>(-length_px, 0.0), vec2<f32>(0.0, length_px), anchor_is_start);
     return out;
+}
+
+// Exact area of a unit square pixel inside an infinite strip of half-width
+// `half_width` whose centre line passes `distance` pixels from the pixel
+// centre along the unit `normal` (the viewer's `squarePixelStripCoverage`).
+fn square_pixel_strip_coverage(normal: vec2<f32>, distance: f32, half_width: f32) -> f32 {
+    let a = max(abs(normal.x), abs(normal.y));
+    let b = min(abs(normal.x), abs(normal.y));
+    return clamp(
+        square_pixel_cdf(half_width - distance, a, b) - square_pixel_cdf(-half_width - distance, a, b),
+        0.0,
+        1.0,
+    );
+}
+
+// Fraction of the square pixel on the near side of a line `position` pixels
+// from its centre, for a normal with components `a` >= `b` >= 0.
+fn square_pixel_cdf(position: f32, a: f32, b: f32) -> f32 {
+    let magnitude = abs(position);
+    let tail = max((a + b) * 0.5 - magnitude, 0.0);
+    let outer = 1.0 - tail * tail / (a * max(b, 1e-6) * 2.0);
+    let inner = 0.5 + magnitude / a;
+    let positive = select(outer, inner, magnitude <= (a - b) * 0.5);
+    return clamp(select(positive, 1.0 - positive, position < 0.0), 0.0, 1.0);
 }
 
 @fragment
 fn fs_line(in: LineOut) -> @location(0) vec4<f32> {
-    // Round caps: outside the body span keep only the endpoint circle
-    // (three.js LineMaterial's discard path; MSAA covers the boundary).
-    if (abs(in.uv.y) > 1.0) {
-        let b = in.uv.y - sign(in.uv.y);
-        if (in.uv.x * in.uv.x + b * b > 1.0) {
-            discard;
-        }
+    let relative = in.position.xy - in.screen.xy;
+    let across = relative.x * in.screen.w - relative.y * in.screen.z;
+    let along = dot(relative, in.screen.zw);
+    if (max(in.extent.x - along, along - in.extent.y) > 0.0) {
+        discard;
     }
-    return prim.base_color;
+    let coverage = square_pixel_strip_coverage(in.screen.zw, across, frame.viewport.z * 0.5);
+    if (coverage <= 0.0) {
+        discard;
+    }
+    let color = select(prim.base_color, frame.line_color, frame.line_color.a >= 0.0);
+    return vec4<f32>(color.rgb, color.a * coverage);
 }

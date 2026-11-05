@@ -62,8 +62,28 @@ fn direct_multi_scatter(f0: vec3<f32>, f90: vec3<f32>, fab_v: vec2<f32>, fab_l: 
         / (1.0 - missing * average + 0.000001);
 }
 
-// Khronos PBR Neutral: identical display transform to Tau's editing profile.
-fn tone_map(color: vec3<f32>, exposure: f32) -> vec3<f32> {
+// three.js r184's WebGPU tone mapping operators (ToneMappingFunctions.js), as
+// the Tau viewer's `renderOutput` applies them. 0 = Khronos PBR Neutral, the
+// viewer's default; 1 = ACES Filmic (three's TSL fit); 2 = linear; 3 = none,
+// which like three's NoToneMapping skips the exposure as well.
+fn tone_map(color: vec3<f32>, exposure: f32, mapping: u32) -> vec3<f32> {
+    if (mapping == 3u) { return color; }
+    if (mapping == 2u) { return saturate(color * exposure); }
+    if (mapping == 1u) {
+        // Rows of three's row-major ACESInputMat/ACESOutputMat, as WGSL columns.
+        let input = mat3x3<f32>(
+            vec3<f32>(0.59719, 0.07600, 0.02840),
+            vec3<f32>(0.35458, 0.90834, 0.13383),
+            vec3<f32>(0.04823, 0.01566, 0.83777));
+        let output = mat3x3<f32>(
+            vec3<f32>(1.60475, -0.10208, -0.00327),
+            vec3<f32>(-0.53108, 1.10813, -0.07276),
+            vec3<f32>(-0.07367, -0.00605, 1.07602));
+        let v = input * (color * exposure / 0.6);
+        let a = v * (v + 0.0245786) - 0.000090537;
+        let b = v * ((v + 0.4329510) * 0.983729) + 0.238081;
+        return saturate(output * (a / b));
+    }
     var c = color * exposure;
     let x = min(min(c.r, c.g), c.b);
     c -= select(0.04, x - 6.25 * x * x, x < 0.08);

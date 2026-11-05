@@ -2,9 +2,10 @@
 
 use crate::encode::ImageFormat;
 use crate::{
-    AmbientOcclusion, CameraProjection, ClipPlanes, LightingSpace, MAX_LIGHTS, MAX_SECTION_PLANES,
-    PrimitiveRef, RenderCamera, RenderError, RenderOptions, ResolvedLight, ResolvedLighting,
-    SectionPlane, Sections,
+    AmbientOcclusion, CameraProjection, ClipPlanes, EnvironmentSource, Headlamp, LightCard,
+    LightingSpace, MAX_LIGHT_CARDS, MAX_LIGHTS, MAX_SECTION_PLANES, PrimitiveRef, RenderCamera,
+    RenderError, RenderOptions, ResolvedLight, ResolvedLighting, SectionPlane, Sections,
+    ToneMapping,
 };
 use serde::{Deserialize, Deserializer, de, de::DeserializeOwned};
 use std::collections::HashSet;
@@ -15,6 +16,11 @@ pub(crate) const ANNOTATED_MIN_DIMENSION: u32 = 192;
 const MAX_LIGHT_COLOR: f32 = 32.0;
 const MAX_AMBIENT: f32 = 4.0;
 const EXPOSURE_RANGE: std::ops::RangeInclusive<f32> = 0.01..=16.0;
+const MAX_ENVIRONMENT_INTENSITY: f32 = 16.0;
+/// Headlamp offsets and card positions and sizes, in scene radii.
+const MAX_RIG_EXTENT: f32 = 64.0;
+/// Card radiance; the viewer's key card is 64.
+const MAX_CARD_INTENSITY: f32 = 4_096.0;
 const FIELD_OF_VIEW_RANGE: std::ops::RangeInclusive<f32> = 1.0..=179.0;
 const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.01..=100.0;
 const LINE_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 0.25..=16.0;
@@ -83,14 +89,65 @@ pub struct LightRequest {
     color: [f32; 3],
 }
 
-/// Wire shape for an explicit rig. `lights` replaces the studio lights
-/// entirely; everything else inherits the studio value when omitted.
+/// Wire shape for the camera-relative headlamp; omitted fields keep the
+/// viewer's values.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HeadlampRequest {
+    intensity: Option<f32>,
+    right_offset: Option<f32>,
+    up_offset: Option<f32>,
+}
+
+/// Wire shape for one rectangular light card.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LightCardRequest {
+    position: [f32; 3],
+    size: [f32; 2],
+    intensity: f32,
+    rotation: Option<[f32; 3]>,
+}
+
+/// Wire shape for an environment object.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EnvironmentObjectRequest {
+    cards: Option<Vec<LightCardRequest>>,
+    intensity: Option<f32>,
+}
+
+/// `"studio"`, `"none"`, or an environment object.
+#[derive(Debug)]
+pub enum EnvironmentRequest {
+    Named(String),
+    Object(EnvironmentObjectRequest),
+}
+
+impl<'de> Deserialize<'de> for EnvironmentRequest {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Branch on the JSON shape, as `LightingRequest` does, so a field typo
+        // keeps serde's own message.
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if let serde_json::Value::String(name) = value {
+            return Ok(Self::Named(name));
+        }
+        EnvironmentObjectRequest::deserialize(value)
+            .map(Self::Object)
+            .map_err(de::Error::custom)
+    }
+}
+
+/// Wire shape for an explicit rig. Omitted fields inherit the studio value,
+/// except that an explicit `lights` array replaces the studio's headlamp
+/// unless `headlamp` is given too.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LightingRigRequest {
-    lights: Vec<LightRequest>,
+    lights: Option<Vec<LightRequest>>,
+    headlamp: Option<HeadlampRequest>,
     ambient: Option<f32>,
-    environment: Option<String>,
+    environment: Option<EnvironmentRequest>,
     space: Option<String>,
     exposure: Option<f32>,
 }
@@ -137,6 +194,64 @@ pub struct AoRequest {
     intensity: Option<f32>,
     #[serde(default, deserialize_with = "present_ao_number")]
     distance_falloff: Option<f32>,
+    #[serde(default, deserialize_with = "present_ao_number")]
+    thickness_ratio: Option<f32>,
+    #[serde(default, deserialize_with = "present_ao_number")]
+    denoise_depth_tolerance: Option<f32>,
+    #[serde(default, deserialize_with = "present_ao_number")]
+    samples: Option<f32>,
+    #[serde(default, deserialize_with = "present_ao_number")]
+    resolution_scale: Option<f32>,
+}
+
+const AO_RADIUS_PIXELS_RANGE: std::ops::RangeInclusive<f32> = 1.0..=128.0;
+const AO_INTENSITY_RANGE: std::ops::RangeInclusive<f32> = 0.0..=8.0;
+const AO_DISTANCE_FALLOFF_RANGE: std::ops::RangeInclusive<f32> = 0.01..=1.0;
+const AO_THICKNESS_RATIO_RANGE: std::ops::RangeInclusive<f32> = 0.1..=100.0;
+const AO_DENOISE_DEPTH_TOLERANCE_RANGE: std::ops::RangeInclusive<f32> = 0.01..=10.0;
+const AO_SAMPLES_RANGE: std::ops::RangeInclusive<u32> = 1..=64;
+const AO_RESOLUTION_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.25..=1.0;
+
+/// The one AO admission rule, shared by request resolution and
+/// `RenderOptions` validation. Each failure names its field.
+pub(crate) fn validate_ao(ao: &AmbientOcclusion) -> Result<(), RenderError> {
+    let mut checks = vec![
+        ("intensity", ao.intensity, AO_INTENSITY_RANGE),
+        (
+            "distanceFalloff",
+            ao.distance_falloff,
+            AO_DISTANCE_FALLOFF_RANGE,
+        ),
+        (
+            "thicknessRatio",
+            ao.thickness_ratio,
+            AO_THICKNESS_RATIO_RANGE,
+        ),
+        (
+            "denoiseDepthTolerance",
+            ao.denoise_depth_tolerance,
+            AO_DENOISE_DEPTH_TOLERANCE_RANGE,
+        ),
+        (
+            "resolutionScale",
+            ao.resolution_scale,
+            AO_RESOLUTION_SCALE_RANGE,
+        ),
+    ];
+    if let Some(radius) = ao.radius_pixels {
+        checks.insert(0, ("radiusPixels", radius, AO_RADIUS_PIXELS_RANGE));
+    }
+    for (name, value, range) in checks {
+        if !value.is_finite() || !range.contains(&value) {
+            return Err(RenderError::Parse(format!("ao.{name} outside {range:?}")));
+        }
+    }
+    if !AO_SAMPLES_RANGE.contains(&ao.samples) {
+        return Err(RenderError::Parse(format!(
+            "ao.samples outside {AO_SAMPLES_RANGE:?}"
+        )));
+    }
+    Ok(())
 }
 
 fn present_ao_number<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f32>, D::Error> {
@@ -255,12 +370,14 @@ pub struct RenderRequest {
     pub visible_primitives: Option<Vec<PrimitiveRefRequest>>,
     pub sections: Option<SectionsRequest>,
     pub background: Option<[f32; 4]>,
+    pub line_color: Option<[f32; 4]>,
     pub label: Option<String>,
     pub axes: Option<bool>,
     pub scale_bar: Option<bool>,
     pub lighting: Option<LightingRequest>,
     #[serde(default, deserialize_with = "present_ao")]
     pub ao: Option<AoRequest>,
+    pub tone_mapping: Option<String>,
 }
 
 /// Wire shape for one identified camera in a batch: camera identity plus
@@ -293,11 +410,13 @@ pub struct RenderImagesRequest {
     pub visible_primitives: Option<Vec<PrimitiveRefRequest>>,
     pub sections: Option<SectionsRequest>,
     pub background: Option<[f32; 4]>,
+    pub line_color: Option<[f32; 4]>,
     pub axes: Option<bool>,
     pub scale_bar: Option<bool>,
     pub lighting: Option<LightingRequest>,
     #[serde(default, deserialize_with = "present_ao")]
     pub ao: Option<AoRequest>,
+    pub tone_mapping: Option<String>,
     pub timings: Option<bool>,
     pub views: Vec<RenderImageViewRequest>,
 }
@@ -354,6 +473,7 @@ struct CommonRequest<'a> {
     visible_primitives: Option<&'a [PrimitiveRefRequest]>,
     sections: Option<&'a SectionsRequest>,
     background: Option<[f32; 4]>,
+    line_color: Option<[f32; 4]>,
     axes: Option<bool>,
     /// Whether the shared width/height must clear the annotated minimum. Only
     /// a singular request renders at them; a batch renders at each view's
@@ -362,6 +482,7 @@ struct CommonRequest<'a> {
     scale_bar: Option<bool>,
     lighting: Option<&'a LightingRequest>,
     ao: Option<&'a AoRequest>,
+    tone_mapping: Option<&'a str>,
 }
 
 impl RenderRequest {
@@ -395,6 +516,7 @@ impl RenderRequest {
             visible_primitives: self.visible_primitives.as_deref(),
             sections: self.sections.as_ref(),
             background: self.background,
+            line_color: self.line_color,
             axes: self.axes,
             annotated: self.axes.unwrap_or(false)
                 || self.scale_bar.unwrap_or(false)
@@ -402,6 +524,7 @@ impl RenderRequest {
             scale_bar: self.scale_bar,
             lighting: self.lighting.as_ref(),
             ao: self.ao.as_ref(),
+            tone_mapping: self.tone_mapping.as_deref(),
         }
     }
 }
@@ -508,11 +631,13 @@ impl RenderImagesRequest {
             visible_primitives: self.visible_primitives.as_deref(),
             sections: self.sections.as_ref(),
             background: self.background,
+            line_color: self.line_color,
             axes: self.axes,
             annotated: false,
             scale_bar: self.scale_bar,
             lighting: self.lighting.as_ref(),
             ao: self.ao.as_ref(),
+            tone_mapping: self.tone_mapping.as_deref(),
         }
     }
 }
@@ -582,43 +707,67 @@ fn resolve_common(
             LINE_WIDTH_RANGE.end()
         )));
     }
-    if let Some(background) = request.background
-        && background
-            .iter()
-            .any(|channel| !channel.is_finite() || !(0.0..=1.0).contains(channel))
-    {
-        return Err(RenderError::Parse(
-            "background channels outside 0..=1".into(),
-        ));
+    for (name, color) in [
+        ("background", request.background),
+        ("lineColor", request.line_color),
+    ] {
+        if let Some(color) = color
+            && color
+                .iter()
+                .any(|channel| !channel.is_finite() || !(0.0..=1.0).contains(channel))
+        {
+            return Err(RenderError::Parse(format!("{name} channels outside 0..=1")));
+        }
     }
 
     let lighting = resolve_lighting(request.lighting, world)?;
     let ao = request
         .ao
         .map(|ao| {
-            for (name, value, range) in [
-                ("radiusPixels", ao.radius_pixels, 1.0..=128.0),
-                ("intensity", ao.intensity, 0.0..=8.0),
-                ("distanceFalloff", ao.distance_falloff, 0.01..=1.0),
-            ] {
-                if let Some(value) = value
-                    && (!value.is_finite() || !range.contains(&value))
-                {
-                    return Err(RenderError::Parse(format!("ao.{name} outside {range:?}")));
+            let fallback = AmbientOcclusion::default();
+            let samples = match ao.samples {
+                None => fallback.samples,
+                Some(samples) if samples.is_finite() && samples.fract() == 0.0 => {
+                    if !(*AO_SAMPLES_RANGE.start() as f32..=*AO_SAMPLES_RANGE.end() as f32)
+                        .contains(&samples)
+                    {
+                        return Err(RenderError::Parse(format!(
+                            "ao.samples outside {AO_SAMPLES_RANGE:?}"
+                        )));
+                    }
+                    samples as u32
                 }
-            }
-            Ok(AmbientOcclusion {
+                Some(_) => {
+                    return Err(RenderError::Parse("ao.samples must be an integer".into()));
+                }
+            };
+            let resolved = AmbientOcclusion {
                 radius_pixels: ao.radius_pixels,
-                intensity: ao
-                    .intensity
-                    .unwrap_or(AmbientOcclusion::default().intensity),
-                distance_falloff: ao
-                    .distance_falloff
-                    .unwrap_or(AmbientOcclusion::default().distance_falloff),
-            })
+                intensity: ao.intensity.unwrap_or(fallback.intensity),
+                distance_falloff: ao.distance_falloff.unwrap_or(fallback.distance_falloff),
+                thickness_ratio: ao.thickness_ratio.unwrap_or(fallback.thickness_ratio),
+                denoise_depth_tolerance: ao
+                    .denoise_depth_tolerance
+                    .unwrap_or(fallback.denoise_depth_tolerance),
+                samples,
+                resolution_scale: ao.resolution_scale.unwrap_or(fallback.resolution_scale),
+            };
+            validate_ao(&resolved)?;
+            Ok(resolved)
         })
         .transpose()?
         .or(defaults.ao);
+    let tone_mapping = match request.tone_mapping {
+        None | Some("neutral") => ToneMapping::Neutral,
+        Some("aces") => ToneMapping::Aces,
+        Some("linear") => ToneMapping::Linear,
+        Some("none") => ToneMapping::None,
+        Some(other) => {
+            return Err(RenderError::Parse(format!(
+                "toneMapping {other:?} not neutral/aces/linear/none"
+            )));
+        }
+    };
     let visible_primitives = request
         .visible_primitives
         .map(|primitives| {
@@ -694,10 +843,12 @@ fn resolve_common(
             visible_primitives,
             sections,
             background: request.background,
+            line_color: request.line_color,
             axes,
             scale_bar,
             lighting,
             ao,
+            tone_mapping,
             world_axes: world.axes,
             ..defaults
         },
@@ -1023,8 +1174,8 @@ fn resolve_format(name: &str, quality: Option<f32>) -> Result<ImageFormat, Strin
 }
 
 /// `'studio'`, omitted, and the studio values spelled out all resolve to the
-/// same rig. An explicit `lights` array replaces the studio lights entirely;
-/// every other field inherits the preset.
+/// same rig. Every omitted field inherits the preset, except that an explicit
+/// `lights` array without a `headlamp` replaces the studio's headlamp too.
 fn resolve_lighting(
     request: Option<&LightingRequest>,
     world: WorldTransform,
@@ -1039,14 +1190,26 @@ fn resolve_lighting(
         Some(LightingRequest::Rig(rig)) => rig,
     };
 
-    if rig.lights.len() > MAX_LIGHTS {
+    let headlamp = match (&rig.headlamp, &rig.lights) {
+        (Some(request), _) => resolve_headlamp(request)?,
+        (None, Some(_)) => None,
+        (None, None) => studio.headlamp,
+    };
+    let requested = rig.lights.as_deref().unwrap_or_default();
+    let capacity = MAX_LIGHTS - usize::from(headlamp.is_some());
+    if requested.len() > capacity {
+        let beside = if headlamp.is_some() {
+            " beside the headlamp"
+        } else {
+            ""
+        };
         return Err(RenderError::Parse(format!(
-            "lighting.lights: at most {MAX_LIGHTS} lights, received {}",
-            rig.lights.len()
+            "lighting.lights: at most {capacity} lights{beside}, received {}",
+            requested.len()
         )));
     }
-    let mut lights = Vec::with_capacity(rig.lights.len());
-    for (index, light) in rig.lights.iter().enumerate() {
+    let mut lights = Vec::with_capacity(requested.len());
+    for (index, light) in requested.iter().enumerate() {
         if light.direction.iter().any(|axis| !axis.is_finite()) {
             return Err(RenderError::Parse(format!(
                 "lighting.lights[{index}].direction must be finite"
@@ -1093,13 +1256,31 @@ fn resolve_lighting(
             EXPOSURE_RANGE.end()
         )));
     }
-    let environment = match rig.environment.as_deref() {
-        None | Some("studio") => true,
-        Some("none") => false,
-        Some(other) => {
+    let (environment, environment_source, environment_intensity) = match rig.environment.as_ref() {
+        None => (true, EnvironmentSource::Room, studio.environment_intensity),
+        Some(EnvironmentRequest::Named(name)) if name == "studio" => {
+            (true, EnvironmentSource::Room, studio.environment_intensity)
+        }
+        Some(EnvironmentRequest::Named(name)) if name == "none" => {
+            (false, EnvironmentSource::Room, studio.environment_intensity)
+        }
+        Some(EnvironmentRequest::Named(other)) => {
             return Err(RenderError::Parse(format!(
                 "lighting.environment {other:?} not studio/none"
             )));
+        }
+        Some(EnvironmentRequest::Object(object)) => {
+            let intensity = object.intensity.unwrap_or(studio.environment_intensity);
+            if !intensity.is_finite() || !(0.0..=MAX_ENVIRONMENT_INTENSITY).contains(&intensity) {
+                return Err(RenderError::Parse(format!(
+                    "lighting.environment.intensity {intensity} outside 0..={MAX_ENVIRONMENT_INTENSITY}"
+                )));
+            }
+            let source = match object.cards.as_deref() {
+                None => EnvironmentSource::Room,
+                Some(cards) => EnvironmentSource::Cards(resolve_cards(cards)?),
+            };
+            (true, source, intensity)
         }
     };
     let space = match rig.space.as_deref() {
@@ -1114,11 +1295,103 @@ fn resolve_lighting(
 
     Ok(ResolvedLighting {
         lights,
+        headlamp,
         ambient,
         environment,
+        environment_source,
+        environment_intensity,
         space,
         exposure,
     })
+}
+
+/// A zero intensity switches the headlamp off and frees its light slot.
+fn resolve_headlamp(request: &HeadlampRequest) -> Result<Option<Headlamp>, RenderError> {
+    let viewer = Headlamp::VIEWER;
+    let intensity = request.intensity.unwrap_or(viewer.intensity);
+    if !intensity.is_finite() || !(0.0..=MAX_LIGHT_COLOR).contains(&intensity) {
+        return Err(RenderError::Parse(format!(
+            "lighting.headlamp.intensity {intensity} outside 0..={MAX_LIGHT_COLOR}"
+        )));
+    }
+    let mut offsets = [viewer.right_offset, viewer.up_offset];
+    for ((offset, requested), name) in offsets
+        .iter_mut()
+        .zip([request.right_offset, request.up_offset])
+        .zip(["rightOffset", "upOffset"])
+    {
+        *offset = requested.unwrap_or(*offset);
+        if !offset.is_finite() || offset.abs() > MAX_RIG_EXTENT {
+            return Err(RenderError::Parse(format!(
+                "lighting.headlamp.{name} {offset} outside -{MAX_RIG_EXTENT}..={MAX_RIG_EXTENT}"
+            )));
+        }
+    }
+    Ok((intensity > 0.0).then_some(Headlamp {
+        intensity,
+        right_offset: offsets[0],
+        up_offset: offsets[1],
+    }))
+}
+
+fn resolve_cards(requested: &[LightCardRequest]) -> Result<Vec<LightCard>, RenderError> {
+    if requested.len() > MAX_LIGHT_CARDS {
+        return Err(RenderError::Parse(format!(
+            "lighting.environment.cards: at most {MAX_LIGHT_CARDS} cards, received {}",
+            requested.len()
+        )));
+    }
+    requested
+        .iter()
+        .enumerate()
+        .map(|(index, card)| {
+            let name = format!("lighting.environment.cards[{index}]");
+            if card
+                .position
+                .iter()
+                .any(|axis| !axis.is_finite() || axis.abs() > MAX_RIG_EXTENT)
+            {
+                return Err(RenderError::Parse(format!(
+                    "{name}.position axes outside -{MAX_RIG_EXTENT}..={MAX_RIG_EXTENT}"
+                )));
+            }
+            if glam::Vec3::from(card.position).length() < MIN_DIRECTION_LENGTH {
+                return Err(RenderError::Parse(format!(
+                    "{name}.position must be away from the centre"
+                )));
+            }
+            if card
+                .size
+                .iter()
+                .any(|side| !side.is_finite() || *side <= 0.0 || *side > MAX_RIG_EXTENT)
+            {
+                return Err(RenderError::Parse(format!(
+                    "{name}.size sides outside (0, {MAX_RIG_EXTENT}]"
+                )));
+            }
+            if !card.intensity.is_finite() || !(0.0..=MAX_CARD_INTENSITY).contains(&card.intensity)
+            {
+                return Err(RenderError::Parse(format!(
+                    "{name}.intensity {} outside 0..={MAX_CARD_INTENSITY}",
+                    card.intensity
+                )));
+            }
+            if card
+                .rotation
+                .is_some_and(|rotation| rotation.iter().any(|angle| !angle.is_finite()))
+            {
+                return Err(RenderError::Parse(format!(
+                    "{name}.rotation must be finite"
+                )));
+            }
+            Ok(LightCard {
+                position: card.position,
+                size: card.size,
+                intensity: card.intensity,
+                rotation: card.rotation,
+            })
+        })
+        .collect()
 }
 
 fn validate_optional_label(label: Option<&str>, name: &str) -> Result<(), RenderError> {
@@ -1250,8 +1523,12 @@ mod tests {
             single.ao,
             Some(AmbientOcclusion {
                 radius_pixels: None,
-                intensity: 3.0,
-                distance_falloff: 0.2,
+                intensity: 0.75,
+                distance_falloff: 1.0,
+                thickness_ratio: 1.0 / 0.09,
+                denoise_depth_tolerance: 0.1,
+                samples: 16,
+                resolution_scale: 0.5,
             })
         );
         let (batch, _, _, _) = RenderImagesRequest::from_json(
@@ -1266,6 +1543,7 @@ mod tests {
                 radius_pixels: Some(12.0),
                 intensity: 2.0,
                 distance_falloff: 0.25,
+                ..AmbientOcclusion::default()
             })
         );
         for invalid in [
@@ -1282,6 +1560,130 @@ mod tests {
                 "{invalid}"
             );
         }
+    }
+
+    #[test]
+    fn gtao_controls_resolve_and_each_rejection_names_its_field() {
+        let (single, _) = RenderRequest::from_json(
+            r#"{"format":"raw","ao":{"thicknessRatio":4,"denoiseDepthTolerance":0.5,"samples":30,"resolutionScale":1}}"#,
+        )
+        .expect("GTAO request")
+        .resolve()
+        .expect("GTAO controls");
+        assert_eq!(
+            single.ao,
+            Some(AmbientOcclusion {
+                thickness_ratio: 4.0,
+                denoise_depth_tolerance: 0.5,
+                samples: 30,
+                resolution_scale: 1.0,
+                ..AmbientOcclusion::default()
+            })
+        );
+        let (batch, _, _, _) = RenderImagesRequest::from_json(
+            r#"{"format":"raw","ao":{"samples":8},"views":[{"id":"front"}]}"#,
+        )
+        .expect("batch GTAO request")
+        .resolve()
+        .expect("batch GTAO controls");
+        assert_eq!(batch.ao.expect("AO").samples, 8);
+        for (field, expected) in [
+            (
+                r#""thicknessRatio":0"#,
+                "parse: ao.thicknessRatio outside 0.1..=100.0",
+            ),
+            (
+                r#""thicknessRatio":101"#,
+                "parse: ao.thicknessRatio outside 0.1..=100.0",
+            ),
+            (
+                r#""denoiseDepthTolerance":0"#,
+                "parse: ao.denoiseDepthTolerance outside 0.01..=10.0",
+            ),
+            (r#""samples":0"#, "parse: ao.samples outside 1..=64"),
+            (r#""samples":65"#, "parse: ao.samples outside 1..=64"),
+            (r#""samples":16.5"#, "parse: ao.samples must be an integer"),
+            (
+                r#""resolutionScale":0.2"#,
+                "parse: ao.resolutionScale outside 0.25..=1.0",
+            ),
+            (
+                r#""resolutionScale":1.5"#,
+                "parse: ao.resolutionScale outside 0.25..=1.0",
+            ),
+        ] {
+            let error =
+                RenderRequest::from_json(&format!(r#"{{"format":"raw","ao":{{{field}}}}}"#))
+                    .and_then(|request| request.resolve())
+                    .expect_err(field);
+            assert_eq!(error.to_string(), expected);
+        }
+        for invalid in [
+            AmbientOcclusion {
+                thickness_ratio: f32::NAN,
+                ..AmbientOcclusion::default()
+            },
+            AmbientOcclusion {
+                samples: 0,
+                ..AmbientOcclusion::default()
+            },
+            AmbientOcclusion {
+                resolution_scale: 0.0,
+                ..AmbientOcclusion::default()
+            },
+        ] {
+            assert!(validate_ao(&invalid).is_err());
+        }
+        assert!(validate_ao(&AmbientOcclusion::default()).is_ok());
+    }
+
+    #[test]
+    fn tone_mapping_resolves_every_operator_and_names_unknown_ones() {
+        let (default, _) = RenderRequest::from_json(r#"{"format":"raw"}"#)
+            .expect("request")
+            .resolve()
+            .expect("default tone mapping");
+        assert_eq!(default.tone_mapping, ToneMapping::Neutral);
+        for (name, expected) in [
+            ("neutral", ToneMapping::Neutral),
+            ("aces", ToneMapping::Aces),
+            ("linear", ToneMapping::Linear),
+            ("none", ToneMapping::None),
+        ] {
+            let (single, _) =
+                RenderRequest::from_json(&format!(r#"{{"format":"raw","toneMapping":"{name}"}}"#))
+                    .expect("request")
+                    .resolve()
+                    .expect("tone mapping");
+            assert_eq!(single.tone_mapping, expected);
+            let (batch, _, _, _) = RenderImagesRequest::from_json(&format!(
+                r#"{{"format":"raw","toneMapping":"{name}","views":[{{"id":"front"}}]}}"#
+            ))
+            .expect("batch request")
+            .resolve()
+            .expect("batch tone mapping");
+            assert_eq!(batch.tone_mapping, expected);
+        }
+        let error = RenderRequest::from_json(r#"{"format":"raw","toneMapping":"agx"}"#)
+            .and_then(|request| request.resolve())
+            .expect_err("unknown operator");
+        assert_eq!(
+            error.to_string(),
+            r#"parse: toneMapping "agx" not neutral/aces/linear/none"#
+        );
+    }
+
+    #[test]
+    fn gtao_samples_split_like_gtao_node() {
+        assert_eq!(crate::gtao_slices_and_steps(16), (3.0, 6.0));
+        assert_eq!(crate::gtao_slices_and_steps(8), (3.0, 10.0 / 3.0));
+        assert_eq!(crate::gtao_slices_and_steps(29), (3.0, 31.0 / 3.0));
+        assert_eq!(crate::gtao_slices_and_steps(30), (5.0, 34.0 / 5.0));
+        assert_eq!(crate::gtao_slices_and_steps(64), (5.0, 68.0 / 5.0));
+        assert_eq!(crate::ao_extent(769, 577, 0.5), (385, 289));
+        assert_eq!(crate::ao_extent(768, 576, 0.5), (384, 288));
+        assert_eq!(crate::ao_extent(768, 576, 1.0), (768, 576));
+        assert_eq!(crate::ao_extent(17, 16, 0.25), (4, 4));
     }
 
     #[test]
@@ -2011,10 +2413,18 @@ mod tests {
     #[test]
     fn every_spelling_of_the_studio_preset_resolves_identically() {
         let studio = ResolvedLighting::studio();
-        let explicit = r#"{"lighting":{"lights":[
-            {"direction":[1,1,1],"color":[1.5,1.5,1.5]}
-        ],"ambient":0.03183099,"environment":"studio","space":"view","exposure":1}}"#;
-        for json in ["{}", r#"{"lighting":"studio"}"#, explicit] {
+        let explicit = format!(
+            r#"{{"lighting":{{"lights":[],"headlamp":{{"intensity":1.5,"rightOffset":2,"upOffset":2}},
+            "ambient":{},"environment":{{"intensity":1}},"space":"view","exposure":1}}}}"#,
+            studio.ambient
+        );
+        for json in [
+            "{}",
+            r#"{"lighting":"studio"}"#,
+            r#"{"lighting":{}}"#,
+            r#"{"lighting":{"environment":"studio"}}"#,
+            &explicit,
+        ] {
             assert_eq!(lighting_of(json).expect("resolve"), studio, "{json}");
         }
         // The plural request carries the same field.
@@ -2041,10 +2451,12 @@ mod tests {
         assert_eq!(rig.space, LightingSpace::World);
         assert_eq!(rig.exposure, 16.0);
 
-        // An empty array is an environment-only render, not an error, and the
+        // An empty array is an environment-only render, not an error: a lights
+        // array without a headlamp replaces the studio headlamp, and the
         // unspecified fields still inherit the preset.
         let bare = lighting_of(r#"{"lighting":{"lights":[]}}"#).expect("resolve");
         assert!(bare.lights.is_empty());
+        assert_eq!(bare.headlamp, None);
         assert_eq!(bare.ambient, ResolvedLighting::studio().ambient);
         assert!(bare.environment);
         assert_eq!(bare.space, LightingSpace::View);
@@ -2068,6 +2480,89 @@ mod tests {
             .unwrap_err()
             .to_string(),
             "parse: lighting.lights: at most 8 lights, received 9"
+        );
+        // Beside the headlamp one slot fewer remains.
+        assert_eq!(
+            lighting_of(&format!(
+                r#"{{"lighting":{{"headlamp":{{}},"lights":[{}]}}}}"#,
+                [light; MAX_LIGHTS].join(",")
+            ))
+            .unwrap_err()
+            .to_string(),
+            "parse: lighting.lights: at most 7 lights beside the headlamp, received 8"
+        );
+    }
+
+    #[test]
+    fn resolves_the_headlamp_and_light_cards() {
+        let viewer = Headlamp::VIEWER;
+        // Omitted headlamp fields keep the viewer's; zero intensity is off.
+        let rig = lighting_of(r#"{"lighting":{"headlamp":{"upOffset":-1}}}"#).expect("resolve");
+        assert_eq!(
+            rig.headlamp,
+            Some(Headlamp {
+                up_offset: -1.0,
+                ..viewer
+            })
+        );
+        assert!(rig.lights.is_empty());
+        assert_eq!(rig.headlamp.expect("on").direction(), [2.0, -1.0, 2.0]);
+        let off = lighting_of(r#"{"lighting":{"headlamp":{"intensity":0}}}"#).expect("resolve");
+        assert_eq!(off.headlamp, None);
+        let both = lighting_of(
+            r#"{"lighting":{"headlamp":{"intensity":3},"lights":[{"direction":[0,1,0],"color":[1,1,1]}]}}"#,
+        )
+        .expect("resolve");
+        assert_eq!(both.headlamp.expect("on").intensity, 3.0);
+        assert_eq!(both.lights.len(), 1);
+
+        let cards = lighting_of(
+            r#"{"lighting":{"environment":{"intensity":0.5,"cards":[
+                {"position":[1,1,1],"size":[1.2,1.2],"intensity":64},
+                {"position":[0,3,0],"size":[3,2],"intensity":0.25,"rotation":[1.5,0,0]}
+            ]}}}"#,
+        )
+        .expect("resolve");
+        assert!(cards.environment);
+        assert_eq!(cards.environment_intensity, 0.5);
+        assert_eq!(
+            cards.environment_source,
+            EnvironmentSource::Cards(vec![
+                LightCard {
+                    position: [1.0; 3],
+                    size: [1.2, 1.2],
+                    intensity: 64.0,
+                    rotation: None,
+                },
+                LightCard {
+                    position: [0.0, 3.0, 0.0],
+                    size: [3.0, 2.0],
+                    intensity: 0.25,
+                    rotation: Some([1.5, 0.0, 0.0]),
+                },
+            ])
+        );
+        // An empty card list is a black environment, not the room.
+        assert_eq!(
+            lighting_of(r#"{"lighting":{"environment":{"cards":[]}}}"#)
+                .expect("resolve")
+                .environment_source,
+            EnvironmentSource::Cards(Vec::new())
+        );
+        let card = r#"{"position":[0,0,2],"size":[1,1],"intensity":1}"#;
+        let full = format!(
+            r#"{{"lighting":{{"environment":{{"cards":[{}]}}}}}}"#,
+            [card; MAX_LIGHT_CARDS].join(",")
+        );
+        assert!(lighting_of(&full).is_ok());
+        assert_eq!(
+            lighting_of(&format!(
+                r#"{{"lighting":{{"environment":{{"cards":[{}]}}}}}}"#,
+                [card; MAX_LIGHT_CARDS + 1].join(",")
+            ))
+            .unwrap_err()
+            .to_string(),
+            "parse: lighting.environment.cards: at most 16 cards, received 17"
         );
     }
 
@@ -2115,6 +2610,42 @@ mod tests {
                 r#"{"lighting":{"lights":[],"space":"object"}}"#,
                 "parse: lighting.space \"object\" not view/world",
             ),
+            (
+                r#"{"lighting":{"headlamp":{"intensity":33}}}"#,
+                "parse: lighting.headlamp.intensity 33 outside 0..=32",
+            ),
+            (
+                r#"{"lighting":{"headlamp":{"rightOffset":65}}}"#,
+                "parse: lighting.headlamp.rightOffset 65 outside -64..=64",
+            ),
+            (
+                r#"{"lighting":{"headlamp":{"upOffset":1e40}}}"#,
+                "parse: lighting.headlamp.upOffset inf outside -64..=64",
+            ),
+            (
+                r#"{"lighting":{"environment":{"intensity":17}}}"#,
+                "parse: lighting.environment.intensity 17 outside 0..=16",
+            ),
+            (
+                r#"{"lighting":{"environment":{"cards":[{"position":[0,0,65],"size":[1,1],"intensity":1}]}}}"#,
+                "parse: lighting.environment.cards[0].position axes outside -64..=64",
+            ),
+            (
+                r#"{"lighting":{"environment":{"cards":[{"position":[0,0,0],"size":[1,1],"intensity":1}]}}}"#,
+                "parse: lighting.environment.cards[0].position must be away from the centre",
+            ),
+            (
+                r#"{"lighting":{"environment":{"cards":[{"position":[0,0,1],"size":[0,1],"intensity":1}]}}}"#,
+                "parse: lighting.environment.cards[0].size sides outside (0, 64]",
+            ),
+            (
+                r#"{"lighting":{"environment":{"cards":[{"position":[0,0,1],"size":[1,1],"intensity":-1}]}}}"#,
+                "parse: lighting.environment.cards[0].intensity -1 outside 0..=4096",
+            ),
+            (
+                r#"{"lighting":{"environment":{"cards":[{"position":[0,0,1],"size":[1,1],"intensity":1,"rotation":[0,1e40,0]}]}}}"#,
+                "parse: lighting.environment.cards[0].rotation must be finite",
+            ),
         ];
         for (json, expected) in cases {
             let message = lighting_of(json).unwrap_err().to_string();
@@ -2144,6 +2675,18 @@ mod tests {
                 "unknown field `tone`",
             ),
             (r#"{"lighting":42}"#, "invalid type"),
+            (
+                r#"{"lighting":{"headlamp":{"leftOffset":1}}}"#,
+                "unknown field `leftOffset`",
+            ),
+            (
+                r#"{"lighting":{"environment":{"card":[]}}}"#,
+                "unknown field `card`",
+            ),
+            (
+                r#"{"lighting":{"environment":{"cards":[{"position":[0,0,1],"size":[1,1],"intensity":1,"form":"circle"}]}}}"#,
+                "unknown field `form`",
+            ),
         ] {
             let error = RenderRequest::from_json(json).unwrap_err().to_string();
             assert!(error.starts_with("parse: options: "), "{error}");

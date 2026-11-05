@@ -35,6 +35,9 @@ const tableNames = [
   'RenderImageView',
   'RenderAmbientOcclusion',
   'RenderLightingRig',
+  'RenderHeadlamp',
+  'RenderEnvironment',
+  'RenderLightCard',
   'RenderLight',
   'CreateRendererOptions',
   'EncodeRgbaWebpOptions',
@@ -58,10 +61,12 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'visiblePrimitives',
     'sections',
     'background',
+    'lineColor',
     'axes',
     'scaleBar',
     'lighting',
     'ao',
+    'toneMapping',
     'label',
     'camera',
   ],
@@ -77,16 +82,29 @@ const expectedFields: Record<(typeof tableNames)[number], readonly string[]> = {
     'visiblePrimitives',
     'sections',
     'background',
+    'lineColor',
     'axes',
     'scaleBar',
     'lighting',
     'ao',
+    'toneMapping',
     'timings',
     'views',
   ],
   RenderImageView: ['id', 'visiblePrimitives', 'label', 'camera', 'width', 'height', 'format', 'quality'],
-  RenderAmbientOcclusion: ['radiusPixels', 'intensity', 'distanceFalloff'],
-  RenderLightingRig: ['lights', 'ambient', 'environment', 'space', 'exposure'],
+  RenderAmbientOcclusion: [
+    'radiusPixels',
+    'intensity',
+    'distanceFalloff',
+    'thicknessRatio',
+    'denoiseDepthTolerance',
+    'samples',
+    'resolutionScale',
+  ],
+  RenderLightingRig: ['lights', 'headlamp', 'ambient', 'environment', 'space', 'exposure'],
+  RenderHeadlamp: ['intensity', 'rightOffset', 'upOffset'],
+  RenderEnvironment: ['cards', 'intensity'],
+  RenderLightCard: ['position', 'size', 'intensity', 'rotation'],
   RenderLight: ['direction', 'color'],
   CreateRendererOptions: ['powerPreference'],
   EncodeRgbaWebpOptions: ['width', 'height', 'quality', 'alpha'],
@@ -128,10 +146,12 @@ const defaults = {
   visiblePrimitives: 'all',
   sections: 'disabled',
   background: 'transparent',
+  lineColor: 'authored colours',
   axes: 'false',
   scaleBar: 'false',
   lighting: "'studio'",
   ao: 'enabled',
+  toneMapping: "'neutral'",
 } as const;
 
 const generateDoc = async (name: (typeof tableNames)[number]): Promise<GeneratedDoc> => {
@@ -274,8 +294,13 @@ describe('static agent documentation', () => {
 
     const apiHtml = resolve(output, 'docs/api.html');
     // Public AO and per-view selection fields bring the generated page to 835,243 bytes;
-    // the per-source section timings table brings it to 860,310 on CI (855,064 locally).
-    expect(statSync(apiHtml).size).toBeLessThan(861_000);
+    // the per-source section timings table brings it to 860,310 on CI (855,064 locally);
+    // the `lineColor` option brings it to 863,998 on CI;
+    // the GTAO controls add 14,412 bytes (858,795 to 873,207 locally), about 878,410 on CI;
+    // `toneMapping` adds 9,807 (883,014 locally), about 888,217 on CI;
+    // the headlamp, light-card and environment tables and their four bounds add
+    // 52,724 (935,738 locally), about 940,941 on CI.
+    expect(statSync(apiHtml).size).toBeLessThan(942_000);
 
     const optionsHtml = readFileSync(apiHtml, 'utf8');
     expect(optionsHtml).toContain('aria-label="RenderImageOptions properties"');

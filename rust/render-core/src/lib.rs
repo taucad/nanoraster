@@ -148,22 +148,88 @@ pub struct ResolvedLight {
     pub color: [f32; 3],
 }
 
+/// A camera-relative directional key, placed like the Tau viewer's headlamp:
+/// the light sits `right_offset` scene radii to the camera's right and
+/// `up_offset` above it, aimed two radii ahead of the camera. Only its
+/// direction matters, so it is `(right_offset, up_offset, 2)` in view space
+/// whatever the scene's size, distance or projection.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Headlamp {
+    /// Linear radiance of the white light.
+    pub intensity: f32,
+    pub right_offset: f32,
+    pub up_offset: f32,
+}
+
+impl Headlamp {
+    /// The Tau viewer's `headlampBaseIntensity` and `defaultHeadlampConfig`.
+    pub const VIEWER: Self = Self {
+        intensity: 1.5,
+        right_offset: 2.0,
+        up_offset: 2.0,
+    };
+
+    /// View-space direction from the surface toward the light (unnormalised).
+    #[must_use]
+    pub fn direction(&self) -> [f32; 3] {
+        [self.right_offset, self.up_offset, 2.0]
+    }
+}
+
+/// One rectangular emitter of a card environment — a drei `Lightformer` with
+/// `form="rect"`. Units are scene radii in the environment's own frame, which
+/// is view space (x right, y up, z toward the viewer): the environment turns
+/// with the camera, as the viewer's does. Because the environment is captured
+/// from the scene centre, only the angles cards subtend matter.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LightCard {
+    pub position: [f32; 3],
+    /// Width and height of the card.
+    pub size: [f32; 2],
+    /// Linear radiance of the card's face.
+    pub intensity: f32,
+    /// Euler XYZ rotation in radians; `None` turns the card's face toward the
+    /// centre, as `Lightformer`'s default target does.
+    pub rotation: Option<[f32; 3]>,
+}
+
+/// Environment radiance: Three.js's neutral room (`RoomEnvironment`), or one
+/// prefiltered from light cards.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EnvironmentSource {
+    Room,
+    Cards(Vec<LightCard>),
+}
+
 /// A validated lighting rig, uploaded verbatim into the `Frame` uniform.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedLighting {
-    /// At most [`MAX_LIGHTS`]; empty renders from the environment alone.
+    /// Directional lights beside the headlamp; together at most [`MAX_LIGHTS`].
     pub lights: Vec<ResolvedLight>,
+    /// Camera-relative key light; `None` when switched off.
+    pub headlamp: Option<Headlamp>,
     /// Flat multiplier on the diffuse colour.
     pub ambient: f32,
-    /// Whether the studio environment contributes (specular *and* diffuse).
+    /// Whether the environment contributes (specular *and* diffuse).
     pub environment: bool,
+    /// Environment radiance source, prefiltered like Three.js's PMREM.
+    pub environment_source: EnvironmentSource,
+    /// Multiplier on environment radiance (Three's `environmentIntensity`).
+    pub environment_intensity: f32,
     pub space: LightingSpace,
-    /// Linear multiplier applied before the PBR Neutral tone map.
+    /// Linear multiplier applied before tone mapping.
     pub exposure: f32,
 }
 
-/// Uniform-array capacity for [`ResolvedLighting::lights`].
+/// The viewer's dark-scheme ambient irradiance, `0.1 × 1.15`, as the Lambert
+/// multiplier `fs_mesh` applies to the diffuse colour.
+const VIEWER_AMBIENT: f32 = 0.1 * 1.15 / std::f32::consts::PI;
+
+/// Uniform-array capacity for the headlamp and [`ResolvedLighting::lights`].
 pub const MAX_LIGHTS: usize = 8;
+
+/// Most cards one card environment may carry.
+pub const MAX_LIGHT_CARDS: usize = 16;
 
 /// Source glTF primitive instance selected for presentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -188,22 +254,74 @@ pub struct Sections {
     pub clip_lines: bool,
 }
 
-/// Optional screen-space ambient occlusion for opaque surfaces.
+/// Optional screen-space ambient occlusion for opaque surfaces: three.js r184
+/// GTAO with the Tau viewer's denoise and guided upsample. Every default is the
+/// viewer's value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AmbientOcclusion {
+    /// Sampling radius in output pixels; `None` is 1% of the image diagonal, at least 4.
     pub radius_pixels: Option<f32>,
+    /// Visibility exponent; zero skips the AO passes.
     pub intensity: f32,
+    /// GTAONode `distanceFallOff`.
     pub distance_falloff: f32,
+    /// GTAO thickness as a multiple of the world radius (the viewer's
+    /// `gtaoThicknessToRadiusRatio`).
+    pub thickness_ratio: f32,
+    /// Denoise and upsample plane-distance tolerance as a fraction of the world radius.
+    pub denoise_depth_tolerance: f32,
+    /// GTAONode `samples`, split into slices and steps by [`gtao_slices_and_steps`].
+    pub samples: u32,
+    /// Estimate and denoise resolution as a fraction of the output size.
+    pub resolution_scale: f32,
 }
 
 impl Default for AmbientOcclusion {
     fn default() -> Self {
         Self {
             radius_pixels: None,
-            intensity: 3.0,
-            distance_falloff: 0.2,
+            intensity: 0.75,
+            distance_falloff: 1.0,
+            thickness_ratio: 1.0 / 0.09,
+            denoise_depth_tolerance: 0.1,
+            samples: 16,
+            resolution_scale: 0.5,
         }
     }
+}
+
+/// GTAONode's sample split: 3 slices below 30 samples, otherwise 5, and
+/// `(samples + slices - 1) / slices` steps. The step count stays fractional as
+/// GTAONode's float uniform keeps it: the march takes its integer part, while
+/// step spacing divides by the fraction itself.
+#[must_use]
+pub fn gtao_slices_and_steps(samples: u32) -> (f32, f32) {
+    let slices: f32 = if samples < 30 { 3.0 } else { 5.0 };
+    (slices, (samples as f32 + slices - 1.0) / slices)
+}
+
+/// The estimate target extent: GTAONode's `Math.round(resolutionScale * size)`
+/// per axis, at least one texel.
+#[must_use]
+pub fn ao_extent(width: u32, height: u32, resolution_scale: f32) -> (u32, u32) {
+    let scaled =
+        |size: u32| ((f64::from(resolution_scale) * f64::from(size) + 0.5).floor() as u32).max(1);
+    (scaled(width), scaled(height))
+}
+
+/// Display transform from scene radiance to output colour: three.js r184's
+/// WebGPU tone-mapping operators, as the Tau viewer applies them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToneMapping {
+    /// Khronos PBR Neutral (`NeutralToneMapping`).
+    #[default]
+    Neutral,
+    /// ACES Filmic (`ACESFilmicToneMapping`, three's TSL fit).
+    Aces,
+    /// Exposure, then clamp to `[0, 1]` (`LinearToneMapping`).
+    Linear,
+    /// Radiance unchanged, ignoring exposure (`NoToneMapping`).
+    None,
 }
 
 /// Maximum number of simultaneous retained-half-space planes. Eight, so an
@@ -214,20 +332,43 @@ pub const MAX_SECTION_PLANES: usize = 8;
 impl ResolvedLighting {
     /// The studio preset — the one definition of the built-in rig. `fs_mesh`
     /// carries no lighting literals of its own; it reads these through the
-    /// uniform. Matches Tau's neutral-room editing profile: one view-space
-    /// headlamp and ambient irradiance converted to a Lambert multiplier.
+    /// uniform. Matches the Tau viewer's default dark-scheme lighting: the
+    /// headlamp, ambient `0.1` times the dark-scheme boost `1.15` converted
+    /// to a Lambert multiplier, and the neutral room at intensity 1.
     #[must_use]
     pub fn studio() -> Self {
         Self {
-            lights: vec![ResolvedLight {
-                direction: [1.0; 3],
-                color: [1.5; 3],
-            }],
-            ambient: 0.1 / std::f32::consts::PI,
+            lights: Vec::new(),
+            headlamp: Some(Headlamp::VIEWER),
+            ambient: VIEWER_AMBIENT,
             environment: true,
+            environment_source: EnvironmentSource::Room,
+            environment_intensity: 1.0,
             space: LightingSpace::View,
             exposure: 1.0,
         }
+    }
+
+    /// The headlamp then the rig's lights, each as a view-space direction
+    /// (unnormalised) and linear colour, ready for the `Frame` uniform.
+    pub(crate) fn view_lights(
+        &self,
+        world_to_view: impl Fn([f32; 3]) -> [f32; 3],
+    ) -> Vec<([f32; 3], [f32; 3])> {
+        let to_view = |direction| match self.space {
+            LightingSpace::View => direction,
+            LightingSpace::World => world_to_view(direction),
+        };
+        self.headlamp
+            .map(|headlamp| (headlamp.direction(), [headlamp.intensity; 3]))
+            .into_iter()
+            .chain(
+                self.lights
+                    .iter()
+                    .map(|light| (to_view(light.direction), light.color)),
+            )
+            .take(MAX_LIGHTS)
+            .collect()
     }
 }
 
@@ -255,8 +396,13 @@ pub struct RenderOptions {
     /// Optional section presentation.
     pub sections: Option<Sections>,
     /// Background clear color as sRGB straight-alpha `[r, g, b, a]` in 0..=1;
-    /// `None` renders on transparent. JPEG output requires an opaque one.
+    /// `None` renders on transparent. The image is blended onto it in sRGB,
+    /// as a browser shows the transparent image over that colour. JPEG output
+    /// requires an opaque one.
     pub background: Option<[f32; 4]>,
+    /// Line colour as sRGB straight-alpha `[r, g, b, a]` in 0..=1, replacing
+    /// every authored line material's colour; `None` keeps the authored colours.
+    pub line_color: Option<[f32; 4]>,
     /// Optional authored view label. Its presence is the switch: a label is
     /// stamped top-left whenever one is set.
     pub label: Option<String>,
@@ -272,6 +418,8 @@ pub struct RenderOptions {
     /// Screen-space contact shadows; enabled by default. `None` disables AO
     /// and its estimator pass.
     pub ao: Option<AmbientOcclusion>,
+    /// Display transform; defaults to Khronos PBR Neutral.
+    pub tone_mapping: ToneMapping,
     /// Caller +X/+Y/+Z basis vectors expressed in glTF world coordinates.
     pub world_axes: [[f32; 3]; 3],
 }
@@ -288,11 +436,13 @@ impl Default for RenderOptions {
             visible_primitives: None,
             sections: None,
             background: None,
+            line_color: None,
             label: None,
             axes: false,
             scale_bar: false,
             lighting: ResolvedLighting::studio(),
             ao: Some(AmbientOcclusion::default()),
+            tone_mapping: ToneMapping::Neutral,
             world_axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         }
     }
@@ -432,19 +582,7 @@ fn validate_options(options: &RenderOptions) -> Result<(), RenderError> {
             "lineWidth must be between 0.25 and 16".into(),
         ));
     }
-    if let Some(ao) = options.ao
-        && (ao
-            .radius_pixels
-            .is_some_and(|radius| !radius.is_finite() || !(1.0..=128.0).contains(&radius))
-            || !ao.intensity.is_finite()
-            || !(0.0..=8.0).contains(&ao.intensity)
-            || !ao.distance_falloff.is_finite()
-            || !(0.01..=1.0).contains(&ao.distance_falloff))
-    {
-        return Err(RenderError::Parse(
-            "ao values outside supported ranges".into(),
-        ));
-    }
+    options.ao.as_ref().map_or(Ok(()), options::validate_ao)?;
     if let Some(primitives) = &options.visible_primitives {
         let mut seen = std::collections::HashSet::with_capacity(primitives.len());
         if let Some(duplicate) = primitives
@@ -1030,6 +1168,23 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn view_lights_keep_view_space_and_convert_world_space() {
+        let light = ResolvedLight {
+            direction: [1.0, 2.0, 3.0],
+            color: [0.5, 0.5, 0.5],
+        };
+        let mut rig = ResolvedLighting {
+            lights: vec![light],
+            headlamp: None,
+            ..ResolvedLighting::studio()
+        };
+        let flip = |[x, y, z]: [f32; 3]| [-x, -y, -z];
+        assert_eq!(rig.view_lights(flip), vec![([1.0, 2.0, 3.0], [0.5; 3])]);
+        rig.space = LightingSpace::World;
+        assert_eq!(rig.view_lights(flip), vec![([-1.0, -2.0, -3.0], [0.5; 3])]);
+    }
+
     const FIXTURE: &[u8] = include_bytes!("../../../tests/fixtures/gear-12.glb");
     /// [`FIXTURE`] is not watertight, so section requests need their own.
     const SECTION_FIXTURE: &[u8] =
@@ -1085,10 +1240,22 @@ mod tests {
         assert!(!options.scale_bar);
         assert_eq!(options.lighting, ResolvedLighting::studio());
         assert_eq!(ResolvedLighting::default(), ResolvedLighting::studio());
-        assert_eq!(options.lighting.lights.len(), 1);
-        assert_eq!(options.lighting.ambient, 0.1 / std::f32::consts::PI);
+        // The Tau viewer's default dark-scheme rig: headlamp 1.5 offset two
+        // radii right and up, ambient 0.1 x 1.15, neutral room at 1, exposure 1.
+        assert!(options.lighting.lights.is_empty());
+        assert_eq!(
+            options.lighting.headlamp,
+            Some(Headlamp {
+                intensity: 1.5,
+                right_offset: 2.0,
+                up_offset: 2.0
+            })
+        );
+        assert_eq!(options.lighting.ambient, 0.1 * 1.15 / std::f32::consts::PI);
         assert_eq!(options.lighting.exposure, 1.0);
         assert!(options.lighting.environment);
+        assert_eq!(options.lighting.environment_source, EnvironmentSource::Room);
+        assert_eq!(options.lighting.environment_intensity, 1.0);
         assert_eq!(options.lighting.space, LightingSpace::View);
         assert_eq!(
             options.world_axes,
@@ -1291,6 +1458,7 @@ mod tests {
             radius_pixels: Some(12.0),
             intensity: 3.0,
             distance_falloff: 0.2,
+            ..AmbientOcclusion::default()
         };
         assert!(
             validate_options(&RenderOptions {

@@ -20,20 +20,95 @@ export type RenderLight = {
 };
 
 /**
- * Explicit rig replacing the studio lights.
+ * Camera-relative key light, placed like the Tau viewer's headlamp: offset to
+ * the camera's right and up by multiples of the scene radius and aimed two
+ * radii ahead of the camera. Its view-space direction is therefore
+ * `[rightOffset, upOffset, 2]` whatever the scene's size, distance or
+ * projection, and it ignores `lighting.space`.
+ *
+ * @public
+ */
+export type RenderHeadlamp = {
+  /** White linear radiance within `renderImageLightColorRange`; 0 switches the headlamp off. @default 1.5 */
+  readonly intensity?: number;
+  /** Camera-right offset in scene radii, within `renderImageRigExtentRange`. @default 2 */
+  readonly rightOffset?: number;
+  /** Camera-up offset in scene radii, within `renderImageRigExtentRange`. @default 2 */
+  readonly upOffset?: number;
+};
+
+/**
+ * One rectangular emitter of a card environment, as drei's `Lightformer`
+ * with `form="rect"` places it in the Tau viewer's studio. Lengths are in
+ * scene radii. The environment turns with the camera, so the axes are view
+ * space: `+x` right, `+y` up, `+z` toward the viewer.
+ *
+ * @public
+ */
+export type RenderLightCard = {
+  /** Card center; each axis within `renderImageRigExtentRange`, not the scene center itself. */
+  readonly position: readonly [number, number, number];
+  /** Width and height, each above 0 and at most the top of `renderImageRigExtentRange`. */
+  readonly size: readonly [number, number];
+  /** Linear radiance of the card's white face within `renderImageLightCardIntensityRange`. */
+  readonly intensity: number;
+  /**
+   * Euler XYZ rotation in radians. Omitted turns the card's face toward the
+   * scene center, as `Lightformer`'s default target does.
+   */
+  readonly rotation?: readonly [number, number, number];
+};
+
+/**
+ * Environment settings. The environment supplies specular reflection and
+ * diffuse irradiance, prefiltered as Three.js's PMREM.
+ *
+ * @public
+ */
+export type RenderEnvironment = {
+  /**
+   * Rectangular emitters to prefilter the environment from, at most
+   * `renderImageMaxLightCards`, over black. Omitted keeps the neutral room.
+   * Each distinct card set is prefiltered once per renderer and reused.
+   */
+  readonly cards?: readonly RenderLightCard[];
+  /** Multiplier on environment radiance within `renderImageEnvironmentIntensityRange`. @default 1 */
+  readonly intensity?: number;
+};
+
+/**
+ * Explicit rig. Omitted fields inherit the studio values, except that a
+ * `lights` array given without `headlamp` replaces the studio headlamp too.
  *
  * @public
  */
 export type RenderLightingRig = {
   /**
-   * Direct lights replacing the studio ones, from none to
-   * `renderImageMaxLights`. An empty array renders from the environment alone.
+   * Directional lights beside the headlamp; with it, at most
+   * `renderImageMaxLights` in all. An empty array and no headlamp renders from
+   * the environment alone.
+   *
+   * @default []
    */
-  readonly lights: readonly RenderLight[];
-  /** Flat ambient multiplier on the diffuse color, from 0 to 4. @default 0.03183098861837907 */
+  readonly lights?: readonly RenderLight[];
+  /** Camera-relative key light. @default { intensity: 1.5, rightOffset: 2, upOffset: 2 } */
+  readonly headlamp?: RenderHeadlamp;
+  /**
+   * Flat ambient multiplier on the diffuse color, from 0 to 4: an ambient
+   * light's intensity divided by π. The default is the Tau viewer's
+   * dark-scheme ambient, `0.1 × 1.15 / π`.
+   *
+   * @default 0.036605637
+   */
   readonly ambient?: number;
-  /** Prefiltered neutral-room environment supplying specular reflection and diffuse irradiance; `'none'` removes both. @default 'studio' */
-  readonly environment?: 'studio' | 'none';
+  /**
+   * `'studio'` is Three.js's neutral room (`RoomEnvironment`), the Tau
+   * viewer's default; `'none'` removes environment light; an object sets its
+   * intensity or prefilters it from light cards.
+   *
+   * @default 'studio'
+   */
+  readonly environment?: 'studio' | 'none' | RenderEnvironment;
   /**
    * Frame the directions are authored in. `'world'` fixes the lights to the
    * request's caller world whatever camera is used, so views of one subject
@@ -53,14 +128,54 @@ export type RenderLightingRig = {
  */
 export type RenderLighting = 'studio' | RenderLightingRig;
 
-/** Screen-space ambient occlusion for contact shadows in opaque geometry. Enabled by default; use intensity 0 to skip its render passes. @public */
+/**
+ * Screen-space ambient occlusion for contact shadows in opaque geometry: the
+ * three.js GTAO estimator with an edge-aware denoise, configured like the Tau
+ * viewer by default. Enabled by default; use intensity 0 to skip its render
+ * passes.
+ *
+ * @public
+ */
 export type RenderAmbientOcclusion = {
-  /** Sampling radius in output pixels. @default max(1% of image diagonal, 4) */
+  /** Sampling radius in output pixels, from 1 to 128. @default max(1% of image diagonal, 4) */
   readonly radiusPixels?: number;
-  /** Visibility exponent. @default 3 */
+  /** Visibility exponent, from 0 to 8; 0 skips the AO passes. @default 0.75 */
   readonly intensity?: number;
-  /** Fraction of the sampling radius used for depth rejection. @default 0.2 */
+  /** GTAO distance falloff, from 0.01 to 1; lower values weight distant horizon samples more. @default 1 */
   readonly distanceFalloff?: number;
+  /**
+   * Depth acceptance as a multiple of the world-space sampling radius, from
+   * 0.1 to 100: a horizon sample further than `radius × thicknessRatio` in
+   * front of or behind the surface is ignored. The Tau viewer's
+   * `gtaoThicknessToRadiusRatio`.
+   *
+   * @default 1 / 0.09 (≈ 11.11)
+   */
+  readonly thicknessRatio?: number;
+  /**
+   * Plane-distance tolerance of the denoise and upsample filters as a
+   * fraction of the world-space sampling radius, from 0.01 to 10. Neighbours
+   * further than this from the centre's tangent plane do not contribute.
+   *
+   * @default 0.1
+   */
+  readonly denoiseDepthTolerance?: number;
+  /**
+   * Horizon samples per pixel, an integer from 1 to 64, split as three.js
+   * `GTAONode` splits them: 3 slices below 30 samples and 5 from 30, each
+   * marching `ceil(samples / slices)` steps.
+   *
+   * @default 16
+   */
+  readonly samples?: number;
+  /**
+   * Resolution of the estimate and denoise passes as a fraction of the output
+   * size, from 0.25 to 1, rounded per axis; the result is upsampled with depth
+   * and normal guidance.
+   *
+   * @default 0.5
+   */
+  readonly resolutionScale?: number;
 };
 
 /**
@@ -247,8 +362,14 @@ type RenderImageSharedOptions = {
    * @default disabled
    */
   readonly sections?: RenderSections;
-  /** Transparent by default; otherwise `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. @default transparent */
+  /**
+   * Transparent by default; otherwise `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. The image is
+   * blended onto it in sRGB, as a browser shows the transparent image over that colour.
+   * @default transparent
+   */
   readonly background?: readonly [number, number, number, number] | string;
+  /** Replace every authored line colour; `#RRGGBB`, `#RRGGBBAA`, or normalized sRGB straight-alpha RGBA. @default authored colours */
+  readonly lineColor?: readonly [number, number, number, number] | string;
   /** Draw the bottom-right camera-aware XYZ indicator and front-on depth marker. @default false */
   readonly axes?: boolean;
   /**
@@ -269,6 +390,15 @@ type RenderImageSharedOptions = {
   readonly lighting?: RenderLighting;
   /** Opaque-surface contact shadows. Use intensity 0 to disable. @default enabled */
   readonly ao?: RenderAmbientOcclusion;
+  /**
+   * Display transform from scene radiance to output colour, matching the three.js
+   * operators: `'neutral'` (Khronos PBR Neutral), `'aces'` (ACES
+   * Filmic), `'linear'` (exposure, then clamp) or `'none'` (radiance as it
+   * is; like three's `NoToneMapping` it ignores `lighting.exposure`).
+   *
+   * @default 'neutral'
+   */
+  readonly toneMapping?: 'neutral' | 'aces' | 'linear' | 'none';
 };
 
 /** The singular camera plus the top-left label, whose presence is its switch. */
@@ -467,9 +597,21 @@ type StrictItems<Items extends readonly Shape[], Shape> = {
   readonly [Index in keyof Items]: Items[Index] extends Shape ? NoExtraKeys<Items[Index], Shape> : never;
 };
 
+type StrictEnvironment<Environment> = Environment extends RenderEnvironment
+  ? NoExtraKeys<Environment, RenderEnvironment> & {
+      readonly cards?: Environment['cards'] extends readonly RenderLightCard[]
+        ? StrictItems<Environment['cards'], RenderLightCard>
+        : Environment['cards'];
+    }
+  : Environment;
+
 type StrictLighting<Lighting> = Lighting extends RenderLightingRig
   ? NoExtraKeys<Lighting, RenderLightingRig> & {
-      readonly lights: StrictItems<Lighting['lights'], RenderLight>;
+      readonly lights?: Lighting['lights'] extends readonly RenderLight[]
+        ? StrictItems<Lighting['lights'], RenderLight>
+        : Lighting['lights'];
+      readonly headlamp?: NoExtraKeys<Lighting['headlamp'], RenderHeadlamp>;
+      readonly environment?: StrictEnvironment<Lighting['environment']>;
     }
   : Lighting;
 
@@ -568,11 +710,13 @@ const singularKeys = new Set([
   'visiblePrimitives',
   'sections',
   'background',
+  'lineColor',
   'label',
   'axes',
   'scaleBar',
   'lighting',
   'ao',
+  'toneMapping',
 ]);
 
 const pluralKeys = new Set([
@@ -587,10 +731,12 @@ const pluralKeys = new Set([
   'visiblePrimitives',
   'sections',
   'background',
+  'lineColor',
   'axes',
   'scaleBar',
   'lighting',
   'ao',
+  'toneMapping',
   'timings',
   'views',
 ]);
@@ -620,9 +766,23 @@ const fixedOrthographicProjectionKeys = new Set(['kind', 'verticalSpan', 'zoom']
 
 const clippingKeys = new Set(['near', 'far']);
 
-const lightingKeys = new Set(['lights', 'ambient', 'environment', 'space', 'exposure']);
+const lightingKeys = new Set(['lights', 'headlamp', 'ambient', 'environment', 'space', 'exposure']);
 
-const aoKeys = new Set(['radiusPixels', 'intensity', 'distanceFalloff']);
+const headlampKeys = new Set(['intensity', 'rightOffset', 'upOffset']);
+
+const environmentKeys = new Set(['cards', 'intensity']);
+
+const lightCardKeys = new Set(['position', 'size', 'intensity', 'rotation']);
+
+const aoKeys = new Set([
+  'radiusPixels',
+  'intensity',
+  'distanceFalloff',
+  'thicknessRatio',
+  'denoiseDepthTolerance',
+  'samples',
+  'resolutionScale',
+]);
 
 const lightKeys = new Set(['direction', 'color']);
 
@@ -659,8 +819,20 @@ export const renderImageLineWidthRange = [0.25, 16] as const;
 /** Most simultaneous section planes one request may carry. @public */
 export const renderImageMaxSections = 8;
 
-/** Most directional lights one rig may carry. @public */
+/** Most directional lights one rig may carry, the headlamp included. @public */
 export const renderImageMaxLights = 8;
+
+/** Most light cards one environment may carry. @public */
+export const renderImageMaxLightCards = 16;
+
+/** Inclusive bounds, in scene radii, for headlamp offsets and light-card position axes and sizes. @public */
+export const renderImageRigExtentRange = [-64, 64] as const;
+
+/** Inclusive bounds for a light card's linear radiance. @public */
+export const renderImageLightCardIntensityRange = [0, 4096] as const;
+
+/** Inclusive bounds for the environment radiance multiplier. @public */
+export const renderImageEnvironmentIntensityRange = [0, 16] as const;
 
 /** Inclusive per-channel bounds for light radiance. @public */
 export const renderImageLightColorRange = [0, 32] as const;
@@ -1038,6 +1210,81 @@ const validateLight = (light: unknown, name: string): void => {
   }
 };
 
+/** Validates a present headlamp and reports whether it is switched on. */
+const validateHeadlamp = (headlamp: unknown): boolean => {
+  if (!isRecord(headlamp)) {
+    throw new TypeError('lighting.headlamp must be an object');
+  }
+  assertKnownKeys(headlamp, headlampKeys, 'lighting.headlamp');
+  const { intensity, rightOffset, upOffset } = headlamp;
+  if (intensity !== undefined) {
+    assertRange(intensity, 'lighting.headlamp.intensity', renderImageLightColorRange);
+  }
+  for (const [offset, name] of [
+    [rightOffset, 'rightOffset'],
+    [upOffset, 'upOffset'],
+  ] as const) {
+    if (offset !== undefined) {
+      assertRange(offset, `lighting.headlamp.${name}`, renderImageRigExtentRange);
+    }
+  }
+  return intensity !== 0;
+};
+
+const validateLightCard = (card: unknown, name: string): void => {
+  if (!isRecord(card)) {
+    throw new TypeError(`${name} must be an object`);
+  }
+  assertKnownKeys(card, lightCardKeys, name);
+  const [minimum, maximum] = renderImageRigExtentRange;
+  const positionMessage = `${name}.position must contain three numbers between ${minimum} and ${maximum}`;
+  const position = finiteTriple(card['position'], positionMessage);
+  if (position.some((axis) => axis < minimum || axis > maximum)) {
+    throw new TypeError(positionMessage);
+  }
+  if (Math.hypot(...position) < minimumLightDirectionLength) {
+    throw new TypeError(`${name}.position must not be the scene center`);
+  }
+  const size = card['size'];
+  if (
+    !isUnknownArray(size) ||
+    size.length !== 2 ||
+    size.some((side) => typeof side !== 'number' || !Number.isFinite(side) || side <= 0 || side > maximum)
+  ) {
+    throw new TypeError(`${name}.size must contain two numbers above 0 and at most ${maximum}`);
+  }
+  assertRange(card['intensity'], `${name}.intensity`, renderImageLightCardIntensityRange);
+  if (card['rotation'] !== undefined) {
+    finiteTriple(card['rotation'], `${name}.rotation must contain three finite numbers`);
+  }
+};
+
+const validateEnvironment = (environment: unknown): void => {
+  if (environment === undefined || environment === 'studio' || environment === 'none') {
+    return;
+  }
+  if (!isRecord(environment)) {
+    throw new TypeError('lighting.environment must be studio, none or an environment object');
+  }
+  assertKnownKeys(environment, environmentKeys, 'lighting.environment');
+  const { cards, intensity } = environment;
+  if (intensity !== undefined) {
+    assertRange(intensity, 'lighting.environment.intensity', renderImageEnvironmentIntensityRange);
+  }
+  if (cards === undefined) {
+    return;
+  }
+  if (!isUnknownArray(cards)) {
+    throw new TypeError('lighting.environment.cards must be an array');
+  }
+  if (cards.length > renderImageMaxLightCards) {
+    throw new TypeError(`lighting.environment.cards must contain at most ${renderImageMaxLightCards} cards`);
+  }
+  for (const [index, card] of cards.entries()) {
+    validateLightCard(card, `lighting.environment.cards[${index}]`);
+  }
+};
+
 const validateLighting = (lighting: unknown): void => {
   if (lighting === undefined || lighting === 'studio') {
     return;
@@ -1046,15 +1293,22 @@ const validateLighting = (lighting: unknown): void => {
     throw new TypeError('lighting must be studio or a rig object');
   }
   assertKnownKeys(lighting, lightingKeys, 'lighting');
-  const { lights, ambient, environment, space, exposure } = lighting;
-  if (!isUnknownArray(lights)) {
+  const { lights, headlamp, ambient, environment, space, exposure } = lighting;
+  if (lights !== undefined && !isUnknownArray(lights)) {
     throw new TypeError('lighting.lights must be an array');
   }
-  if (lights.length > renderImageMaxLights) {
-    throw new TypeError(`lighting.lights must contain at most ${renderImageMaxLights} lights`);
-  }
-  for (const [index, light] of lights.entries()) {
-    validateLight(light, `lighting.lights[${index}]`);
+  // An explicit lights array without a headlamp replaces the studio headlamp.
+  const headlampOn = headlamp === undefined ? lights === undefined : validateHeadlamp(headlamp);
+  const capacity = renderImageMaxLights - (headlampOn ? 1 : 0);
+  if (lights !== undefined) {
+    if (lights.length > capacity) {
+      throw new TypeError(
+        `lighting.lights must contain at most ${capacity} lights${headlampOn ? ' beside the headlamp' : ''}`,
+      );
+    }
+    for (const [index, light] of lights.entries()) {
+      validateLight(light, `lighting.lights[${index}]`);
+    }
   }
   if (ambient !== undefined) {
     assertRange(ambient, 'lighting.ambient', renderImageAmbientRange);
@@ -1062,7 +1316,7 @@ const validateLighting = (lighting: unknown): void => {
   if (exposure !== undefined) {
     assertRange(exposure, 'lighting.exposure', renderImageExposureRange);
   }
-  assertOptionalEnum(environment, 'lighting.environment', ['studio', 'none']);
+  validateEnvironment(environment);
   assertOptionalEnum(space, 'lighting.space', ['view', 'world']);
 };
 
@@ -1074,6 +1328,15 @@ const validateAo = (ao: unknown): void => {
   if (ao['intensity'] !== undefined) assertRange(ao['intensity'], 'ao.intensity', [0, 8]);
   if (ao['distanceFalloff'] !== undefined)
     assertRange(ao['distanceFalloff'], 'ao.distanceFalloff', [0.01, 1]);
+  if (ao['thicknessRatio'] !== undefined) assertRange(ao['thicknessRatio'], 'ao.thicknessRatio', [0.1, 100]);
+  if (ao['denoiseDepthTolerance'] !== undefined)
+    assertRange(ao['denoiseDepthTolerance'], 'ao.denoiseDepthTolerance', [0.01, 10]);
+  if (ao['samples'] !== undefined) {
+    assertRange(ao['samples'], 'ao.samples', [1, 64]);
+    if (!Number.isInteger(ao['samples'])) throw new TypeError('ao.samples must be an integer');
+  }
+  if (ao['resolutionScale'] !== undefined)
+    assertRange(ao['resolutionScale'], 'ao.resolutionScale', [0.25, 1]);
 };
 
 const validateVisiblePrimitives = (value: unknown, path: string): void => {
@@ -1134,9 +1397,9 @@ const validatePresentation = (options: CameraCommonOptions): void => {
   }
 };
 
-const parseHexColor = (value: string): readonly [number, number, number, number] => {
+const parseHexColor = (value: string, name = 'background'): readonly [number, number, number, number] => {
   if (!renderImageBackgroundPattern.test(value)) {
-    throw new TypeError('background must be #RRGGBB or #RRGGBBAA');
+    throw new TypeError(`${name} must be #RRGGBB or #RRGGBBAA`);
   }
   const hex = value.slice(1);
   return [
@@ -1172,9 +1435,9 @@ const validateAnnotatedDimensions = (options: CameraCommonOptions, annotated: bo
   }
 };
 
-const validateBackground = (background: unknown): void => {
+const validateBackground = (background: unknown, name = 'background'): void => {
   if (typeof background === 'string') {
-    parseHexColor(background);
+    parseHexColor(background, name);
     return;
   }
   if (
@@ -1185,7 +1448,7 @@ const validateBackground = (background: unknown): void => {
         (channel) => typeof channel !== 'number' || !Number.isFinite(channel) || channel < 0 || channel > 1,
       ))
   ) {
-    throw new TypeError('background must contain four channels between 0 and 1');
+    throw new TypeError(`${name} must contain four channels between 0 and 1`);
   }
 };
 
@@ -1215,8 +1478,10 @@ const validateCameraCommon = (options: CameraCommonOptions, annotated: boolean):
   assertOptionalBoolean(options.scaleBar, 'scaleBar');
   validateAnnotatedDimensions(options, annotated);
   validateBackground(options.background);
+  validateBackground(options.lineColor, 'lineColor');
   validateLighting(options.lighting);
   validateAo(options.ao);
+  assertOptionalEnum(options.toneMapping, 'toneMapping', ['neutral', 'aces', 'linear', 'none']);
   validatePresentation(options);
 };
 
@@ -1256,11 +1521,13 @@ export const toImageRequestJson = (options: RenderImageOptions): string => {
     visiblePrimitives: options.visiblePrimitives,
     sections: options.sections,
     background: normalizedBackground(options.background),
+    lineColor: normalizedBackground(options.lineColor),
     label: options.label,
     axes: options.axes,
     scaleBar: options.scaleBar,
     lighting: options.lighting,
     ao: options.ao,
+    toneMapping: options.toneMapping,
   });
 };
 
@@ -1359,10 +1626,12 @@ export const toImagesRequestJson = (options: RenderImagesOptions): string => {
     visiblePrimitives: options.visiblePrimitives,
     sections: options.sections,
     background: normalizedBackground(options.background),
+    lineColor: normalizedBackground(options.lineColor),
     axes: options.axes,
     scaleBar: options.scaleBar,
     lighting: options.lighting,
     ao: options.ao,
+    toneMapping: options.toneMapping,
     timings: options.timings,
     views: normalizedViews,
   });
