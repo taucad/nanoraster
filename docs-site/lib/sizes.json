@@ -1,31 +1,31 @@
 {
-  "version": "0.7.1",
-  "measuredAt": "2026-10-29T04:47:20.651Z",
+  "version": "0.8.0",
+  "measuredAt": "2026-11-04T23:59:47.603Z",
   "wasm": {
-    "raw": 2425821,
-    "gzip": 1129423,
-    "brotli": 943091
+    "raw": 2403890,
+    "gzip": 1087523,
+    "brotli": 888465
   },
   "js": {
-    "raw": 1612,
-    "gzip": 512
+    "raw": 1898,
+    "gzip": 570
   },
   "native": {
-    "android-arm-eabi": 4873984,
-    "android-arm64": 6435884,
-    "darwin-arm64": 6032006,
-    "darwin-x64": 6572547,
-    "freebsd-x64": 7277619,
-    "linux-arm-gnueabihf": 6635828,
-    "linux-arm-musleabihf": 6659101,
-    "linux-arm64-gnu": 6420499,
-    "linux-arm64-musl": 6439087,
-    "linux-ppc64-gnu": 7751815,
-    "linux-s390x-gnu": 8157337,
-    "linux-x64-gnu": 7313680,
-    "linux-x64-musl": 7324444,
-    "win32-arm64-msvc": 7757768,
-    "win32-ia32-msvc": 8518080,
-    "win32-x64-msvc": 9092541
+    "android-arm-eabi": 4866152,
+    "android-arm64": 6406964,
+    "darwin-arm64": 6015574,
+    "darwin-x64": 6547987,
+    "freebsd-x64": 7261339,
+    "linux-arm-gnueabihf": 6619508,
+    "linux-arm-musleabihf": 6643057,
+    "linux-arm64-gnu": 6391955,
+    "linux-arm64-musl": 6411551,
+    "linux-ppc64-gnu": 7686407,
+    "linux-s390x-gnu": 8132889,
+    "linux-x64-gnu": 7293328,
+    "linux-x64-musl": 7307428,
+    "win32-arm64-msvc": 7706568,
+    "win32-ia32-msvc": 8562624,
+    "win32-x64-msvc": 9061309
   }
 }
