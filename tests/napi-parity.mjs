@@ -270,8 +270,10 @@ if (sectionBatch.length !== 1 || !sectionBatch[0].equals(section)) {
 const racingDroneCommon = {
   // This oracle recognizes the unoccluded cap palette, not AO-darkened colors.
   ao: { intensity: 0 },
-  width: 192,
-  height: 192,
+  // FXAA blends the stripes of a small cap; at this size their interiors keep
+  // the exact palette.
+  width: 256,
+  height: 256,
   format: 'raw',
   world: { up: '+z', forward: '-y', unit: 'meter' },
   // Caps are single-sided: view from the removed octant so every cut face

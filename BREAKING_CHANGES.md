@@ -26,6 +26,13 @@
   `renderImageMaxLights` with it.
 - `toneMapping` is new. Its `'neutral'` default is the PBR Neutral operator
   every earlier release applied, so omitting it changes nothing.
+- Anti-aliasing and edges follow the viewer. Surfaces render single-sample
+  with FXAA instead of 4x multisampling. Edges draw after it with exact
+  square-pixel coverage and flat ends instead of round caps, without writing
+  depth, so overlapping edges darken where they cross. Wireframe surfaces give
+  up half the stroke plus half a pixel of depth slope, which can show a faint
+  tick where a hidden edge meets an outline. There is no option to restore the
+  multisampled output.
 
 - Ambient occlusion is enabled by default for single images and batches.
   Use `ao: { intensity: 0 }` to retain rendering without AO. Omitted options

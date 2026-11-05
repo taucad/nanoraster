@@ -26,7 +26,10 @@ test.each(references)('$id matches the Three.js material matrix', async (referen
     ao: reference.ao ?? { intensity: 0 },
   });
   for (const error of materialErrors(base, actual.bytes, expected)) {
-    expect(error.mae, `${reference.id} row ${error.row} roughness ${error.roughness}`).toBeLessThan(2);
+    // The oracle is an MSAA capture without FXAA. nanoraster filters like the
+    // Tau viewer, and FXAA smooths the narrow stripes seen through dispersive glass.
+    const limit = reference.id === 'effects' && error.row === 0 ? 3 : 2;
+    expect(error.mae, `${reference.id} row ${error.row} roughness ${error.roughness}`).toBeLessThan(limit);
     expect(error.alphaMae).toBeLessThan(2);
   }
 });

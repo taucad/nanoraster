@@ -399,8 +399,10 @@ test('a true cut through the racing-drone canopy always produces a section image
   const common = {
     // The palette oracle isolates cap material from AO color attenuation.
     ao: { intensity: 0 },
-    width: 192,
-    height: 192,
+    // FXAA blends the stripes of a small cap; at this size their interiors
+    // keep the exact palette.
+    width: 256,
+    height: 256,
     format: 'raw',
     world: { up: '+z', forward: '-y', unit: 'meter' },
     // Caps are single-sided: view from the removed octant so every cut face
@@ -420,7 +422,7 @@ test('a true cut through the racing-drone canopy always produces a section image
       const options = { ...common, sections: { planes: planes.slice(0, count) } };
       const first = await renderer.renderImage(racingDroneGlb, options);
       const second = await renderer.renderImage(racingDroneGlb, options);
-      expect(first).toMatchObject({ width: 192, height: 192, mimeType: 'application/octet-stream' });
+      expect(first).toMatchObject({ width: 256, height: 256, mimeType: 'application/octet-stream' });
       expect(first.bytes).toEqual(second.bytes);
       expect(countDefaultMaterialCapPixels(first.bytes), 'default-material cap pixels').toBeGreaterThan(
         ordinaryCapPalette + 4,
