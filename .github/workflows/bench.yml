@@ -30,9 +30,10 @@ jobs:
           # 2026-10-01) or v11's default AO (705.6 ms, 2026-11-01); the missing
           # pipefail hid both failures. v12 adds the viewer's GTAO estimate,
           # denoise and upsample passes and the AO normal target: 923-1,256 ms
-          # across the nanoraster#130 heads. This admits the highest v12 sample
-          # plus 27% for runner spread.
-          MAX_MEDIAN_MS: '1600'
+          # across the nanoraster#130 heads. v13's single-sample surfaces with
+          # FXAA and analytic edges measured 1,666.8 ms at first admission
+          # (2026-11-05). This admits that sample plus 26% for runner spread.
+          MAX_MEDIAN_MS: '2100'
         run: |
           node bench/gated.mjs | tee benchmark.json
           node --expose-gc bench/presentation.mjs | tee presentation-benchmark.json

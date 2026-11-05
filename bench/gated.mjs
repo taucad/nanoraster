@@ -67,6 +67,7 @@ const report = {
   // v13: surfaces render single-sample with the viewer's FXAA, edges take its
   // analytic square-pixel coverage, butt ends and surface depth margin, and
   // no longer write depth. Silhouette and edge pixels change on purpose.
+  // CI's first v13 median was 1,666.8 ms; bench.yml's MAX_MEDIAN_MS admits it.
   name: 'gear-parse-raster-encode-512x384-v13',
   adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
