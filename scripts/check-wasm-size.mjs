@@ -259,7 +259,13 @@ const sizes = {
 // magic-square noise, so the 65,536-byte texture and its binding were dead.
 // Lower every limit by exactly the measured delta: the compressed ceilings
 // move so that ceiling plus allowance drops by it, keeping existing headroom.
-const ceilings = { raw: 2_404_705, gzip9: 1_082_266, brotli11: 885_121 };
+// Viewer FXAA surfaces and analytic edges (Rust 1.99.1, Node 24.22.1,
+// 2026-11-05): same-host 6d25720 demo build 2,403,890 / 1,087,523 / 888,465
+// -> 2,410,810 / 1,090,162 / 890,464 (+6,920 / +2,639 / +1,999). The bytes are
+// the FXAA 3.11 and linear-light output passes, square-pixel edge coverage and
+// the display-HDR target, net of the deleted 4x MSAA targets. Admit exactly
+// the measured deltas; headroom and compressor allowances are unchanged.
+const ceilings = { raw: 2_411_625, gzip9: 1_084_905, brotli11: 887_120 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
