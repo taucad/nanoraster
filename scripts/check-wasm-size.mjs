@@ -265,7 +265,13 @@ const sizes = {
 // the FXAA 3.11 and linear-light output passes, square-pixel edge coverage and
 // the display-HDR target, net of the deleted 4x MSAA targets. Admit exactly
 // the measured deltas; headroom and compressor allowances are unchanged.
-const ceilings = { raw: 2_411_625, gzip9: 1_084_905, brotli11: 887_120 };
+// sRGB background blend (Rust 1.99.1, Node 24.22.1, 2026-11-05): same-host
+// 2886032 demo build 2,410,810 / 1,090,162 / 890,464 -> 2,411,949 /
+// 1,090,522 / 890,797 (+1,139 / +360 / +333). The bytes are the output pass's
+// sRGB encode and its encoded-domain blend, as the viewer's page composites
+// its canvas. Admit exactly the measured deltas; headroom and compressor
+// allowances are unchanged.
+const ceilings = { raw: 2_412_764, gzip9: 1_085_265, brotli11: 887_453 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.
