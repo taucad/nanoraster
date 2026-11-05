@@ -1,3 +1,13 @@
+## 0.9.1 (2026-11-05)
+
+### 🩹 Fixes
+
+- Override minimatch to 11.0.1 in development dependencies to clear GHSA-g3hv-75wg-m249 ([#132](https://github.com/taucad/nanoraster/pull/132))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.9.0 (2026-11-05)
 
 ### 🚀 Features
