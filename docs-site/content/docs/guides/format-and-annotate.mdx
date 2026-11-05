@@ -113,7 +113,7 @@ fitted camera but never change a fixed camera.
 
 `lineWidth` controls glTF `LINES` primitives in output pixels, from `0.25` to
 `16`. The default is `3`. The width does not grow with image height: a 1 px line
-stays 1 px at 2048×2048. Meshes and lines use 4× MSAA.
+stays 1 px at 2048×2048. Lines draw over FXAA-smoothed surfaces.
 `lineColor` overrides authored line colours.
 
 ```typescript

@@ -169,9 +169,7 @@ The studio uses a neutral room environment, an integrated GGX lookup table,
 multiple-scattering compensation and PBR Neutral tone mapping. Glass samples
 retained HDR scene mip levels with bicubic filtering. Unlit materials bypass
 lighting but still receive exposure and tone mapping. Authored edge lines
-remain in their own pass, unaffected by material factors. As in the Tau
-viewer, surfaces render single-sample and take FXAA, then edges draw over them
-with exact pixel coverage.
+remain in their own pass, unaffected by material factors.
 With `lighting` held constant, a difference
 between two renders of the same model is a material difference and nothing
 else.
