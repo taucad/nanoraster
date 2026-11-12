@@ -1,0 +1,7 @@
+# Cloudflare Pages response headers (https://developers.cloudflare.com/pages/configuration/headers/).
+# The Markdown projections are served as text so agents and browsers read them in place.
+/docs.mdx
+  Content-Type: text/markdown; charset=utf-8
+
+/docs/*.mdx
+  Content-Type: text/markdown; charset=utf-8

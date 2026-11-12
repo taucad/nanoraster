@@ -255,19 +255,13 @@ describe('static agent documentation', () => {
       expect(relative.filter((target) => !/^(?:https?:|#)/u.test(target))).toEqual([]);
     }
 
-    const vercel = JSON.parse(readFileSync(resolve(import.meta.dirname, 'vercel.json'), 'utf8')) as {
-      readonly headers: ReadonlyArray<{
-        readonly headers: ReadonlyArray<{ readonly key: string; readonly value: string }>;
-      }>;
-      readonly redirects: ReadonlyArray<{ readonly source: string; readonly destination: string }>;
-    };
-    expect(
-      vercel.headers.flatMap(({ headers }) => headers.map(({ key, value }) => `${key}: ${value}`)),
-    ).toContain('Content-Type: text/markdown; charset=utf-8');
-    expect(vercel.redirects.map(({ source: from, destination }) => [from, destination])).toEqual([
-      ['/docs/md/index', '/docs.mdx'],
-      ['/docs/md/:path*', '/docs/:path*.mdx'],
-    ]);
+    const headers = readFileSync(resolve(output, '_headers'), 'utf8');
+    expect(headers).toContain('/docs/*.mdx\n  Content-Type: text/markdown; charset=utf-8');
+    expect(headers).toContain('/docs.mdx\n  Content-Type: text/markdown; charset=utf-8');
+    const redirects = readFileSync(resolve(output, '_redirects'), 'utf8')
+      .split('\n')
+      .filter((line) => line !== '' && !line.startsWith('#'));
+    expect(redirects).toEqual(['/docs/md/index /docs.mdx 301', '/docs/md/* /docs/:splat.mdx 301']);
 
     const full = readFileSync(resolve(output, 'llms-full.txt'), 'utf8');
     for (const name of exported) expect(hasWholeToken(full, name)).toBe(true);

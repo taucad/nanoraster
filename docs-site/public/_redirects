@@ -1,0 +1,4 @@
+# Cloudflare Pages redirects (https://developers.cloudflare.com/pages/configuration/redirects/).
+# The first matching line wins, so the index comes before the splat.
+/docs/md/index /docs.mdx 301
+/docs/md/* /docs/:splat.mdx 301
