@@ -544,7 +544,7 @@ jobs:
           - browser: chromium
             os: ubuntu-24.04
           - browser: firefox
-            os: macos-14
+            os: macos-15
           - browser: webkit
             os: macos-26
     runs-on: ${{ matrix.os }}

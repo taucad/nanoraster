@@ -16,7 +16,7 @@ Review the standing pull request and merge it — that is the entire release
 act. Prefer a squash merge with the title unchanged.
 
 GitHub Actions owns npm OIDC publication, provenance, registry verification,
-tags, GitHub Releases, and Vercel deployment. Do not publish from a
+tags, GitHub Releases, and the Cloudflare Pages deployment of the site (`pages.yml`). Do not publish from a
 workstation, push to `release/next`, or enable auto-merge on the release pull
 request.
 

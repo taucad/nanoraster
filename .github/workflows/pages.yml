@@ -1,0 +1,53 @@
+# Builds the docs site and uploads it to Cloudflare Pages: production from
+# main, a preview for every same-repository pull request. The project, the
+# account and the deploy token are written to this repository by tau-cloud
+# (stacks/sites, docs/sites-stack.md); nothing here names them.
+name: pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: pages · deploy
+    # Fork and Dependabot pull requests receive no secrets, so they get no preview.
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0 # v4.1.0
+        with:
+          run_install: false
+          version: 11.7.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run docs:build
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        shell: bash
+        run: |
+          npx --yes wrangler@4.155.0 pages deploy docs-site/out \
+            --project-name="$PROJECT" --branch="$BRANCH" \
+            --commit-hash="$GITHUB_SHA" --commit-dirty=true | tee deploy.log
+          url="$(grep -Eo 'https://[^ ]+\.pages\.dev' deploy.log | head -1)"
+          printf '## Cloudflare Pages\n\n%s deploy of %s: %s\n' "$BRANCH" "$GITHUB_SHA" "$url" >> "$GITHUB_STEP_SUMMARY"
