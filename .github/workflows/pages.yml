@@ -44,9 +44,10 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
           BRANCH: ${{ github.head_ref || github.ref_name }}
+        shell: bash
         run: |
           npx --yes wrangler@4.155.0 pages deploy docs-site/out \
             --project-name="$PROJECT" --branch="$BRANCH" \
             --commit-hash="$GITHUB_SHA" --commit-dirty=true | tee deploy.log
-          url="$(grep -Eo 'https://[^ ]+\.pages\.dev' deploy.log | tail -1)"
+          url="$(grep -Eo 'https://[^ ]+\.pages\.dev' deploy.log | head -1)"
           printf '## Cloudflare Pages\n\n%s deploy of %s: %s\n' "$BRANCH" "$GITHUB_SHA" "$url" >> "$GITHUB_STEP_SUMMARY"
