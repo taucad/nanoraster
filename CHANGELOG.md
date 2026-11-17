@@ -1,3 +1,17 @@
+## 0.10.0 (2026-11-17)
+
+### 🚀 Features
+
+- Match the Tau viewer's ambient occlusion profile H2: GTAO fades horizon samples by their 3D distance (XeGTAO's smooth falloff, new `ao.falloffEndRatio` and `ao.falloffRange`) instead of cutting them at a depth slab, `distanceFalloff` defaults to 0.5, and the denoise no longer trims outliers. `ao.thicknessRatio` is removed; [BREAKING_CHANGES.md](https://github.com/taucad/nanoraster/blob/main/BREAKING_CHANGES.md) has the migration. ([#140](https://github.com/taucad/nanoraster/pull/140))
+
+### 🩹 Fixes
+
+- Override minimatch to 11.0.1 in development dependencies to clear GHSA-g3hv-75wg-m249 ([#132](https://github.com/taucad/nanoraster/pull/132))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.9.0 (2026-11-05)
 
 ### 🚀 Features
