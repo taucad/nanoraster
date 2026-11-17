@@ -68,7 +68,10 @@ const report = {
   // analytic square-pixel coverage, butt ends and surface depth margin, and
   // no longer write depth. Silhouette and edge pixels change on purpose.
   // CI's first v13 median was 1,666.8 ms; bench.yml's MAX_MEDIAN_MS admits it.
-  name: 'gear-parse-raster-encode-512x384-v13',
+  // v14: GTAO fades horizon samples by 3D distance (the viewer's AO profile H2)
+  // instead of a depth slab, distanceFalloff defaults to 0.5 and the denoise
+  // keeps every tap. AO pixels change on purpose; the workload is unchanged.
+  name: 'gear-parse-raster-encode-512x384-v14',
   adapter: JSON.parse(await native.describeAdapter()),
   codecConformance: JSON.parse(native.codecConformance()),
   iterations,
