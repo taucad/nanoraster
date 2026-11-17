@@ -192,10 +192,10 @@ source; material shading does not replace them with image edge detection.
   renderer and card set. No HDR environment-file loader is included.
 - Ambient occlusion is on by default and matches the viewer's
   post-processing: a depth pass that also writes view-space mesh normals,
-  three.js 0.184's GTAO estimate and an edge-aware denoise at half resolution,
+  three.js 0.184's GTAO estimate with XeGTAO's smooth distance falloff and an edge-aware denoise at half resolution,
   then a depth- and normal-guided upsample. `ao: { intensity: 0 }` skips all
   four passes. `radiusPixels`, `intensity`, `distanceFalloff`,
-  `thicknessRatio`, `denoiseDepthTolerance`, `samples` and `resolutionScale`
+  `falloffEndRatio`, `falloffRange`, `denoiseDepthTolerance`, `samples` and `resolutionScale`
   tune it. Metal and glass matrices are compared to captured Three.js 0.184.0
   WebGL references with AO both off and on.
 - Draft material extensions, including diffuse transmission and subsurface

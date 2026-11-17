@@ -195,7 +195,9 @@ pub struct AoRequest {
     #[serde(default, deserialize_with = "present_ao_number")]
     distance_falloff: Option<f32>,
     #[serde(default, deserialize_with = "present_ao_number")]
-    thickness_ratio: Option<f32>,
+    falloff_end_ratio: Option<f32>,
+    #[serde(default, deserialize_with = "present_ao_number")]
+    falloff_range: Option<f32>,
     #[serde(default, deserialize_with = "present_ao_number")]
     denoise_depth_tolerance: Option<f32>,
     #[serde(default, deserialize_with = "present_ao_number")]
@@ -207,7 +209,8 @@ pub struct AoRequest {
 const AO_RADIUS_PIXELS_RANGE: std::ops::RangeInclusive<f32> = 1.0..=128.0;
 const AO_INTENSITY_RANGE: std::ops::RangeInclusive<f32> = 0.0..=8.0;
 const AO_DISTANCE_FALLOFF_RANGE: std::ops::RangeInclusive<f32> = 0.01..=1.0;
-const AO_THICKNESS_RATIO_RANGE: std::ops::RangeInclusive<f32> = 0.1..=100.0;
+const AO_FALLOFF_END_RATIO_RANGE: std::ops::RangeInclusive<f32> = 0.1..=100.0;
+const AO_FALLOFF_RANGE_RANGE: std::ops::RangeInclusive<f32> = 0.01..=1.0;
 const AO_DENOISE_DEPTH_TOLERANCE_RANGE: std::ops::RangeInclusive<f32> = 0.01..=10.0;
 const AO_SAMPLES_RANGE: std::ops::RangeInclusive<u32> = 1..=64;
 const AO_RESOLUTION_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.25..=1.0;
@@ -223,10 +226,11 @@ pub(crate) fn validate_ao(ao: &AmbientOcclusion) -> Result<(), RenderError> {
             AO_DISTANCE_FALLOFF_RANGE,
         ),
         (
-            "thicknessRatio",
-            ao.thickness_ratio,
-            AO_THICKNESS_RATIO_RANGE,
+            "falloffEndRatio",
+            ao.falloff_end_ratio,
+            AO_FALLOFF_END_RATIO_RANGE,
         ),
+        ("falloffRange", ao.falloff_range, AO_FALLOFF_RANGE_RANGE),
         (
             "denoiseDepthTolerance",
             ao.denoise_depth_tolerance,
@@ -745,7 +749,8 @@ fn resolve_common(
                 radius_pixels: ao.radius_pixels,
                 intensity: ao.intensity.unwrap_or(fallback.intensity),
                 distance_falloff: ao.distance_falloff.unwrap_or(fallback.distance_falloff),
-                thickness_ratio: ao.thickness_ratio.unwrap_or(fallback.thickness_ratio),
+                falloff_end_ratio: ao.falloff_end_ratio.unwrap_or(fallback.falloff_end_ratio),
+                falloff_range: ao.falloff_range.unwrap_or(fallback.falloff_range),
                 denoise_depth_tolerance: ao
                     .denoise_depth_tolerance
                     .unwrap_or(fallback.denoise_depth_tolerance),
@@ -1524,8 +1529,9 @@ mod tests {
             Some(AmbientOcclusion {
                 radius_pixels: None,
                 intensity: 0.75,
-                distance_falloff: 1.0,
-                thickness_ratio: 1.0 / 0.09,
+                distance_falloff: 0.5,
+                falloff_end_ratio: 22.0,
+                falloff_range: 0.8,
                 denoise_depth_tolerance: 0.1,
                 samples: 16,
                 resolution_scale: 0.5,
@@ -1565,7 +1571,7 @@ mod tests {
     #[test]
     fn gtao_controls_resolve_and_each_rejection_names_its_field() {
         let (single, _) = RenderRequest::from_json(
-            r#"{"format":"raw","ao":{"thicknessRatio":4,"denoiseDepthTolerance":0.5,"samples":30,"resolutionScale":1}}"#,
+            r#"{"format":"raw","ao":{"falloffEndRatio":4,"falloffRange":0.5,"denoiseDepthTolerance":0.5,"samples":30,"resolutionScale":1}}"#,
         )
         .expect("GTAO request")
         .resolve()
@@ -1573,7 +1579,8 @@ mod tests {
         assert_eq!(
             single.ao,
             Some(AmbientOcclusion {
-                thickness_ratio: 4.0,
+                falloff_end_ratio: 4.0,
+                falloff_range: 0.5,
                 denoise_depth_tolerance: 0.5,
                 samples: 30,
                 resolution_scale: 1.0,
@@ -1589,12 +1596,16 @@ mod tests {
         assert_eq!(batch.ao.expect("AO").samples, 8);
         for (field, expected) in [
             (
-                r#""thicknessRatio":0"#,
-                "parse: ao.thicknessRatio outside 0.1..=100.0",
+                r#""falloffEndRatio":0"#,
+                "parse: ao.falloffEndRatio outside 0.1..=100.0",
             ),
             (
-                r#""thicknessRatio":101"#,
-                "parse: ao.thicknessRatio outside 0.1..=100.0",
+                r#""falloffEndRatio":101"#,
+                "parse: ao.falloffEndRatio outside 0.1..=100.0",
+            ),
+            (
+                r#""falloffRange":0"#,
+                "parse: ao.falloffRange outside 0.01..=1.0",
             ),
             (
                 r#""denoiseDepthTolerance":0"#,
@@ -1620,7 +1631,7 @@ mod tests {
         }
         for invalid in [
             AmbientOcclusion {
-                thickness_ratio: f32::NAN,
+                falloff_end_ratio: f32::NAN,
                 ..AmbientOcclusion::default()
             },
             AmbientOcclusion {
