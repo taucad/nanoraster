@@ -271,7 +271,12 @@ const sizes = {
 // sRGB encode and its encoded-domain blend, as the viewer's page composites
 // its canvas. Admit exactly the measured deltas; headroom and compressor
 // allowances are unchanged.
-const ceilings = { raw: 2_412_764, gzip9: 1_085_265, brotli11: 887_453 };
+// XeGTAO smooth distance falloff in place of the thickness slab, outlier trim
+// deleted (Rust 1.99.1, Node 24.10.0, 2026-11-18): same-host demo build
+// 2,411,949 / 1,090,522 / 890,797 -> 2,413,223 / 1,091,018 / 890,639
+// (+1,274 / +496 / -158). Admit exactly the raw and gzip deltas; Brotli shrank,
+// so its ceiling stays. Headroom and compressor allowances are unchanged.
+const ceilings = { raw: 2_414_038, gzip9: 1_085_761, brotli11: 887_453 };
 
 // `raw` is the artifact and is measured exactly on each build; the ceiling
 // covers the measured host variation without a percentage allowance.

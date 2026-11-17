@@ -141,17 +141,25 @@ export type RenderAmbientOcclusion = {
   readonly radiusPixels?: number;
   /** Visibility exponent, from 0 to 8; 0 skips the AO passes. @default 0.75 */
   readonly intensity?: number;
-  /** GTAO distance falloff, from 0.01 to 1; lower values weight distant horizon samples more. @default 1 */
+  /** GTAO distance falloff, from 0.01 to 1; lower values weight distant horizon samples more. @default 0.5 */
   readonly distanceFalloff?: number;
   /**
-   * Depth acceptance as a multiple of the world-space sampling radius, from
-   * 0.1 to 100: a horizon sample further than `radius × thicknessRatio` in
-   * front of or behind the surface is ignored. The Tau viewer's
-   * `gtaoThicknessToRadiusRatio`.
+   * Where a horizon sample stops counting, by its 3D distance from the pixel,
+   * as a multiple of the world-space sampling radius, from 0.1 to 100. Samples
+   * fade toward the tangent-plane horizon instead of being cut off at a depth
+   * slab (XeGTAO's smooth falloff). The Tau viewer's `falloffEndRatio`.
    *
-   * @default 1 / 0.09 (≈ 11.11)
+   * @default 22
    */
-  readonly thicknessRatio?: number;
+  readonly falloffEndRatio?: number;
+  /**
+   * Fraction of the falloff end over which a sample's weight falls linearly
+   * from 1 to 0, from 0.01 to 1: weight 1 up to `(1 - falloffRange) ×
+   * falloffEndRatio` radii.
+   *
+   * @default 0.8
+   */
+  readonly falloffRange?: number;
   /**
    * Plane-distance tolerance of the denoise and upsample filters as a
    * fraction of the world-space sampling radius, from 0.01 to 10. Neighbours
@@ -778,7 +786,8 @@ const aoKeys = new Set([
   'radiusPixels',
   'intensity',
   'distanceFalloff',
-  'thicknessRatio',
+  'falloffEndRatio',
+  'falloffRange',
   'denoiseDepthTolerance',
   'samples',
   'resolutionScale',
@@ -1328,7 +1337,9 @@ const validateAo = (ao: unknown): void => {
   if (ao['intensity'] !== undefined) assertRange(ao['intensity'], 'ao.intensity', [0, 8]);
   if (ao['distanceFalloff'] !== undefined)
     assertRange(ao['distanceFalloff'], 'ao.distanceFalloff', [0.01, 1]);
-  if (ao['thicknessRatio'] !== undefined) assertRange(ao['thicknessRatio'], 'ao.thicknessRatio', [0.1, 100]);
+  if (ao['falloffEndRatio'] !== undefined)
+    assertRange(ao['falloffEndRatio'], 'ao.falloffEndRatio', [0.1, 100]);
+  if (ao['falloffRange'] !== undefined) assertRange(ao['falloffRange'], 'ao.falloffRange', [0.01, 1]);
   if (ao['denoiseDepthTolerance'] !== undefined)
     assertRange(ao['denoiseDepthTolerance'], 'ao.denoiseDepthTolerance', [0.01, 10]);
   if (ao['samples'] !== undefined) {

@@ -161,7 +161,13 @@ describe('image request serialization', () => {
   });
 
   it('should serialize the GTAO controls and name each one it rejects', () => {
-    const ao = { thicknessRatio: 4, denoiseDepthTolerance: 0.5, samples: 30, resolutionScale: 1 };
+    const ao = {
+      falloffEndRatio: 4,
+      falloffRange: 0.5,
+      denoiseDepthTolerance: 0.5,
+      samples: 30,
+      resolutionScale: 1,
+    };
     expect(parse(toImageRequestJson({ format: 'raw', ao }))).toEqual({ format: 'raw', ao });
     expect(parse(toImagesRequestJson({ format: 'raw', ao, views: [{ id: 'front' }] }))).toEqual({
       format: 'raw',
@@ -169,8 +175,9 @@ describe('image request serialization', () => {
       views: [{ id: 'front' }],
     });
     for (const [invalid, message] of [
-      [{ thicknessRatio: 0 }, 'ao.thicknessRatio must be between 0.1 and 100'],
-      [{ thicknessRatio: Number.POSITIVE_INFINITY }, 'ao.thicknessRatio'],
+      [{ falloffEndRatio: 0 }, 'ao.falloffEndRatio must be between 0.1 and 100'],
+      [{ falloffEndRatio: Number.POSITIVE_INFINITY }, 'ao.falloffEndRatio'],
+      [{ falloffRange: 0 }, 'ao.falloffRange must be between 0.01 and 1'],
       [{ denoiseDepthTolerance: 11 }, 'ao.denoiseDepthTolerance must be between 0.01 and 10'],
       [{ samples: 0 }, 'ao.samples must be between 1 and 64'],
       [{ samples: 65 }, 'ao.samples must be between 1 and 64'],

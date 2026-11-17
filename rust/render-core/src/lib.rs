@@ -255,7 +255,8 @@ pub struct Sections {
 }
 
 /// Optional screen-space ambient occlusion for opaque surfaces: three.js r184
-/// GTAO with the Tau viewer's denoise and guided upsample. Every default is the
+/// GTAO with XeGTAO's smooth distance falloff, as the Tau viewer patches it, and
+/// the viewer's denoise and guided upsample. Every default is the
 /// viewer's value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AmbientOcclusion {
@@ -265,9 +266,11 @@ pub struct AmbientOcclusion {
     pub intensity: f32,
     /// GTAONode `distanceFallOff`.
     pub distance_falloff: f32,
-    /// GTAO thickness as a multiple of the world radius (the viewer's
-    /// `gtaoThicknessToRadiusRatio`).
-    pub thickness_ratio: f32,
+    /// Where a horizon sample stops counting, by its 3D distance from the pixel,
+    /// as a multiple of the world radius (the viewer's `falloffEndRatio`).
+    pub falloff_end_ratio: f32,
+    /// Fraction of the falloff end over which a sample's weight falls from 1 to 0.
+    pub falloff_range: f32,
     /// Denoise and upsample plane-distance tolerance as a fraction of the world radius.
     pub denoise_depth_tolerance: f32,
     /// GTAONode `samples`, split into slices and steps by [`gtao_slices_and_steps`].
@@ -281,8 +284,9 @@ impl Default for AmbientOcclusion {
         Self {
             radius_pixels: None,
             intensity: 0.75,
-            distance_falloff: 1.0,
-            thickness_ratio: 1.0 / 0.09,
+            distance_falloff: 0.5,
+            falloff_end_ratio: 22.0,
+            falloff_range: 0.8,
             denoise_depth_tolerance: 0.1,
             samples: 16,
             resolution_scale: 0.5,

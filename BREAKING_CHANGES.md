@@ -2,6 +2,13 @@
 
 ## 0.x
 
+- AO follows the Tau viewer's profile H2. `ao.thicknessRatio` is removed:
+  GTAO no longer drops horizon samples outside a depth slab, and instead fades
+  them toward the tangent-plane horizon by their 3D distance (XeGTAO's smooth
+  falloff), tuned by the new `ao.falloffEndRatio` (default 22) and
+  `ao.falloffRange` (default 0.8). `distanceFalloff` defaults to 0.5 instead
+  of 1, and the denoise no longer trims an isolated outlier tap. Default AO
+  image bytes change; replace `thicknessRatio` with `falloffEndRatio`.
 - Default rendering follows the Tau viewer, so default image bytes change.
   Ambient occlusion is a port of three.js 0.184's GTAO with the viewer's
   edge-aware denoise and a depth- and normal-guided upsample, in place of the

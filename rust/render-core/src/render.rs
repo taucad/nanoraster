@@ -2927,12 +2927,12 @@ impl Renderer {
                 ao.distance_falloff,
                 f32::from(orthographic),
                 ao.intensity,
-                // GTAO depth acceptance and denoise plane tolerance, as the viewer derives them.
-                world_radius * ao.thickness_ratio,
+                // GTAO falloff end and denoise plane tolerance, as the viewer derives them.
+                world_radius * ao.falloff_end_ratio,
                 world_radius * ao.denoise_depth_tolerance,
                 slices,
                 steps,
-                0.0,
+                ao.falloff_range,
                 0.0,
             ]);
             state
@@ -4488,7 +4488,9 @@ mod tests {
             render(
                 &mut renderer,
                 crate::AmbientOcclusion {
-                    thickness_ratio: 1.0 / 0.09,
+                    distance_falloff: 0.5,
+                    falloff_end_ratio: 22.0,
+                    falloff_range: 0.8,
                     denoise_depth_tolerance: 0.1,
                     samples: 16,
                     resolution_scale: 0.5,
@@ -4499,9 +4501,16 @@ mod tests {
         );
         for (name, ao) in [
             (
-                "thicknessRatio",
+                "falloffEndRatio",
                 crate::AmbientOcclusion {
-                    thickness_ratio: 0.5,
+                    falloff_end_ratio: 0.5,
+                    ..defaults
+                },
+            ),
+            (
+                "falloffRange",
+                crate::AmbientOcclusion {
+                    falloff_range: 0.1,
                     ..defaults
                 },
             ),

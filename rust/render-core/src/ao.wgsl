@@ -1,7 +1,8 @@
 // Ground-truth AO matching the Tau viewer's post-processing: three.js r184
 // GTAONode (samples split into slices and steps as GTAONode does, magic-square
-// noise, no temporal rotation) at `resolutionScale` of the drawing buffer, Tau's
-// 13-tap edge-aware denoiser with outlier trimming at the same resolution, then
+// noise, no temporal rotation) with XeGTAO's smooth 3D-distance falloff in place
+// of r184's hard thickness slab, at `resolutionScale` of the drawing buffer, Tau's
+// 13-tap edge-aware denoiser at the same resolution, then
 // a depth/normal-guided upsample. Every pass reads the depth pass's mesh normals
 // at the full-resolution texel of its depth, as the viewer's MRT provides them.
 struct AoFrame {
@@ -9,9 +10,10 @@ struct AoFrame {
     inverse_projection: mat4x4<f32>,
     // xy = output pixels; z = world-space radius at the camera target; w = distance falloff.
     viewport: vec4<f32>,
-    // x = orthographic flag; y = visibility exponent; z = thickness; w = denoise depth phi.
+    // x = orthographic flag; y = visibility exponent; z = falloff end (world); w = denoise depth phi.
     controls: vec4<f32>,
-    // x = slices; y = steps per slice, fractional as GTAONode's float uniform keeps it.
+    // x = slices; y = steps per slice, fractional as GTAONode's float uniform keeps it;
+    // z = falloff range, the fraction of the falloff end over which a sample's weight falls to 0.
     sampling: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> ao_frame: AoFrame;
@@ -105,6 +107,13 @@ fn ao_uv_position(uv: vec2<f32>, z: f32) -> vec3<f32> {
     return ao_position(uv * ao_frame.viewport.xy, z);
 }
 
+fn ao_falloff_cos(delta: vec3<f32>, view_dir: vec3<f32>, tangent_plane: f32) -> f32 {
+    // saturate(d * -1 / (end * range) + 1 / range), as the viewer writes it.
+    let d = length(delta);
+    let weight = clamp((1.0 - d / ao_frame.controls.z) / ao_frame.sampling.z, 0.0, 1.0);
+    return mix(tangent_plane, dot(view_dir, delta / d), weight);
+}
+
 @fragment
 fn fs_ao_estimate(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f32> {
     let size = vec2<i32>(textureDimensions(ao_input));
@@ -115,7 +124,6 @@ fn fs_ao_estimate(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f
     let view_position = ao_uv_position(uv, z);
     let view_normal = ao_normal(full);
     let radius = ao_frame.viewport.z;
-    let thickness = ao_frame.controls.z;
     let falloff = ao_frame.viewport.w;
     let rotation = ao_noise_rotation(vec2<i32>(fragment.xy), size);
     let tangent = normalize(vec3<f32>(rotation, 0.0));
@@ -132,25 +140,25 @@ fn fs_ao_estimate(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f
         let slice_tangent = cross(slice_bitangent, view_dir);
         let normal_in_slice = normalize(view_normal - slice_bitangent * dot(view_normal, slice_bitangent));
         let tangent_to_normal = cross(normal_in_slice, slice_bitangent);
-        var cos_horizons = vec2<f32>(dot(view_dir, tangent_to_normal), dot(view_dir, -tangent_to_normal));
+        // XeGTAO's smooth falloff: every sample counts, its horizon cosine blended
+        // toward the tangent-plane horizon by weight = saturate(d * falloff_mul +
+        // falloff_add) on its 3D distance d: 1 up to (1 - range) * end, 0 from end.
+        let tangent_plane = vec2<f32>(dot(view_dir, tangent_to_normal), dot(view_dir, -tangent_to_normal));
+        var cos_horizons = tangent_plane;
         for (var j = 0; j < i32(steps); j++) {
             let offset = sample_dir * radius * (f32(j + 1) / steps);
             let weight = mix(1.0, 2.0 / (f32(j) + 2.0), falloff);
             let uv_x = ao_project(view_position + offset);
             let z_x = ao_z(ao_full_pixel(uv_x));
             if (z_x != 0.0) {
-                let delta = ao_uv_position(uv_x, z_x) - view_position;
-                if (abs(delta.z) < thickness) {
-                    cos_horizons.x += max(0.0, (dot(view_dir, normalize(delta)) - cos_horizons.x) * weight);
-                }
+                let sample_cos = ao_falloff_cos(ao_uv_position(uv_x, z_x) - view_position, view_dir, tangent_plane.x);
+                cos_horizons.x += max(0.0, (sample_cos - cos_horizons.x) * weight);
             }
             let uv_y = ao_project(view_position - offset);
             let z_y = ao_z(ao_full_pixel(uv_y));
             if (z_y != 0.0) {
-                let delta = ao_uv_position(uv_y, z_y) - view_position;
-                if (abs(delta.z) < thickness) {
-                    cos_horizons.y += max(0.0, (dot(view_dir, normalize(delta)) - cos_horizons.y) * weight);
-                }
+                let sample_cos = ao_falloff_cos(ao_uv_position(uv_y, z_y) - view_position, view_dir, tangent_plane.y);
+                cos_horizons.y += max(0.0, (sample_cos - cos_horizons.y) * weight);
             }
         }
         let sin_horizons = sqrt(max(vec2<f32>(0.0), 1.0 - cos_horizons * cos_horizons));
@@ -170,7 +178,7 @@ fn ao_sample(uv: vec2<f32>) -> vec4<f32> {
 }
 
 // Tau's edge-aware denoise: a 5x5 checkerboard of 13 taps one AO texel apart,
-// weighted by plane distance and normal agreement, trimming one isolated outlier.
+// weighted by plane distance and normal agreement.
 @fragment
 fn fs_ao_blur(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f32> {
     let size = vec2<f32>(textureDimensions(ao_input));
@@ -182,9 +190,6 @@ fn fs_ao_blur(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f32> 
     let center_position = ao_uv_position(uv, z);
     let center_normal = ao_normal(full);
     let depth_phi = ao_frame.controls.w;
-    var values: array<f32, 13>;
-    var weights: array<f32, 13>;
-    var count = 0;
     var sum = 0.0;
     var weight_sum = 0.0;
     for (var x = -2; x <= 2; x++) {
@@ -202,34 +207,12 @@ fn fs_ao_blur(@builtin(position) fragment: vec4<f32>) -> @location(0) vec4<f32> 
                 weight = max(1.0 - plane_distance / depth_phi, 0.0)
                     * pow(max(dot(center_normal, neighbor_normal), 0.0), 8.0);
             }
-            values[count] = neighbor.r;
-            weights[count] = weight;
-            count++;
             sum += neighbor.r * weight;
             weight_sum += weight;
         }
     }
-    let mean = sum / max(weight_sum, 0.0001);
-    var outlier_deviation = 0.0;
-    var runner_up_deviation = 0.0;
-    var outlier_value = 0.0;
-    var outlier_weight = 0.0;
-    for (var k = 0; k < 13; k++) {
-        let deviation = abs(values[k] - mean) * select(0.0, 1.0, weights[k] > 0.5);
-        if (deviation > outlier_deviation) {
-            runner_up_deviation = outlier_deviation;
-            outlier_deviation = deviation;
-            outlier_value = values[k];
-            outlier_weight = weights[k];
-        } else if (deviation > runner_up_deviation) {
-            runner_up_deviation = deviation;
-        }
-    }
-    let trimmed = outlier_deviation > 0.25 && runner_up_deviation < 0.125 && weight_sum - outlier_weight > 0.5;
     var result = center.r;
-    if (weight_sum > 0.0) {
-        result = select(mean, (sum - outlier_value * outlier_weight) / max(weight_sum - outlier_weight, 0.0001), trimmed);
-    }
+    if (weight_sum > 0.0) { result = sum / weight_sum; }
     return vec4<f32>(result, center.gba);
 }
 
